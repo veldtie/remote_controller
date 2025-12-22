@@ -2,7 +2,7 @@
 # Remote client using WebRTC (aiortc)
 # Features:
 # - Screen sharing (video)
-# - System audio streaming
+# - Microphone audio streaming
 # - Remote control (mouse / keyboard)
 # - File browsing & download (data channel)
 
