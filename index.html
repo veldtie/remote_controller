@@ -65,6 +65,7 @@ function registerControls() {
   });
 
   video.addEventListener('click', e => {
+    if (dataChannel.readyState !== 'open') return;
     dataChannel.send(JSON.stringify({
       action: 'control',
       type: 'mouse_click',
@@ -75,6 +76,7 @@ function registerControls() {
   });
 
   window.addEventListener('keydown', e => {
+    if (dataChannel.readyState !== 'open') return;
     dataChannel.send(JSON.stringify({
       action: 'control',
       type: 'keypress',
