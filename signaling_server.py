@@ -1,4 +1,4 @@
-# signaling_server_fastapi.py
+# signaling_server.py
 # WebRTC signaling server for Remote Desktop
 
 import asyncio
