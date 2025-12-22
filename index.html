@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Web Remote Desktop</title>
+  <style>
+    body { margin: 0; background: #111; color: #fff; font-family: Arial; }
+    #screen { width: 100vw; height: 100vh; background: #000; cursor: crosshair; }
+    #panel {
+      position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7);
+      padding: 10px; border-radius: 6px; z-index: 10;
+    }
+    button { margin: 4px; }
+  </style>
+</head>
+<body>
+
+<div id="panel">
+  <button onclick="connect()">Connect</button>
+</div>
+
+<video id="screen" autoplay playsinline></video>
+
+<script>
+let pc;
+let dataChannel;
+
+async function connect() {
+  pc = new RTCPeerConnection();
+
+  pc.ontrack = (event) => {
+    document.getElementById('screen').srcObject = event.streams[0];
+  };
+
+  dataChannel = pc.createDataChannel('control');
+
+  dataChannel.onopen = () => console.log('DataChannel open');
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const response = await fetch('/offer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(offer)
+  });
+
+  const answer = await response.json();
+  await pc.setRemoteDescription(answer);
+
+  registerControls();
+}
+
+function registerControls() {
+  const video = document.getElementById('screen');
+
+  video.addEventListener('mousemove', e => {
+    if (dataChannel.readyState !== 'open') return;
+    dataChannel.send(JSON.stringify({
+      action: 'control',
+      type: 'mouse_move',
+      x: e.offsetX,
+      y: e.offsetY
+    }));
+  });
+
+  video.addEventListener('click', e => {
+    dataChannel.send(JSON.stringify({
+      action: 'control',
+      type: 'mouse_click',
+      x: e.offsetX,
+      y: e.offsetY,
+      button: 'left'
+    }));
+  });
+
+  window.addEventListener('keydown', e => {
+    dataChannel.send(JSON.stringify({
+      action: 'control',
+      type: 'keypress',
+      key: e.key
+    }));
+  });
+}
+</script>
+</body>
+</html>
