@@ -1,0 +1,8 @@
+aiortc
+fastapi
+uvicorn
+mss
+av
+sounddevice
+pyautogui
+numpy
