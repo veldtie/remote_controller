@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 from remote_client.files.file_service import FileService
 
 
@@ -19,3 +22,34 @@ def test_list_files_dir_and_file(tmp_path):
     assert dir_entry["size"] is None
     assert file_entry["is_dir"] is False
     assert file_entry["size"] == test_file.stat().st_size
+
+
+def test_handle_control_message_routes_to_handler(client, control_handler, channel):
+    payload = {"action": "control", "type": "mouse_move", "x": 10, "y": 15}
+
+    asyncio.run(client._handle_message(channel, payload))
+
+    assert control_handler.handled == [payload]
+    assert channel.sent == []
+
+
+def test_handle_list_files_sends_serialized_entries(
+    client, file_service, file_entries, channel
+):
+    payload = {"action": "list_files", "path": "/tmp"}
+
+    asyncio.run(client._handle_message(channel, payload))
+
+    assert file_service.listed_paths == ["/tmp"]
+    assert len(channel.sent) == 1
+    message = json.loads(channel.sent[0])
+    assert message["files"] == file_service.serialize_entries(file_entries)
+
+
+def test_handle_download_sends_payload(client, file_service, base64_payload, channel):
+    payload = {"action": "download", "path": "/tmp/report.txt"}
+
+    asyncio.run(client._handle_message(channel, payload))
+
+    assert file_service.read_paths == ["/tmp/report.txt"]
+    assert channel.sent == [base64_payload]
