@@ -18,32 +18,51 @@ import sys
 import tempfile
 import shutil
 
-import pyautogui
-import mss
-import numpy as np
+try:
+    from aiortc import (
+        RTCPeerConnection,
+        RTCSessionDescription,
+        VideoStreamTrack,
+        MediaStreamTrack,
+    )
+    from aiortc.contrib.signaling import TcpSocketSignaling
+    from av import VideoFrame
+except ImportError:  # pragma: no cover - optional runtime dependencies
+    RTCPeerConnection = None
+    RTCSessionDescription = None
+    VideoStreamTrack = None
+    MediaStreamTrack = None
+    TcpSocketSignaling = None
+    VideoFrame = None
 
-from aiortc import (
-    RTCPeerConnection,
-    RTCSessionDescription,
-    VideoStreamTrack,
-    MediaStreamTrack,
-)
-from aiortc.contrib.signaling import TcpSocketSignaling
-from av import VideoFrame
+
+def _require_dependency(dependency, name):
+    if dependency is None:
+        raise RuntimeError(f"Missing optional dependency: {name}")
+
+
+_VIDEO_BASE = VideoStreamTrack if VideoStreamTrack is not None else object
+_AUDIO_BASE = MediaStreamTrack if MediaStreamTrack is not None else object
 
 ############################################
 # Video track (screen capture)
 ############################################
 
-class ScreenTrack(VideoStreamTrack):
+class ScreenTrack(_VIDEO_BASE):
     def __init__(self):
+        _require_dependency(VideoStreamTrack, "aiortc")
+        _require_dependency(VideoFrame, "av")
         super().__init__()
+        import mss
+        import numpy as np
+        self._np = np
         self.sct = mss.mss()
         self.monitor = self.sct.monitors[1]
 
     async def recv(self):
+        _require_dependency(VideoFrame, "av")
         pts, time_base = await self.next_timestamp()
-        img = np.array(self.sct.grab(self.monitor))
+        img = self._np.array(self.sct.grab(self.monitor))
         frame = VideoFrame.from_ndarray(img[:, :, :3], format="bgr24")
         frame.pts = pts
         frame.time_base = time_base
@@ -53,10 +72,11 @@ class ScreenTrack(VideoStreamTrack):
 # Audio track (system microphone for now)
 ############################################
 
-class AudioTrack(MediaStreamTrack):
+class AudioTrack(_AUDIO_BASE):
     kind = "audio"
 
     def __init__(self):
+        _require_dependency(MediaStreamTrack, "aiortc")
         super().__init__()
         import sounddevice as sd
         self.sd = sd
@@ -98,6 +118,11 @@ def list_files(path):
 
 
 def handle_control(data):
+    try:
+        import pyautogui
+    except ImportError as exc:  # pragma: no cover - optional runtime dependency
+        raise RuntimeError("Missing optional dependency: pyautogui") from exc
+
     t = data.get("type")
     if t == "mouse_move":
         pyautogui.moveTo(data["x"], data["y"])
