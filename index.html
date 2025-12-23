@@ -16,7 +16,10 @@
 <body>
 
 <div id="panel">
+  <label for="serverUrl">Server URL:</label>
+  <input id="serverUrl" type="text" value="http://localhost:8000" size="28" />
   <button id="connectButton">Connect</button>
+  <span id="status"></span>
 </div>
 
 <video id="screen" autoplay playsinline></video>
@@ -32,6 +35,12 @@ const CONTROL_TYPES = {
 let pc;
 let dataChannel;
 
+const statusEl = document.getElementById('status');
+
+function setStatus(message) {
+  statusEl.textContent = message;
+}
+
 function ensureChannelOpen() {
   return dataChannel && dataChannel.readyState === 'open';
 }
@@ -42,6 +51,8 @@ function sendControl(payload) {
 }
 
 async function connect() {
+  setStatus('Connecting...');
+  const apiBase = document.getElementById('serverUrl').value.trim() || 'http://localhost:8000';
   pc = new RTCPeerConnection();
 
   pc.ontrack = (event) => {
@@ -49,21 +60,30 @@ async function connect() {
   };
 
   dataChannel = pc.createDataChannel('control');
-  dataChannel.onopen = () => console.log('DataChannel open');
+  dataChannel.onopen = () => setStatus('Connected');
+  dataChannel.onclose = () => setStatus('Disconnected');
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  const response = await fetch('/offer', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(offer)
-  });
+  try {
+    const response = await fetch(`${apiBase}/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(offer)
+    });
 
-  const answer = await response.json();
-  await pc.setRemoteDescription(answer);
+    if (!response.ok) {
+      throw new Error(`Signaling failed: ${response.status}`);
+    }
 
-  registerControls();
+    const answer = await response.json();
+    await pc.setRemoteDescription(answer);
+    registerControls();
+  } catch (error) {
+    console.error(error);
+    setStatus('Connection failed');
+  }
 }
 
 function registerControls() {

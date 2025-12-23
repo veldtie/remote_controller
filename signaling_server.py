@@ -3,12 +3,22 @@
 
 import asyncio
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from aiortc import RTCSessionDescription
 from aiortc.contrib.signaling import TcpSocketSignaling
 import uvicorn
 
 app = FastAPI()
+
+# Allow browser clients opened from file:// or other origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # TCP signaling used by Python client
 signaling = TcpSocketSignaling("0.0.0.0", 9999)
