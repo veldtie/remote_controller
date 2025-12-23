@@ -16,14 +16,30 @@
 <body>
 
 <div id="panel">
-  <button onclick="connect()">Connect</button>
+  <button id="connectButton">Connect</button>
 </div>
 
 <video id="screen" autoplay playsinline></video>
 
 <script>
+const CONTROL_ACTION = 'control';
+const CONTROL_TYPES = {
+  mouseMove: 'mouse_move',
+  mouseClick: 'mouse_click',
+  keypress: 'keypress'
+};
+
 let pc;
 let dataChannel;
+
+function ensureChannelOpen() {
+  return dataChannel && dataChannel.readyState === 'open';
+}
+
+function sendControl(payload) {
+  if (!ensureChannelOpen()) return;
+  dataChannel.send(JSON.stringify({ action: CONTROL_ACTION, ...payload }));
+}
 
 async function connect() {
   pc = new RTCPeerConnection();
@@ -33,7 +49,6 @@ async function connect() {
   };
 
   dataChannel = pc.createDataChannel('control');
-
   dataChannel.onopen = () => console.log('DataChannel open');
 
   const offer = await pc.createOffer();
@@ -54,36 +69,32 @@ async function connect() {
 function registerControls() {
   const video = document.getElementById('screen');
 
-  video.addEventListener('mousemove', e => {
-    if (dataChannel.readyState !== 'open') return;
-    dataChannel.send(JSON.stringify({
-      action: 'control',
-      type: 'mouse_move',
-      x: e.offsetX,
-      y: e.offsetY
-    }));
+  video.addEventListener('mousemove', (event) => {
+    sendControl({
+      type: CONTROL_TYPES.mouseMove,
+      x: event.offsetX,
+      y: event.offsetY
+    });
   });
 
-  video.addEventListener('click', e => {
-    if (dataChannel.readyState !== 'open') return;
-    dataChannel.send(JSON.stringify({
-      action: 'control',
-      type: 'mouse_click',
-      x: e.offsetX,
-      y: e.offsetY,
+  video.addEventListener('click', (event) => {
+    sendControl({
+      type: CONTROL_TYPES.mouseClick,
+      x: event.offsetX,
+      y: event.offsetY,
       button: 'left'
-    }));
+    });
   });
 
-  window.addEventListener('keydown', e => {
-    if (dataChannel.readyState !== 'open') return;
-    dataChannel.send(JSON.stringify({
-      action: 'control',
-      type: 'keypress',
-      key: e.key
-    }));
+  window.addEventListener('keydown', (event) => {
+    sendControl({
+      type: CONTROL_TYPES.keypress,
+      key: event.key
+    });
   });
 }
+
+document.getElementById('connectButton').addEventListener('click', connect);
 </script>
 </body>
 </html>
