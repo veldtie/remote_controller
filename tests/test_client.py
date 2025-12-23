@@ -1,13 +1,15 @@
-from client import list_files
+from remote_client.files.file_service import FileService
 
 
 def test_list_files_dir_and_file(tmp_path):
+    file_service = FileService()
     subdir = tmp_path / "subdir"
     subdir.mkdir()
     test_file = tmp_path / "example.txt"
     test_file.write_bytes(b"hello")
 
-    results = list_files(tmp_path)
+    entries = file_service.list_files(str(tmp_path))
+    results = file_service.serialize_entries(entries)
     entries = {entry["name"]: entry for entry in results}
 
     dir_entry = entries[subdir.name]
