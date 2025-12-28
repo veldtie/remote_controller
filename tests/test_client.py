@@ -1,7 +1,17 @@
 import asyncio
+import base64
 import json
 
 from remote_client.files.file_service import FileService
+from remote_client.webrtc.client import WebRTCClient
+
+
+class CapturingChannel:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def send(self, message: str) -> None:
+        self.sent.append(message)
 
 
 def test_list_files_dir_and_file(tmp_path):
@@ -53,3 +63,28 @@ def test_handle_download_sends_payload(client, file_service, base64_payload, cha
 
     assert file_service.read_paths == ["/tmp/report.txt"]
     assert channel.sent == [base64_payload]
+
+
+def test_integration_download_reads_and_transfers_file(tmp_path, control_handler):
+    source_file = tmp_path / "report.bin"
+    source_bytes = b"binary-payload-\x00\x01"
+    source_file.write_bytes(source_bytes)
+
+    file_service = FileService()
+    client = WebRTCClient(
+        signaling=None,
+        control_handler=control_handler,
+        file_service=file_service,
+        media_tracks=[],
+    )
+    channel = CapturingChannel()
+
+    payload = {"action": "download", "path": str(source_file)}
+    asyncio.run(client._handle_message(channel, payload))
+
+    assert channel.sent == [base64.b64encode(source_bytes).decode()]
+
+    received_file = tmp_path / "received.bin"
+    received_bytes = base64.b64decode(channel.sent[0])
+    received_file.write_bytes(received_bytes)
+    assert received_file.read_bytes() == source_bytes
