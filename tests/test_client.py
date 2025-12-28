@@ -14,6 +14,68 @@ class CapturingChannel:
         self.sent.append(message)
 
 
+class FakeSessionDescription:
+    def __init__(self, sdp: str, type_: str) -> None:
+        self.sdp = sdp
+        self.type = type_
+
+
+class FakePeerConnection:
+    def __init__(self) -> None:
+        self.added_tracks: list[object] = []
+        self.handlers: dict[str, object] = {}
+        self.remoteDescription: FakeSessionDescription | None = None
+        self.localDescription: FakeSessionDescription | None = None
+        self.state = "new"
+        self.closed = False
+
+    def addTrack(self, track: object) -> None:
+        self.added_tracks.append(track)
+
+    def on(self, event: str):
+        def decorator(handler):
+            self.handlers[event] = handler
+            return handler
+
+        return decorator
+
+    async def setRemoteDescription(self, offer: FakeSessionDescription) -> None:
+        self.remoteDescription = offer
+
+    async def createAnswer(self) -> FakeSessionDescription:
+        return FakeSessionDescription("answer-sdp", "answer")
+
+    async def setLocalDescription(self, answer: FakeSessionDescription) -> None:
+        self.localDescription = answer
+        self.state = "connected"
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeSignaling:
+    def __init__(self, offer: FakeSessionDescription) -> None:
+        self.offer = offer
+        self.connected = False
+        self.sent: list[FakeSessionDescription] = []
+        self.received = False
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def receive(self) -> FakeSessionDescription:
+        self.received = True
+        return self.offer
+
+    async def send(self, description: FakeSessionDescription) -> None:
+        self.sent.append(description)
+
+
+class FailingSignaling:
+    async def connect(self) -> None:
+        raise ConnectionError("refused")
+
+
 def test_list_files_dir_and_file(tmp_path):
     file_service = FileService()
     subdir = tmp_path / "subdir"
@@ -88,3 +150,55 @@ def test_integration_download_reads_and_transfers_file(tmp_path, control_handler
     received_bytes = base64.b64decode(channel.sent[0])
     received_file.write_bytes(received_bytes)
     assert received_file.read_bytes() == source_bytes
+
+
+def test_run_once_successful_handshake_marks_connected(monkeypatch):
+    offer = FakeSessionDescription("offer-sdp", "offer")
+    signaling = FakeSignaling(offer)
+    peer_connection = FakePeerConnection()
+
+    client = WebRTCClient(
+        signaling=signaling,
+        control_handler=object(),
+        file_service=object(),
+        media_tracks=[],
+    )
+
+    async def stop_after_handshake(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "remote_client.webrtc.client.RTCPeerConnection",
+        lambda: peer_connection,
+    )
+    monkeypatch.setattr("remote_client.webrtc.client.asyncio.sleep", stop_after_handshake)
+
+    asyncio.run(client._run_once())
+
+    assert signaling.connected is True
+    assert signaling.received is True
+    assert peer_connection.remoteDescription == offer
+    assert peer_connection.localDescription is not None
+    assert signaling.sent == [peer_connection.localDescription]
+    assert peer_connection.state == "connected"
+    assert peer_connection.closed is True
+
+
+def test_run_once_failed_connection_closes_peer(monkeypatch):
+    peer_connection = FakePeerConnection()
+
+    client = WebRTCClient(
+        signaling=FailingSignaling(),
+        control_handler=object(),
+        file_service=object(),
+        media_tracks=[],
+    )
+
+    monkeypatch.setattr(
+        "remote_client.webrtc.client.RTCPeerConnection",
+        lambda: peer_connection,
+    )
+
+    asyncio.run(client._run_once())
+
+    assert peer_connection.closed is True
