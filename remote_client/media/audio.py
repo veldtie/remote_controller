@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes.util
 import struct
 
 from aiortc import MediaStreamTrack
@@ -15,24 +16,36 @@ class AudioTrack(MediaStreamTrack):
 
     def __init__(self, timeout_s: float = 0.5) -> None:
         super().__init__()
+        if ctypes.util.find_library("portaudio") is None:
+            self._queue = asyncio.Queue()
+            self._timeout_s = timeout_s
+            self._samplerate = 48000
+            self._blocksize = 960
+            self._stream = None
+            return
+
         import sounddevice as sd
 
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._timeout_s = timeout_s
         self._samplerate = 48000
         self._blocksize = 960
+        self._stream = None
 
         def callback(indata, frames, time, status) -> None:
             self._queue.put_nowait(bytes(indata))
 
-        self._stream = sd.RawInputStream(
-            samplerate=self._samplerate,
-            blocksize=self._blocksize,
-            dtype="int16",
-            channels=1,
-            callback=callback,
-        )
-        self._stream.start()
+        try:
+            self._stream = sd.RawInputStream(
+                samplerate=self._samplerate,
+                blocksize=self._blocksize,
+                dtype="int16",
+                channels=1,
+                callback=callback,
+            )
+            self._stream.start()
+        except Exception:
+            self._stream = None
 
     async def recv(self) -> AudioFrame:
         try:
