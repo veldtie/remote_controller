@@ -1,9 +1,14 @@
 import asyncio
+import struct
 from types import SimpleNamespace
 
 import pytest
 
-from remote_client.media.audio import AudioTrack
+from remote_client.media.audio import (
+    AudioTrack,
+    deserialize_audio_packet,
+    serialize_audio_frame,
+)
 
 
 class DummyRawInputStream:
@@ -57,7 +62,7 @@ def test_audio_stream_timeout_returns_silence(mocked_sounddevice) -> None:
         frame = await track.recv()
         assert frame.sample_rate == track._samplerate
         assert frame.samples == track._blocksize
-        assert frame.planes[0].to_bytes() == b"\x00" * (track._blocksize * 2)
+        assert bytes(frame.planes[0]) == b"\x00" * (track._blocksize * 2)
 
     asyncio.run(_run())
 
@@ -80,5 +85,44 @@ def test_audio_stream_continuous_delivery_with_gaps(mocked_sounddevice) -> None:
 
         assert len(frames) == 20
         assert all(frame.sample_rate == track._samplerate for frame in frames)
+
+    asyncio.run(_run())
+
+
+def test_audio_serialization_and_send(mocked_sounddevice) -> None:
+    async def _run() -> None:
+        track = AudioTrack(timeout_s=0.01)
+        stream = mocked_sounddevice["stream"]
+        payload = b"\x10\x00" * track._blocksize
+
+        stream.push(payload)
+        frame = await track.recv()
+        packet = serialize_audio_frame(frame)
+
+        sent_packets: list[bytes] = []
+        sent_packets.append(packet)
+
+        samplerate, samples = struct.unpack("<II", sent_packets[0][:8])
+        assert samplerate == track._samplerate
+        assert samples == track._blocksize
+        assert sent_packets[0][8:] == payload
+
+    asyncio.run(_run())
+
+
+def test_audio_packet_receiver_accepts_correct_format(mocked_sounddevice) -> None:
+    async def _run() -> None:
+        track = AudioTrack(timeout_s=0.01)
+        stream = mocked_sounddevice["stream"]
+        payload = b"\x7f\x00" * track._blocksize
+
+        stream.push(payload)
+        frame = await track.recv()
+        packet = serialize_audio_frame(frame)
+
+        received = deserialize_audio_packet(packet)
+        assert received.sample_rate == track._samplerate
+        assert received.samples == track._blocksize
+        assert bytes(received.planes[0]) == payload
 
     asyncio.run(_run())
