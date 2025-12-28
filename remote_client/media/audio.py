@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 
 from aiortc import MediaStreamTrack
 from av.audio.frame import AudioFrame
@@ -46,3 +47,25 @@ class AudioTrack(MediaStreamTrack):
         frame.planes[0].update(data)
         frame.sample_rate = self._samplerate
         return frame
+
+
+def serialize_audio_frame(frame: AudioFrame) -> bytes:
+    """Serialize an audio frame into a simple binary packet."""
+    payload = bytes(frame.planes[0])
+    header = struct.pack("<II", frame.sample_rate or 0, frame.samples)
+    return header + payload
+
+
+def deserialize_audio_packet(packet: bytes) -> AudioFrame:
+    """Deserialize a binary audio packet into an AudioFrame."""
+    if len(packet) < 8:
+        raise ValueError("Audio packet too short.")
+    samplerate, samples = struct.unpack("<II", packet[:8])
+    payload = packet[8:]
+    expected_bytes = samples * 2
+    if len(payload) != expected_bytes:
+        raise ValueError("Audio payload size mismatch.")
+    frame = AudioFrame(format="s16", layout="mono", samples=samples)
+    frame.planes[0].update(payload)
+    frame.sample_rate = samplerate
+    return frame
