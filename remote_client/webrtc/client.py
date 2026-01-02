@@ -34,8 +34,14 @@ class WebRTCClient:
 
     async def _run_once(self) -> None:
         pc = RTCPeerConnection()
+        done_event = asyncio.Event()
         for track in self._media_tracks:
             pc.addTrack(track)
+
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange() -> None:
+            if pc.connectionState in {"failed", "closed", "disconnected"}:
+                done_event.set()
 
         @pc.on("datachannel")
         def on_datachannel(channel):
@@ -59,8 +65,10 @@ class WebRTCClient:
             await pc.setLocalDescription(answer)
             await self._signaling.send(pc.localDescription)
 
-            while True:
-                await asyncio.sleep(1)
+            try:
+                await asyncio.wait_for(done_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
         except (ConnectionError, OSError, asyncio.CancelledError):
             return
         finally:
