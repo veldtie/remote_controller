@@ -47,6 +47,8 @@ class WebRTCClient:
         try:
             await self._signaling.connect()
             offer = await self._signaling.receive()
+            if offer is None:
+                return
             await pc.setRemoteDescription(offer)
 
             answer = await pc.createAnswer()
@@ -56,7 +58,10 @@ class WebRTCClient:
             while True:
                 await asyncio.sleep(1)
         except (ConnectionError, OSError, asyncio.CancelledError):
+            return
+        finally:
             await pc.close()
+            await self._signaling.close()
 
     async def _handle_message(self, channel, payload: dict[str, Any]) -> None:
         action = payload.get("action")
