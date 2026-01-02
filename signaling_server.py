@@ -39,7 +39,22 @@ async def offer(request: Request):
         )
     if "sdp" not in data or "type" not in data:
         return JSONResponse(
-            {"error": "Missing 'sdp' or 'type' in request."},
+            {"error": "Missing 'sdp' or 'type' in request.", "code": "invalid_offer"},
+            status_code=400,
+        )
+    if not isinstance(data["type"], str):
+        return JSONResponse(
+            {"error": "Field 'type' must be a string.", "code": "invalid_offer"},
+            status_code=400,
+        )
+    if data["type"] != "offer":
+        return JSONResponse(
+            {"error": "Field 'type' must be 'offer'.", "code": "invalid_offer"},
+            status_code=400,
+        )
+    if not isinstance(data["sdp"], str) or not data["sdp"].strip():
+        return JSONResponse(
+            {"error": "Field 'sdp' must be a non-empty string.", "code": "invalid_offer"},
             status_code=400,
         )
     offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
