@@ -9,7 +9,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.signaling import TcpSocketSignaling
 
 from remote_client.control.handlers import ControlHandler
-from remote_client.files.file_service import FileService
+from remote_client.files.file_service import FileService, FileServiceError
 
 
 class WebRTCClient:
@@ -41,7 +41,11 @@ class WebRTCClient:
         def on_datachannel(channel):
             @channel.on("message")
             async def on_message(message):
-                payload = json.loads(message)
+                try:
+                    payload = json.loads(message)
+                except json.JSONDecodeError as exc:
+                    self._send_error(channel, "invalid_json", str(exc))
+                    return
                 await self._handle_message(channel, payload)
 
         try:
@@ -65,16 +69,42 @@ class WebRTCClient:
 
     async def _handle_message(self, channel, payload: dict[str, Any]) -> None:
         action = payload.get("action")
+        if not action:
+            self._send_error(channel, "missing_action", "Message missing 'action'.")
+            return
         if action == "control":
-            self._control_handler.handle(payload)
+            try:
+                self._control_handler.handle(payload)
+            except (KeyError, ValueError, TypeError) as exc:
+                self._send_error(channel, "invalid_control", str(exc))
             return
 
         if action == "list_files":
             path = payload.get("path", ".")
-            entries = self._file_service.list_files(path)
-            channel.send(json.dumps({"files": self._file_service.serialize_entries(entries)}))
+            try:
+                entries = self._file_service.list_files(path)
+            except FileServiceError as exc:
+                self._send_error(channel, exc.code, str(exc))
+                return
+            channel.send(
+                json.dumps({"files": self._file_service.serialize_entries(entries)})
+            )
             return
 
         if action == "download":
-            channel.send(self._file_service.read_file_base64(payload["path"]))
+            try:
+                path = payload["path"]
+            except KeyError as exc:
+                self._send_error(channel, "missing_path", "Download missing 'path'.")
+                return
+            try:
+                channel.send(self._file_service.read_file_base64(path))
+            except FileServiceError as exc:
+                self._send_error(channel, exc.code, str(exc))
             return
+
+        self._send_error(channel, "unknown_action", f"Unknown action '{action}'.")
+
+    @staticmethod
+    def _send_error(channel, code: str, message: str) -> None:
+        channel.send(json.dumps({"error": {"code": code, "message": message}}))

@@ -26,14 +26,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# TCP signaling used by Python client
-signaling = TcpSocketSignaling(SIGNALING_HOST, SIGNALING_PORT)
 signaling_lock = asyncio.Lock()
 
 @app.post("/offer")
 async def offer(request: Request):
-    data = await request.json()
+    try:
+        data = await request.json()
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid JSON payload."},
+            status_code=400,
+        )
+    if "sdp" not in data or "type" not in data:
+        return JSONResponse(
+            {"error": "Missing 'sdp' or 'type' in request."},
+            status_code=400,
+        )
     offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
+    signaling = TcpSocketSignaling(SIGNALING_HOST, SIGNALING_PORT)
 
     async with signaling_lock:
         try:
