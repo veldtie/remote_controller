@@ -16,11 +16,11 @@ from remote_client.webrtc.client import WebRTCClient
 from remote_client.webrtc.signaling import create_signaling
 
 
-def build_client(session_id: str) -> WebRTCClient:
+def build_client(session_id: str, token: str | None) -> WebRTCClient:
     signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
     signaling_port = int(os.getenv("RC_SIGNALING_PORT", "9999"))
 
-    signaling = create_signaling(signaling_host, signaling_port, session_id)
+    signaling = create_signaling(signaling_host, signaling_port, session_id, token)
     control_handler = ControlHandler(InputController())
     file_service = FileService()
     media_tracks = [ScreenTrack(), AudioTrack()]
@@ -59,7 +59,8 @@ def main() -> None:
     session_id = _resolve_session_id(args.session_id)
     print(f"Using session_id: {session_id}")
 
-    client = build_client(session_id)
+    token = os.getenv("RC_SIGNALING_TOKEN")
+    client = build_client(session_id, token)
     asyncio.run(client.run_forever())
 
 

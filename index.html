@@ -20,6 +20,8 @@
   <input id="serverUrl" type="text" value="http://localhost:8000" size="28" />
   <label for="sessionId">Session:</label>
   <input id="sessionId" type="text" value="default-session" size="16" />
+  <label for="authToken">Token:</label>
+  <input id="authToken" type="text" placeholder="optional" size="16" />
   <button id="connectButton">Connect</button>
   <span id="status"></span>
 </div>
@@ -57,9 +59,11 @@ async function connect() {
   setStatus('Connecting...');
   const apiBase = document.getElementById('serverUrl').value.trim() || 'http://localhost:8000';
   const sessionId = document.getElementById('sessionId').value.trim() || 'default-session';
+  const authToken = document.getElementById('authToken').value.trim();
   const apiUrl = new URL(apiBase);
   const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws?session_id=${encodeURIComponent(sessionId)}&role=browser`;
+  const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : '';
+  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws?session_id=${encodeURIComponent(sessionId)}&role=browser${tokenParam}`;
 
   signalingSocket = new WebSocket(wsUrl);
   signalingSocket.onclose = () => setStatus('Disconnected');
@@ -76,7 +80,12 @@ async function connect() {
 
   signalingSocket.onopen = async () => {
   pc = new RTCPeerConnection();
-  signalingSocket.send(JSON.stringify({ type: 'register', session_id: sessionId, role: 'browser' }));
+  signalingSocket.send(JSON.stringify({
+    type: 'register',
+    session_id: sessionId,
+    role: 'browser',
+    token: authToken || undefined
+  }));
 
   pc.ontrack = (event) => {
     document.getElementById('screen').srcObject = event.streams[0];

@@ -13,10 +13,11 @@ from websockets import WebSocketClientProtocol
 @dataclass
 class WebSocketSignaling:
     url: str
+    headers: dict[str, str] | None = None
     _socket: WebSocketClientProtocol | None = None
 
     async def connect(self) -> None:
-        self._socket = await websockets.connect(self.url)
+        self._socket = await websockets.connect(self.url, extra_headers=self.headers)
 
     async def receive(self) -> dict[str, Any] | None:
         if not self._socket:
@@ -37,7 +38,17 @@ class WebSocketSignaling:
             self._socket = None
 
 
-def create_signaling(host: str, port: int, session_id: str) -> WebSocketSignaling:
-    query = urlencode({"session_id": session_id, "role": "client"})
+def create_signaling(
+    host: str,
+    port: int,
+    session_id: str,
+    token: str | None = None,
+) -> WebSocketSignaling:
+    query_params = {"session_id": session_id, "role": "client"}
+    headers = None
+    if token:
+        query_params["token"] = token
+        headers = {"x-rc-token": token}
+    query = urlencode(query_params)
     url = f"ws://{host}:{port}/ws?{query}"
-    return WebSocketSignaling(url)
+    return WebSocketSignaling(url, headers=headers)
