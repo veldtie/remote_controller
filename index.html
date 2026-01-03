@@ -93,7 +93,11 @@ async function connect() {
       await pc.setRemoteDescription(payload);
       registerControls();
     } else if (payload.type === 'ice' && payload.candidate) {
-      await pc.addIceCandidate(payload);
+      await pc.addIceCandidate({
+        candidate: payload.candidate,
+        sdpMid: payload.sdpMid,
+        sdpMLineIndex: payload.sdpMLineIndex
+      });
     }
   };
 
@@ -111,7 +115,13 @@ async function connect() {
     };
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        signalingSocket.send(JSON.stringify({ type: 'ice', ...event.candidate.toJSON() }));
+        signalingSocket.send(JSON.stringify({
+          type: 'ice',
+          session_id: sessionId,
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        }));
       }
     };
 
