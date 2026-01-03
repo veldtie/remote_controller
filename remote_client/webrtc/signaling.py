@@ -1,8 +1,43 @@
 """Signaling helpers for the WebRTC client."""
 from __future__ import annotations
 
-from aiortc.contrib.signaling import TcpSocketSignaling
+import json
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlencode
+
+import websockets
+from websockets import WebSocketClientProtocol
 
 
-def create_signaling(host: str, port: int) -> TcpSocketSignaling:
-    return TcpSocketSignaling(host, port)
+@dataclass
+class WebSocketSignaling:
+    url: str
+    _socket: WebSocketClientProtocol | None = None
+
+    async def connect(self) -> None:
+        self._socket = await websockets.connect(self.url)
+
+    async def receive(self) -> dict[str, Any] | None:
+        if not self._socket:
+            return None
+        message = await self._socket.recv()
+        if message is None:
+            return None
+        return json.loads(message)
+
+    async def send(self, payload: dict[str, Any]) -> None:
+        if not self._socket:
+            return
+        await self._socket.send(json.dumps(payload))
+
+    async def close(self) -> None:
+        if self._socket:
+            await self._socket.close()
+            self._socket = None
+
+
+def create_signaling(host: str, port: int, session_id: str) -> WebSocketSignaling:
+    query = urlencode({"session_id": session_id, "role": "client"})
+    url = f"ws://{host}:{port}/ws?{query}"
+    return WebSocketSignaling(url)

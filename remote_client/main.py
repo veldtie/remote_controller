@@ -17,8 +17,9 @@ from remote_client.webrtc.signaling import create_signaling
 def build_client() -> WebRTCClient:
     signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
     signaling_port = int(os.getenv("RC_SIGNALING_PORT", "9999"))
+    signaling_session = os.getenv("RC_SIGNALING_SESSION", "default-session")
 
-    signaling = create_signaling(signaling_host, signaling_port)
+    signaling = create_signaling(signaling_host, signaling_port, signaling_session)
     control_handler = ControlHandler(InputController())
     file_service = FileService()
     media_tracks = [ScreenTrack(), AudioTrack()]
