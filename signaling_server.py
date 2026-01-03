@@ -2,10 +2,11 @@
 # WebRTC signaling server for Remote Desktop
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -14,6 +15,50 @@ app = FastAPI()
 SIGNALING_HOST = os.getenv("RC_SIGNALING_HOST", "0.0.0.0")
 SIGNALING_PORT = int(os.getenv("RC_SIGNALING_PORT", "8000"))
 SIGNALING_TOKEN = os.getenv("RC_SIGNALING_TOKEN")
+
+
+def _normalize_ice_servers(value) -> list[dict[str, object]]:
+    servers: list[dict[str, object]] = []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return servers
+    for entry in value:
+        if isinstance(entry, str):
+            servers.append({"urls": [entry]})
+            continue
+        if not isinstance(entry, dict):
+            continue
+        urls = entry.get("urls") or entry.get("url")
+        if not urls:
+            continue
+        if isinstance(urls, str):
+            urls_list = [urls]
+        elif isinstance(urls, list):
+            urls_list = [item for item in urls if isinstance(item, str)]
+        else:
+            continue
+        server: dict[str, object] = {"urls": urls_list}
+        if "username" in entry:
+            server["username"] = entry["username"]
+        if "credential" in entry:
+            server["credential"] = entry["credential"]
+        servers.append(server)
+    return servers
+
+
+def _load_ice_servers() -> list[dict[str, object]]:
+    raw = os.getenv("RC_ICE_SERVERS")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return _normalize_ice_servers(parsed)
+
+
+ICE_SERVERS = _load_ice_servers()
 
 # Allow browser clients opened from file:// or other origins
 app.add_middleware(
@@ -79,6 +124,15 @@ class SessionRegistry:
 
 
 registry = SessionRegistry()
+
+
+@app.get("/ice-config")
+async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
+    if SIGNALING_TOKEN:
+        provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
+        if not provided_token or provided_token != SIGNALING_TOKEN:
+            raise HTTPException(status_code=403, detail="Invalid token")
+    return {"iceServers": ICE_SERVERS}
 
 
 @app.websocket("/ws")

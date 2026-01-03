@@ -4,13 +4,62 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from typing import Any
 
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
+from aiortc import (
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCIceCandidate,
+    RTCConfiguration,
+    RTCIceServer,
+)
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
 from remote_client.webrtc.signaling import WebSocketSignaling
+
+
+def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
+    servers: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return servers
+    for entry in value:
+        if isinstance(entry, str):
+            servers.append({"urls": [entry]})
+            continue
+        if not isinstance(entry, dict):
+            continue
+        urls = entry.get("urls") or entry.get("url")
+        if not urls:
+            continue
+        if isinstance(urls, str):
+            urls_list = [urls]
+        elif isinstance(urls, list):
+            urls_list = [item for item in urls if isinstance(item, str)]
+        else:
+            continue
+        server: dict[str, Any] = {"urls": urls_list}
+        if "username" in entry:
+            server["username"] = entry["username"]
+        if "credential" in entry:
+            server["credential"] = entry["credential"]
+        servers.append(server)
+    return servers
+
+
+def _load_ice_servers() -> list[RTCIceServer]:
+    raw = os.getenv("RC_ICE_SERVERS")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    servers = _normalize_ice_servers(parsed)
+    return [RTCIceServer(**server) for server in servers]
 
 
 class WebRTCClient:
@@ -29,6 +78,7 @@ class WebRTCClient:
         self._control_handler = control_handler
         self._file_service = file_service
         self._media_tracks = media_tracks
+        self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
 
     async def run_forever(self) -> None:
         while True:
@@ -36,7 +86,7 @@ class WebRTCClient:
             await asyncio.sleep(2)
 
     async def _run_once(self) -> None:
-        pc = RTCPeerConnection()
+        pc = RTCPeerConnection(self._rtc_configuration)
         done_event = asyncio.Event()
 
         @pc.on("connectionstatechange")
