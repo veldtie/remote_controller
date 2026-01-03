@@ -152,7 +152,14 @@ async def websocket_signaling(websocket: WebSocket) -> None:
     try:
         while True:
             message = await websocket.receive_text()
-            await registry.forward(session_id, role, message)
+            target_session_id = session_id
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("type") == "ice":
+                target_session_id = payload.get("session_id") or session_id
+            await registry.forward(target_session_id, role, message)
     except WebSocketDisconnect:
         pass
     finally:

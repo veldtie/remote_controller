@@ -112,6 +112,7 @@ class WebRTCClient:
             await self._signaling.send(
                 {
                     "type": "ice",
+                    "session_id": self._session_id,
                     "candidate": candidate.candidate,
                     "sdpMid": candidate.sdpMid,
                     "sdpMLineIndex": candidate.sdpMLineIndex,
