@@ -13,6 +13,7 @@ app = FastAPI()
 
 SIGNALING_HOST = os.getenv("RC_SIGNALING_HOST", "0.0.0.0")
 SIGNALING_PORT = int(os.getenv("RC_SIGNALING_PORT", "8000"))
+SIGNALING_TOKEN = os.getenv("RC_SIGNALING_TOKEN")
 
 # Allow browser clients opened from file:// or other origins
 app.add_middleware(
@@ -84,6 +85,11 @@ registry = SessionRegistry()
 async def websocket_signaling(websocket: WebSocket) -> None:
     session_id = websocket.query_params.get("session_id")
     role = websocket.query_params.get("role")
+    if SIGNALING_TOKEN:
+        provided_token = websocket.query_params.get("token") or websocket.headers.get("x-rc-token")
+        if not provided_token or provided_token != SIGNALING_TOKEN:
+            await websocket.close(code=1008)
+            return
     if not session_id or role not in {"browser", "client"}:
         await websocket.close(code=1008)
         return

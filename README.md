@@ -73,13 +73,15 @@
 Подключение выполняется с параметрами `session_id` и `role`:
 
 ```
-ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client
+ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 ```
+
+Токен также можно отправить в заголовке `x-rc-token`.
 
 После открытия соединения стороны отправляют сообщение регистрации:
 
 ```json
-{ "type": "register", "session_id": "<SESSION_ID>", "role": "browser|client" }
+{ "type": "register", "session_id": "<SESSION_ID>", "role": "browser|client", "token": "<TOKEN>" }
 ```
 
 Основные сообщения сигналинга:
@@ -150,6 +152,9 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client
 - Если нужно указать другой адрес сигналинга, используйте переменные окружения:
   - `RC_SIGNALING_HOST` (по умолчанию `localhost`)
   - `RC_SIGNALING_PORT` (по умолчанию `9999`)
+- Для включения проверки токена используйте `RC_SIGNALING_TOKEN` на сервере и передавайте его клиентам:
+  - Клиент может передавать токен через переменную окружения `RC_SIGNALING_TOKEN`.
+  - Браузерный интерфейс принимает токен в поле **Token** и добавляет его в query-параметры.
 - Идентификатор сессии можно задать через `RC_SIGNALING_SESSION` или флаг `--session-id`.
 - Для работы с мышью/клавиатурой требуется доступ к системному вводу (зависит от ОС).
 - Захват экрана/аудио может потребовать разрешений ОС.
