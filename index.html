@@ -76,6 +76,7 @@ async function connect() {
 
   signalingSocket.onopen = async () => {
   pc = new RTCPeerConnection();
+  signalingSocket.send(JSON.stringify({ type: 'register', session_id: sessionId, role: 'browser' }));
 
   pc.ontrack = (event) => {
     document.getElementById('screen').srcObject = event.streams[0];

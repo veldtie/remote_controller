@@ -66,6 +66,59 @@
 
 4. Откройте `index.html` в браузере и нажмите **Connect**.
 
+## Формат сообщений
+
+### Сигналинг (WebSocket `/ws`)
+
+Подключение выполняется с параметрами `session_id` и `role`:
+
+```
+ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client
+```
+
+После открытия соединения стороны отправляют сообщение регистрации:
+
+```json
+{ "type": "register", "session_id": "<SESSION_ID>", "role": "browser|client" }
+```
+
+Основные сообщения сигналинга:
+
+```json
+{ "type": "offer", "sdp": "..." }
+{ "type": "answer", "sdp": "..." }
+{ "type": "ice", "candidate": "...", "sdpMid": "0", "sdpMLineIndex": 0 }
+```
+
+### Управляющий канал (DataChannel `control`)
+
+Сообщения управления отправляются как JSON с `action`:
+
+```json
+{ "action": "control", "type": "mouse_move", "x": 100, "y": 50 }
+{ "action": "control", "type": "mouse_click", "x": 100, "y": 50, "button": "left" }
+{ "action": "control", "type": "keypress", "key": "a" }
+```
+
+Файловые операции:
+
+```json
+{ "action": "list_files", "path": "." }
+{ "action": "download", "path": "example.txt" }
+```
+
+Ответ на `list_files`:
+
+```json
+{ "files": [ { "name": "example.txt", "type": "file", "size": 123 } ] }
+```
+
+Ответ на `download`:
+
+```json
+"<base64-содержимое файла>"
+```
+
 ## Запуск тестов
 
 1. Установите зависимости (см. шаг 1 в разделе выше).
@@ -97,5 +150,6 @@
 - Если нужно указать другой адрес сигналинга, используйте переменные окружения:
   - `RC_SIGNALING_HOST` (по умолчанию `localhost`)
   - `RC_SIGNALING_PORT` (по умолчанию `9999`)
+- Идентификатор сессии можно задать через `RC_SIGNALING_SESSION` или флаг `--session-id`.
 - Для работы с мышью/клавиатурой требуется доступ к системному вводу (зависит от ОС).
 - Захват экрана/аудио может потребовать разрешений ОС.

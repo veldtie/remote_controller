@@ -18,11 +18,13 @@ class WebRTCClient:
 
     def __init__(
         self,
+        session_id: str,
         signaling: WebSocketSignaling,
         control_handler: ControlHandler,
         file_service: FileService,
         media_tracks: list[Any],
     ) -> None:
+        self._session_id = session_id
         self._signaling = signaling
         self._control_handler = control_handler
         self._file_service = file_service
@@ -68,6 +70,9 @@ class WebRTCClient:
 
         try:
             await self._signaling.connect()
+            await self._signaling.send(
+                {"type": "register", "session_id": self._session_id, "role": "client"}
+            )
             offer_payload = await self._await_offer()
             if offer_payload is None:
                 return
