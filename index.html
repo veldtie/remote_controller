@@ -59,6 +59,9 @@ async function connect() {
     document.getElementById('screen').srcObject = event.streams[0];
   };
 
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addTransceiver('audio', { direction: 'recvonly' });
+
   dataChannel = pc.createDataChannel('control');
   dataChannel.onopen = () => setStatus('Connected');
   dataChannel.onclose = () => setStatus('Disconnected');

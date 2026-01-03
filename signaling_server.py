@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from aiortc import RTCSessionDescription
-from aiortc.contrib.signaling import TcpSocketSignaling
+from aiortc.contrib.signaling import SignalingBye, TcpSocketSignaling
 import uvicorn
 
 app = FastAPI()
@@ -83,6 +83,16 @@ async def offer(request: Request):
     if answer is None:
         return JSONResponse(
             {"error": "Remote client disconnected before sending an answer."},
+            status_code=502,
+        )
+    if isinstance(answer, SignalingBye):
+        return JSONResponse(
+            {"error": "Remote client sent BYE before sending an answer."},
+            status_code=502,
+        )
+    if not isinstance(answer, RTCSessionDescription):
+        return JSONResponse(
+            {"error": f"Unexpected signaling response: {type(answer).__name__}"},
             status_code=502,
         )
 
