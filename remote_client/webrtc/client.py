@@ -35,8 +35,6 @@ class WebRTCClient:
     async def _run_once(self) -> None:
         pc = RTCPeerConnection()
         done_event = asyncio.Event()
-        for track in self._media_tracks:
-            pc.addTrack(track)
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
@@ -60,6 +58,11 @@ class WebRTCClient:
             if offer is None:
                 return
             await pc.setRemoteDescription(offer)
+
+            offered_kinds = {transceiver.kind for transceiver in pc.getTransceivers()}
+            for track in self._media_tracks:
+                if track.kind in offered_kinds:
+                    pc.addTrack(track)
 
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
