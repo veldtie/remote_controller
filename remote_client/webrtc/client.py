@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.signaling import TcpSocketSignaling
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
+from remote_client.webrtc.signaling import WebSocketSignaling
 
 
 class WebRTCClient:
@@ -17,7 +18,7 @@ class WebRTCClient:
 
     def __init__(
         self,
-        signaling: TcpSocketSignaling,
+        signaling: WebSocketSignaling,
         control_handler: ControlHandler,
         file_service: FileService,
         media_tracks: list[Any],
@@ -52,11 +53,27 @@ class WebRTCClient:
                     return
                 await self._handle_message(channel, payload)
 
+        @pc.on("icecandidate")
+        async def on_icecandidate(candidate) -> None:
+            if candidate is None:
+                return
+            await self._signaling.send(
+                {
+                    "type": "ice",
+                    "candidate": candidate.candidate,
+                    "sdpMid": candidate.sdpMid,
+                    "sdpMLineIndex": candidate.sdpMLineIndex,
+                }
+            )
+
         try:
             await self._signaling.connect()
-            offer = await self._signaling.receive()
-            if offer is None:
+            offer_payload = await self._await_offer()
+            if offer_payload is None:
                 return
+            offer = RTCSessionDescription(
+                sdp=offer_payload["sdp"], type=offer_payload["type"]
+            )
             await pc.setRemoteDescription(offer)
 
             offered_kinds = {transceiver.kind for transceiver in pc.getTransceivers()}
@@ -66,17 +83,50 @@ class WebRTCClient:
 
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            await self._signaling.send(pc.localDescription)
+            await self._signaling.send(
+                {"type": pc.localDescription.type, "sdp": pc.localDescription.sdp}
+            )
 
+            signaling_task = asyncio.create_task(self._signaling_loop(pc))
             try:
                 await asyncio.wait_for(done_event.wait(), timeout=60)
             except asyncio.TimeoutError:
                 pass
+            finally:
+                signaling_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await signaling_task
         except (ConnectionError, OSError, asyncio.CancelledError):
             return
         finally:
             await pc.close()
             await self._signaling.close()
+
+    async def _await_offer(self) -> dict[str, Any] | None:
+        while True:
+            message = await self._signaling.receive()
+            if message is None:
+                return None
+            if message.get("type") == "offer":
+                return message
+
+    async def _signaling_loop(self, pc: RTCPeerConnection) -> None:
+        while True:
+            message = await self._signaling.receive()
+            if message is None:
+                return
+            message_type = message.get("type")
+            if message_type == "ice":
+                candidate = message.get("candidate")
+                if not candidate:
+                    continue
+                await pc.addIceCandidate(
+                    RTCIceCandidate(
+                        candidate=candidate,
+                        sdpMid=message.get("sdpMid"),
+                        sdpMLineIndex=message.get("sdpMLineIndex"),
+                    )
+                )
 
     async def _handle_message(self, channel, payload: dict[str, Any]) -> None:
         action = payload.get("action")

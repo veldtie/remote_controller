@@ -18,6 +18,8 @@
 <div id="panel">
   <label for="serverUrl">Server URL:</label>
   <input id="serverUrl" type="text" value="http://localhost:8000" size="28" />
+  <label for="sessionId">Session:</label>
+  <input id="sessionId" type="text" value="default-session" size="16" />
   <button id="connectButton">Connect</button>
   <span id="status"></span>
 </div>
@@ -34,6 +36,7 @@ const CONTROL_TYPES = {
 
 let pc;
 let dataChannel;
+let signalingSocket;
 
 const statusEl = document.getElementById('status');
 
@@ -53,10 +56,34 @@ function sendControl(payload) {
 async function connect() {
   setStatus('Connecting...');
   const apiBase = document.getElementById('serverUrl').value.trim() || 'http://localhost:8000';
+  const sessionId = document.getElementById('sessionId').value.trim() || 'default-session';
+  const apiUrl = new URL(apiBase);
+  const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws?session_id=${encodeURIComponent(sessionId)}&role=browser`;
+
+  signalingSocket = new WebSocket(wsUrl);
+  signalingSocket.onclose = () => setStatus('Disconnected');
+  signalingSocket.onerror = () => setStatus('Connection failed');
+  signalingSocket.onmessage = async (event) => {
+    const payload = JSON.parse(event.data);
+    if (payload.type === 'answer') {
+      await pc.setRemoteDescription(payload);
+      registerControls();
+    } else if (payload.type === 'ice' && payload.candidate) {
+      await pc.addIceCandidate(payload);
+    }
+  };
+
+  signalingSocket.onopen = async () => {
   pc = new RTCPeerConnection();
 
   pc.ontrack = (event) => {
     document.getElementById('screen').srcObject = event.streams[0];
+  };
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      signalingSocket.send(JSON.stringify({ type: 'ice', ...event.candidate.toJSON() }));
+    }
   };
 
   pc.addTransceiver('video', { direction: 'recvonly' });
@@ -69,24 +96,8 @@ async function connect() {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  try {
-    const response = await fetch(`${apiBase}/offer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(offer)
-    });
-
-    if (!response.ok) {
-      throw new Error(`Signaling failed: ${response.status}`);
-    }
-
-    const answer = await response.json();
-    await pc.setRemoteDescription(answer);
-    registerControls();
-  } catch (error) {
-    console.error(error);
-    setStatus('Connection failed');
-  }
+  signalingSocket.send(JSON.stringify(pc.localDescription));
+  };
 }
 
 function registerControls() {

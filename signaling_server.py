@@ -3,19 +3,16 @@
 
 import asyncio
 import os
-from fastapi import FastAPI, Request
+from dataclasses import dataclass
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from aiortc import RTCSessionDescription
-from aiortc.contrib.signaling import SignalingBye, TcpSocketSignaling
 import uvicorn
 
 app = FastAPI()
 
 SIGNALING_HOST = os.getenv("RC_SIGNALING_HOST", "0.0.0.0")
-SIGNALING_PORT = int(os.getenv("RC_SIGNALING_PORT", "9999"))
-SIGNALING_CONNECT_TIMEOUT = float(os.getenv("RC_SIGNALING_CONNECT_TIMEOUT", "30"))
-SIGNALING_ANSWER_TIMEOUT = float(os.getenv("RC_SIGNALING_ANSWER_TIMEOUT", "30"))
+SIGNALING_PORT = int(os.getenv("RC_SIGNALING_PORT", "8000"))
 
 # Allow browser clients opened from file:// or other origins
 app.add_middleware(
@@ -26,77 +23,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-signaling_lock = asyncio.Lock()
 
-@app.post("/offer")
-async def offer(request: Request):
+@dataclass
+class SessionPair:
+    browser: WebSocket | None = None
+    client: WebSocket | None = None
+
+
+class SessionRegistry:
+    def __init__(self) -> None:
+        self._sessions: dict[str, SessionPair] = {}
+        self._lock = asyncio.Lock()
+
+    async def register(self, session_id: str, role: str, websocket: WebSocket) -> None:
+        async with self._lock:
+            session = self._sessions.setdefault(session_id, SessionPair())
+            if role == "browser":
+                session.browser = websocket
+            elif role == "client":
+                session.client = websocket
+
+    async def unregister(self, session_id: str, role: str, websocket: WebSocket) -> None:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if not session:
+                return
+            if role == "browser" and session.browser is websocket:
+                session.browser = None
+            if role == "client" and session.client is websocket:
+                session.client = None
+            if session.browser is None and session.client is None:
+                self._sessions.pop(session_id, None)
+
+    async def forward(self, session_id: str, role: str, message: str) -> None:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if not session:
+                return
+            peer = session.client if role == "browser" else session.browser
+        if peer is not None:
+            await peer.send_text(message)
+
+
+registry = SessionRegistry()
+
+
+@app.websocket("/ws")
+async def websocket_signaling(websocket: WebSocket) -> None:
+    session_id = websocket.query_params.get("session_id")
+    role = websocket.query_params.get("role")
+    if not session_id or role not in {"browser", "client"}:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    await registry.register(session_id, role, websocket)
     try:
-        data = await request.json()
-    except ValueError:
-        return JSONResponse(
-            {"error": "Invalid JSON payload."},
-            status_code=400,
-        )
-    if "sdp" not in data or "type" not in data:
-        return JSONResponse(
-            {"error": "Missing 'sdp' or 'type' in request.", "code": "invalid_offer"},
-            status_code=400,
-        )
-    if not isinstance(data["type"], str):
-        return JSONResponse(
-            {"error": "Field 'type' must be a string.", "code": "invalid_offer"},
-            status_code=400,
-        )
-    if data["type"] != "offer":
-        return JSONResponse(
-            {"error": "Field 'type' must be 'offer'.", "code": "invalid_offer"},
-            status_code=400,
-        )
-    if not isinstance(data["sdp"], str) or not data["sdp"].strip():
-        return JSONResponse(
-            {"error": "Field 'sdp' must be a non-empty string.", "code": "invalid_offer"},
-            status_code=400,
-        )
-    offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
-    signaling = TcpSocketSignaling(SIGNALING_HOST, SIGNALING_PORT)
+        while True:
+            message = await websocket.receive_text()
+            await registry.forward(session_id, role, message)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await registry.unregister(session_id, role, websocket)
 
-    async with signaling_lock:
-        try:
-            await asyncio.wait_for(signaling.send(offer), timeout=SIGNALING_CONNECT_TIMEOUT)
-            answer = await asyncio.wait_for(
-                signaling.receive(),
-                timeout=SIGNALING_ANSWER_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            return JSONResponse(
-                {"error": "Timed out waiting for the remote client."},
-                status_code=504,
-            )
-        except (ConnectionError, OSError) as exc:
-            return JSONResponse(
-                {"error": f"Signaling connection failed: {exc}"},
-                status_code=502,
-            )
-        finally:
-            await signaling.close()
-
-    if answer is None:
-        return JSONResponse(
-            {"error": "Remote client disconnected before sending an answer."},
-            status_code=502,
-        )
-    if isinstance(answer, SignalingBye):
-        return JSONResponse(
-            {"error": "Remote client sent BYE before answer."},
-            status_code=502,
-        )
-    if not isinstance(answer, RTCSessionDescription):
-        return JSONResponse(
-            {"error": f"Unexpected answer type: {type(answer).__name__}."},
-            status_code=502,
-        )
-
-    return JSONResponse({"sdp": answer.sdp, "type": answer.type})
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=SIGNALING_HOST, port=SIGNALING_PORT)

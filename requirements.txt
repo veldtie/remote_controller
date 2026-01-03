@@ -1,6 +1,7 @@
 aiortc
 fastapi
 uvicorn
+websockets
 mss
 av
 sounddevice
