@@ -1,8 +1,10 @@
 """Entry point for the remote client."""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
+import uuid
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.control.input_controller import InputController
@@ -14,22 +16,31 @@ from remote_client.webrtc.client import WebRTCClient
 from remote_client.webrtc.signaling import create_signaling
 
 
-def build_client() -> WebRTCClient:
+def build_client(session_id: str) -> WebRTCClient:
     signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
     signaling_port = int(os.getenv("RC_SIGNALING_PORT", "9999"))
-    signaling_session = os.getenv("RC_SIGNALING_SESSION", "default-session")
 
-    signaling = create_signaling(signaling_host, signaling_port, signaling_session)
+    signaling = create_signaling(signaling_host, signaling_port, session_id)
     control_handler = ControlHandler(InputController())
     file_service = FileService()
     media_tracks = [ScreenTrack(), AudioTrack()]
 
     return WebRTCClient(
+        session_id=session_id,
         signaling=signaling,
         control_handler=control_handler,
         file_service=file_service,
         media_tracks=media_tracks,
     )
+
+
+def _resolve_session_id(session_id: str | None) -> str:
+    if session_id:
+        return session_id
+    env_session = os.getenv("RC_SIGNALING_SESSION")
+    if env_session:
+        return env_session
+    return uuid.uuid4().hex
 
 
 def main() -> None:
@@ -39,7 +50,16 @@ def main() -> None:
         silent_uninstall_and_cleanup(base_dir)
         return
 
-    client = build_client()
+    parser = argparse.ArgumentParser(description="Remote controller client")
+    parser.add_argument(
+        "--session-id",
+        help="Session identifier used to register with the signaling server.",
+    )
+    args = parser.parse_args()
+    session_id = _resolve_session_id(args.session_id)
+    print(f"Using session_id: {session_id}")
+
+    client = build_client(session_id)
     asyncio.run(client.run_forever())
 
 

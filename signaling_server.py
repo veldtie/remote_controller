@@ -33,6 +33,10 @@ class SessionPair:
 class SessionRegistry:
     def __init__(self) -> None:
         self._sessions: dict[str, SessionPair] = {}
+        self._client_by_session: dict[str, WebSocket] = {}
+        self._session_by_client: dict[WebSocket, str] = {}
+        self._browser_by_session: dict[str, WebSocket] = {}
+        self._session_by_browser: dict[WebSocket, str] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, session_id: str, role: str, websocket: WebSocket) -> None:
@@ -40,8 +44,12 @@ class SessionRegistry:
             session = self._sessions.setdefault(session_id, SessionPair())
             if role == "browser":
                 session.browser = websocket
+                self._browser_by_session[session_id] = websocket
+                self._session_by_browser[websocket] = session_id
             elif role == "client":
                 session.client = websocket
+                self._client_by_session[session_id] = websocket
+                self._session_by_client[websocket] = session_id
 
     async def unregister(self, session_id: str, role: str, websocket: WebSocket) -> None:
         async with self._lock:
@@ -50,8 +58,12 @@ class SessionRegistry:
                 return
             if role == "browser" and session.browser is websocket:
                 session.browser = None
+                self._browser_by_session.pop(session_id, None)
+                self._session_by_browser.pop(websocket, None)
             if role == "client" and session.client is websocket:
                 session.client = None
+                self._client_by_session.pop(session_id, None)
+                self._session_by_client.pop(websocket, None)
             if session.browser is None and session.client is None:
                 self._sessions.pop(session_id, None)
 
