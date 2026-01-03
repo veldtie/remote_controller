@@ -17,7 +17,10 @@ class WebSocketSignaling:
     _socket: WebSocketClientProtocol | None = None
 
     async def connect(self) -> None:
-        self._socket = await websockets.connect(self.url, extra_headers=self.headers)
+        self._socket = await websockets.connect(
+            self.url,
+            additional_headers=self.headers,
+        )
 
     async def receive(self) -> dict[str, Any] | None:
         if not self._socket:
