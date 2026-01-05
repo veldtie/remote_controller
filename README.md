@@ -53,7 +53,7 @@
    ```bash
    python signaling_server.py
    ```
-   По умолчанию он слушает HTTP на `:8000` и TCP signaling на `:9999`.
+   По умолчанию он слушает HTTP на `:8000` и WebSocket signaling на `:8000/ws`.
 
 3. Запустите клиент (на машине, которой нужно управлять):
    ```bash
@@ -151,7 +151,14 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 
 - Если нужно указать другой адрес сигналинга, используйте переменные окружения:
   - `RC_SIGNALING_HOST` (по умолчанию `localhost`)
-  - `RC_SIGNALING_PORT` (по умолчанию `9999`)
+  - `RC_SIGNALING_PORT` (по умолчанию `8000`)
+  - `RC_SIGNALING_URL` (полный WebSocket-URL, например `wss://signaling.example.com/ws`)
+    - При использовании `RC_SIGNALING_URL` переменные `RC_SIGNALING_HOST` и
+      `RC_SIGNALING_PORT` игнорируются.
+    - Поддерживаются схемы `ws`, `wss`, `http`, `https` (для HTTP будет выбран `ws`,
+      для HTTPS — `wss`).
+    - Можно указать базовый URL без `/ws` — клиент добавит его автоматически.
+    - Query-параметры из URL будут сохранены и дополнены `session_id`/`role`/`token`.
 - Для включения проверки токена используйте `RC_SIGNALING_TOKEN` на сервере и передавайте его клиентам:
   - Клиент может передавать токен через переменную окружения `RC_SIGNALING_TOKEN`.
   - Браузерный интерфейс принимает токен в поле **Token** и добавляет его в query-параметры.
