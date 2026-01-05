@@ -32,12 +32,19 @@ class FakePeerConnection:
     def addTrack(self, track: object) -> None:
         self.added_tracks.append(track)
 
+    def getTransceivers(self) -> list[object]:
+        return []
+
     def on(self, event: str):
         def decorator(handler):
             self.handlers[event] = handler
             return handler
 
         return decorator
+
+    @property
+    def connectionState(self) -> str:
+        return self.state
 
     async def setRemoteDescription(self, offer: FakeSessionDescription) -> None:
         self.remoteDescription = offer
@@ -48,32 +55,47 @@ class FakePeerConnection:
     async def setLocalDescription(self, answer: FakeSessionDescription) -> None:
         self.localDescription = answer
         self.state = "connected"
+        handler = self.handlers.get("connectionstatechange")
+        if handler:
+            self.state = "disconnected"
+            await handler()
+            self.state = "connected"
 
     async def close(self) -> None:
         self.closed = True
+        handler = self.handlers.get("connectionstatechange")
+        if handler:
+            await handler()
 
 
 class FakeSignaling:
     def __init__(self, offer: FakeSessionDescription) -> None:
         self.offer = offer
         self.connected = False
-        self.sent: list[FakeSessionDescription] = []
+        self.sent: list[object] = []
         self.received = False
+        self.closed = False
 
     async def connect(self) -> None:
         self.connected = True
 
     async def receive(self) -> FakeSessionDescription:
         self.received = True
-        return self.offer
+        return {"type": self.offer.type, "sdp": self.offer.sdp}
 
     async def send(self, description: FakeSessionDescription) -> None:
         self.sent.append(description)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class FailingSignaling:
     async def connect(self) -> None:
         raise ConnectionError("refused")
+
+    async def close(self) -> None:
+        return None
 
 
 def test_list_files_dir_and_file(tmp_path):
@@ -134,6 +156,7 @@ def test_integration_download_reads_and_transfers_file(tmp_path, control_handler
 
     file_service = FileService()
     client = WebRTCClient(
+        session_id="test-session",
         signaling=None,
         control_handler=control_handler,
         file_service=file_service,
@@ -158,36 +181,43 @@ def test_run_once_successful_handshake_marks_connected(monkeypatch):
     peer_connection = FakePeerConnection()
 
     client = WebRTCClient(
+        session_id="test-session",
         signaling=signaling,
         control_handler=object(),
         file_service=object(),
         media_tracks=[],
     )
 
-    async def stop_after_handshake(*_args, **_kwargs):
-        raise asyncio.CancelledError
-
     monkeypatch.setattr(
         "remote_client.webrtc.client.RTCPeerConnection",
-        lambda: peer_connection,
+        lambda *_args, **_kwargs: peer_connection,
     )
-    monkeypatch.setattr("remote_client.webrtc.client.asyncio.sleep", stop_after_handshake)
 
     asyncio.run(client._run_once())
 
     assert signaling.connected is True
     assert signaling.received is True
-    assert peer_connection.remoteDescription == offer
+    assert peer_connection.remoteDescription.sdp == offer.sdp
+    assert peer_connection.remoteDescription.type == offer.type
     assert peer_connection.localDescription is not None
-    assert signaling.sent == [peer_connection.localDescription]
+    assert len(signaling.sent) == 2
+    assert signaling.sent[0]["type"] == "register"
+    assert signaling.sent[0]["session_id"] == "test-session"
+    assert signaling.sent[0]["role"] == "client"
+    assert signaling.sent[1] == {
+        "type": peer_connection.localDescription.type,
+        "sdp": peer_connection.localDescription.sdp,
+    }
     assert peer_connection.state == "connected"
     assert peer_connection.closed is True
+    assert signaling.closed is True
 
 
 def test_run_once_failed_connection_closes_peer(monkeypatch):
     peer_connection = FakePeerConnection()
 
     client = WebRTCClient(
+        session_id="test-session",
         signaling=FailingSignaling(),
         control_handler=object(),
         file_service=object(),
@@ -196,7 +226,7 @@ def test_run_once_failed_connection_closes_peer(monkeypatch):
 
     monkeypatch.setattr(
         "remote_client.webrtc.client.RTCPeerConnection",
-        lambda: peer_connection,
+        lambda *_args, **_kwargs: peer_connection,
     )
 
     asyncio.run(client._run_once())

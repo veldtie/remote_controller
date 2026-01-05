@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import struct
 from types import SimpleNamespace
 
@@ -28,6 +29,8 @@ class DummyRawInputStream:
 @pytest.fixture
 def mocked_sounddevice(monkeypatch) -> DummyRawInputStream:
     stream_holder: dict[str, DummyRawInputStream] = {}
+
+    monkeypatch.setattr(ctypes.util, "find_library", lambda _name: "portaudio")
 
     def _factory(*args, **kwargs):
         stream_holder["stream"] = DummyRawInputStream(*args, **kwargs)

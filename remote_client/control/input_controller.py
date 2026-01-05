@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 import importlib.util
 import os
 import platform
+import sys
 from typing import Literal
 
 
@@ -40,12 +42,15 @@ class InputController:
         if platform.system() != "Windows" and not os.getenv("DISPLAY"):
             return
 
-        if importlib.util.find_spec("pyautogui") is None:  # pragma: no cover
+        try:
+            spec = importlib.util.find_spec("pyautogui")
+        except ValueError:
+            spec = None
+
+        if spec is None and "pyautogui" not in sys.modules:  # pragma: no cover
             raise RuntimeError("Missing optional dependency: pyautogui")
 
-        import pyautogui
-
-        self._pyautogui = pyautogui
+        self._pyautogui = importlib.import_module("pyautogui")
 
     def execute(self, command: ControlCommand) -> None:
         if self._pyautogui is None:

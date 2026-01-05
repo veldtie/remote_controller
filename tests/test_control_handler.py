@@ -47,6 +47,7 @@ def test_handle_message_control_invokes_input_controller(
 ):
     fake_pyautogui = install_fake_pyautogui(monkeypatch)
     client = WebRTCClient(
+        session_id="test-session",
         signaling=None,
         control_handler=ControlHandler(InputController()),
         file_service=file_service,

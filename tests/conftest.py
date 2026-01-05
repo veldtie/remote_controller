@@ -65,6 +65,11 @@ def base64_payload() -> str:
 
 
 @pytest.fixture
+def session_id() -> str:
+    return "test-session"
+
+
+@pytest.fixture
 def control_handler() -> DummyControlHandler:
     return DummyControlHandler()
 
@@ -83,8 +88,10 @@ def channel() -> DummyChannel:
 def client(
     control_handler: DummyControlHandler,
     file_service: DummyFileService,
+    session_id: str,
 ) -> WebRTCClient:
     return WebRTCClient(
+        session_id=session_id,
         signaling=DummySignaling(),
         control_handler=control_handler,
         file_service=file_service,
