@@ -17,7 +17,7 @@
 
 <div id="panel">
   <label for="serverUrl">Server URL:</label>
-  <input id="serverUrl" type="text" value="http://localhost:8000" size="28" />
+  <input id="serverUrl" type="text" value="" size="28" placeholder="http://localhost:8000" />
   <label for="sessionId">Session:</label>
   <input id="sessionId" type="text" value="default-session" size="16" />
   <label for="authToken">Token:</label>
@@ -42,6 +42,14 @@ let signalingSocket;
 let iceConfig = { iceServers: [] };
 
 const statusEl = document.getElementById('status');
+const serverUrlInput = document.getElementById('serverUrl');
+if (!serverUrlInput.value) {
+  if (window.location.protocol.startsWith('http')) {
+    serverUrlInput.value = window.location.origin;
+  } else {
+    serverUrlInput.value = 'http://localhost:8000';
+  }
+}
 
 function setStatus(message) {
   statusEl.textContent = message;

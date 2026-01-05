@@ -13,10 +13,11 @@ from remote_client.media.audio import AudioTrack
 from remote_client.media.screen import ScreenTrack
 from remote_client.security.anti_fraud import analyze_device, silent_uninstall_and_cleanup
 from remote_client.webrtc.client import WebRTCClient
-from remote_client.webrtc.signaling import create_signaling
+from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
 
 
 def build_client(session_id: str, token: str | None) -> WebRTCClient:
+<<<<<<< HEAD
     signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
     signaling_port = int(os.getenv("RC_SIGNALING_PORT", "8000"))
     signaling_url = os.getenv("RC_SIGNALING_URL")
@@ -28,6 +29,24 @@ def build_client(session_id: str, token: str | None) -> WebRTCClient:
         token,
         signaling_url=signaling_url,
     )
+=======
+    signaling_url = os.getenv("RC_SIGNALING_URL")
+    if signaling_url:
+        if "://" in signaling_url:
+            signaling = create_signaling_from_url(signaling_url, session_id, token)
+        else:
+            host, _, port = signaling_url.partition(":")
+            signaling = create_signaling(
+                host,
+                int(port) if port else int(os.getenv("RC_SIGNALING_PORT", "9999")),
+                session_id,
+                token,
+            )
+    else:
+        signaling_host = os.getenv("RC_SIGNALING_HOST", "localhost")
+        signaling_port = int(os.getenv("RC_SIGNALING_PORT", "9999"))
+        signaling = create_signaling(signaling_host, signaling_port, session_id, token)
+>>>>>>> 5bfcd791a99f9110b6a105a2e4b4f82ad65fe76a
     control_handler = ControlHandler(InputController())
     file_service = FileService()
     media_tracks = [ScreenTrack(), AudioTrack()]
