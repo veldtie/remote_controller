@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import websockets
 from websockets import WebSocketClientProtocol
@@ -54,4 +54,28 @@ def create_signaling(
         headers = {"x-rc-token": token}
     query = urlencode(query_params)
     url = f"ws://{host}:{port}/ws?{query}"
+    return WebSocketSignaling(url, headers=headers)
+
+
+def create_signaling_from_url(
+    base_url: str,
+    session_id: str,
+    token: str | None = None,
+) -> WebSocketSignaling:
+    parsed = urlparse(base_url)
+    if parsed.scheme in {"http", "https"}:
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+    else:
+        scheme = parsed.scheme or "ws"
+    path = parsed.path or "/ws"
+    if not path.endswith("/ws"):
+        path = path.rstrip("/") + "/ws"
+    query_params = dict(parse_qsl(parsed.query))
+    query_params.update({"session_id": session_id, "role": "client"})
+    headers = None
+    if token:
+        query_params["token"] = token
+        headers = {"x-rc-token": token}
+    query = urlencode(query_params)
+    url = urlunparse(parsed._replace(scheme=scheme, path=path, query=query))
     return WebSocketSignaling(url, headers=headers)
