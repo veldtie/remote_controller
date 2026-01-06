@@ -13,40 +13,46 @@ from websockets import WebSocketClientProtocol
 
 @dataclass
 class WebSocketSignaling:
+    """Thin wrapper around a WebSocket signaling channel."""
     url: str
     headers: dict[str, str] | None = None
-    _socket: WebSocketClientProtocol | None = None
+    _websocket: WebSocketClientProtocol | None = None
 
     async def connect(self) -> None:
-        kwargs: dict[str, object] = {}
+        """Open the websocket connection."""
+        connect_kwargs: dict[str, object] = {}
         if self.headers:
-            params = inspect.signature(websockets.connect).parameters
-            if "additional_headers" in params:
-                kwargs["additional_headers"] = self.headers
-            elif "extra_headers" in params:
-                kwargs["extra_headers"] = self.headers
-        self._socket = await websockets.connect(self.url, **kwargs)
+            connect_params = inspect.signature(websockets.connect).parameters
+            if "additional_headers" in connect_params:
+                connect_kwargs["additional_headers"] = self.headers
+            elif "extra_headers" in connect_params:
+                connect_kwargs["extra_headers"] = self.headers
+        self._websocket = await websockets.connect(self.url, **connect_kwargs)
 
     async def receive(self) -> dict[str, Any] | None:
-        if not self._socket:
+        """Receive a JSON message from signaling."""
+        if not self._websocket:
             return None
-        message = await self._socket.recv()
-        if message is None:
+        incoming_message = await self._websocket.recv()
+        if incoming_message is None:
             return None
-        return json.loads(message)
+        return json.loads(incoming_message)
 
     async def send(self, payload: dict[str, Any]) -> None:
-        if not self._socket:
+        """Send a JSON message over signaling."""
+        if not self._websocket:
             return
-        await self._socket.send(json.dumps(payload))
+        await self._websocket.send(json.dumps(payload))
 
     async def close(self) -> None:
-        if self._socket:
-            await self._socket.close()
-            self._socket = None
+        """Close the websocket connection."""
+        if self._websocket:
+            await self._websocket.close()
+            self._websocket = None
 
 
 def _build_ws_url(base_url: str, query_params: dict[str, str]) -> str:
+    """Build a websocket URL from a base URL and query params."""
     parsed = urlparse(base_url)
     scheme = parsed.scheme
     if scheme in {"http", "https"}:
@@ -73,6 +79,7 @@ def create_signaling(
     token: str | None = None,
     signaling_url: str | None = None,
 ) -> WebSocketSignaling:
+    """Create signaling connection info from host/port settings."""
     query_params = {"session_id": session_id, "role": "client"}
     headers = None
     if token:
@@ -91,6 +98,7 @@ def create_signaling_from_url(
     session_id: str,
     token: str | None = None,
 ) -> WebSocketSignaling:
+    """Create signaling connection info from a base URL."""
     parsed = urlparse(base_url)
     if parsed.scheme in {"http", "https"}:
         scheme = "wss" if parsed.scheme == "https" else "ws"

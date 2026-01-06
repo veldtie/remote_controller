@@ -29,6 +29,7 @@ logger = logging.getLogger("signaling_server")
 
 
 def _normalize_ice_servers(value) -> list[dict[str, object]]:
+    """Normalize ICE server entries into a list of RTC-compatible dicts."""
     servers: list[dict[str, object]] = []
     if isinstance(value, dict):
         value = [value]
@@ -59,6 +60,7 @@ def _normalize_ice_servers(value) -> list[dict[str, object]]:
 
 
 def _load_ice_servers() -> list[dict[str, object]]:
+    """Load ICE server config from the RC_ICE_SERVERS env var."""
     raw = os.getenv("RC_ICE_SERVERS")
     if not raw:
         return []
@@ -83,11 +85,13 @@ app.add_middleware(
 
 @dataclass
 class SessionPair:
+    """Active WebSocket pair for a single session."""
     browser: WebSocket | None = None
     client: WebSocket | None = None
 
 
 class SessionRegistry:
+    """Tracks active sessions and forwards signaling messages."""
     def __init__(self) -> None:
         self._sessions: dict[str, SessionPair] = {}
         self._client_by_session: dict[str, WebSocket] = {}
@@ -98,50 +102,55 @@ class SessionRegistry:
         self._lock = asyncio.Lock()
 
     async def register(self, session_id: str, role: str, websocket: WebSocket) -> None:
+        """Register a websocket for the given role in a session."""
         async with self._lock:
-            session = self._sessions.setdefault(session_id, SessionPair())
+            session_pair = self._sessions.setdefault(session_id, SessionPair())
             if role == "browser":
-                session.browser = websocket
+                session_pair.browser = websocket
                 self._browser_by_session[session_id] = websocket
                 self._session_by_browser[websocket] = session_id
             elif role == "client":
-                session.client = websocket
+                session_pair.client = websocket
                 self._client_by_session[session_id] = websocket
                 self._session_by_client[websocket] = session_id
             self._last_activity[session_id] = time.monotonic()
 
     async def unregister(self, session_id: str, role: str, websocket: WebSocket) -> None:
+        """Remove a websocket from session tracking."""
         async with self._lock:
-            session = self._sessions.get(session_id)
-            if not session:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair:
                 return
-            if role == "browser" and session.browser is websocket:
-                session.browser = None
+            if role == "browser" and session_pair.browser is websocket:
+                session_pair.browser = None
                 self._browser_by_session.pop(session_id, None)
                 self._session_by_browser.pop(websocket, None)
-            if role == "client" and session.client is websocket:
-                session.client = None
+            if role == "client" and session_pair.client is websocket:
+                session_pair.client = None
                 self._client_by_session.pop(session_id, None)
                 self._session_by_client.pop(websocket, None)
-            if session.browser is None and session.client is None:
+            if session_pair.browser is None and session_pair.client is None:
                 self._sessions.pop(session_id, None)
                 self._last_activity.pop(session_id, None)
 
     async def forward(self, session_id: str, role: str, message: str) -> None:
+        """Forward signaling payloads to the opposite role in a session."""
         async with self._lock:
-            session = self._sessions.get(session_id)
-            if not session:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair:
                 return
-            peer = session.client if role == "browser" else session.browser
+            peer = session_pair.client if role == "browser" else session_pair.browser
         if peer is not None:
             await peer.send_text(message)
 
     async def touch(self, session_id: str) -> None:
+        """Update last activity time for a session."""
         async with self._lock:
             if session_id in self._sessions:
                 self._last_activity[session_id] = time.monotonic()
 
     async def pop_inactive_sessions(self, idle_timeout: float) -> list[tuple[str, SessionPair]]:
+        """Remove and return sessions that have been idle past the timeout."""
         now = time.monotonic()
         inactive: list[tuple[str, SessionPair]] = []
         async with self._lock:
@@ -168,12 +177,14 @@ cleanup_task: asyncio.Task | None = None
 
 
 def _client_label(websocket: WebSocket) -> str:
+    """Format a client label for logging."""
     if websocket.client:
         return f"{websocket.client.host}:{websocket.client.port}"
     return "unknown"
 
 
 async def _close_websocket(websocket: WebSocket, code: int, reason: str) -> None:
+    """Close a websocket, logging any failure."""
     try:
         await websocket.close(code=code, reason=reason)
     except Exception:
@@ -181,6 +192,7 @@ async def _close_websocket(websocket: WebSocket, code: int, reason: str) -> None
 
 
 async def _cleanup_inactive_sessions() -> None:
+    """Background task that closes idle sessions."""
     if SESSION_IDLE_TIMEOUT <= 0:
         return
     while True:
@@ -196,12 +208,14 @@ async def _cleanup_inactive_sessions() -> None:
 
 @app.on_event("startup")
 async def _start_cleanup_task() -> None:
+    """Start the idle session cleanup task."""
     global cleanup_task
     cleanup_task = asyncio.create_task(_cleanup_inactive_sessions())
 
 
 @app.on_event("shutdown")
 async def _stop_cleanup_task() -> None:
+    """Stop the idle session cleanup task."""
     global cleanup_task
     if cleanup_task:
         cleanup_task.cancel()
@@ -211,6 +225,7 @@ async def _stop_cleanup_task() -> None:
 
 @app.get("/ice-config")
 async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
+    """Return ICE server configuration when a token is valid."""
     if SIGNALING_TOKEN:
         provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
         if not provided_token or provided_token != SIGNALING_TOKEN:
@@ -220,6 +235,7 @@ async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
 
 @app.websocket("/ws")
 async def websocket_signaling(websocket: WebSocket) -> None:
+    """WebSocket endpoint for signaling between browser and client."""
     session_id = websocket.query_params.get("session_id")
     role = websocket.query_params.get("role")
     if SIGNALING_TOKEN:
