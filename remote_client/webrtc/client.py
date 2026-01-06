@@ -5,19 +5,22 @@ import asyncio
 import contextlib
 import json
 import os
+import logging
 from typing import Any
 
 from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
-    RTCIceCandidate,
     RTCConfiguration,
     RTCIceServer,
 )
+from aiortc.sdp import candidate_from_sdp
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
 from remote_client.webrtc.signaling import WebSocketSignaling
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
@@ -183,13 +186,16 @@ class WebRTCClient:
                 candidate = message.get("candidate")
                 if not candidate:
                     continue
-                await peer_connection.addIceCandidate(
-                    RTCIceCandidate(
-                        candidate=candidate,
-                        sdpMid=message.get("sdpMid"),
-                        sdpMLineIndex=message.get("sdpMLineIndex"),
-                    )
-                )
+                try:
+                    candidate_sdp = candidate
+                    if candidate_sdp.startswith("candidate:"):
+                        candidate_sdp = candidate_sdp[len("candidate:") :]
+                    ice_candidate = candidate_from_sdp(candidate_sdp)
+                    ice_candidate.sdpMid = message.get("sdpMid")
+                    ice_candidate.sdpMLineIndex = message.get("sdpMLineIndex")
+                    await peer_connection.addIceCandidate(ice_candidate)
+                except Exception as exc:
+                    logger.warning("Failed to apply ICE candidate: %s", exc)
 
     async def _handle_message(self, data_channel, payload: dict[str, Any]) -> None:
         """Dispatch data channel actions."""

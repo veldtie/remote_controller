@@ -857,11 +857,21 @@
       if (!base || base === ".") {
         return name;
       }
-      const separator = base.includes("\\") ? "\\" : "/";
-      if (base.endsWith("/") || base.endsWith("\\")) {
-        return `${base}${name}`;
+      const nameTrimmed = name.replace(/[\\/]+$/, "");
+      if (!nameTrimmed) {
+        return base;
       }
-      return `${base}${separator}${name}`;
+      const separator = base.includes("\\") ? "\\" : "/";
+      const baseTrimmed = base.replace(/[\\/]+$/, "");
+      const baseCompare = baseTrimmed.toLowerCase();
+      const nameCompare = nameTrimmed.toLowerCase();
+      if (baseCompare === nameCompare || baseCompare.endsWith(`${separator}${nameCompare}`)) {
+        return base;
+      }
+      if (base.endsWith("/") || base.endsWith("\\")) {
+        return `${base}${nameTrimmed}`;
+      }
+      return `${base}${separator}${nameTrimmed}`;
     }
 
     function getParentPath(path) {
@@ -1084,11 +1094,27 @@
       }
     }
 
+    function updateDrawerOffset() {
+      const hud = document.getElementById("hud");
+      if (!hud) {
+        return;
+      }
+      const hudRect = hud.getBoundingClientRect();
+      const gap = 12;
+      const minTop = 16;
+      const maxTop = Math.max(minTop, window.innerHeight - 220);
+      const nextTop = Math.min(Math.max(minTop, hudRect.bottom + gap), maxTop);
+      storageDrawer.style.top = `${nextTop}px`;
+    }
+
     interactionToggle.addEventListener("change", updateInteractionMode);
 
     document.getElementById("connectButton").addEventListener("click", connect);
 
-    storageToggle.addEventListener("click", () => toggleStorage());
+    storageToggle.addEventListener("click", () => {
+      updateDrawerOffset();
+      toggleStorage();
+    });
     storageClose.addEventListener("click", () => toggleStorage(false));
 
     document.getElementById("remoteGo").addEventListener("click", () => {
@@ -1109,6 +1135,9 @@
         requestRemoteList(remotePathInput.value.trim() || ".");
       }
     });
+
+    window.addEventListener("resize", updateDrawerOffset);
+    updateDrawerOffset();
   </script>
 </body>
 </html>
