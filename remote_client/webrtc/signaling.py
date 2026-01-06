@@ -1,6 +1,7 @@
 """Signaling helpers for the WebRTC client."""
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -17,10 +18,14 @@ class WebSocketSignaling:
     _socket: WebSocketClientProtocol | None = None
 
     async def connect(self) -> None:
-        self._socket = await websockets.connect(
-            self.url,
-            additional_headers=self.headers,
-        )
+        kwargs: dict[str, object] = {}
+        if self.headers:
+            params = inspect.signature(websockets.connect).parameters
+            if "additional_headers" in params:
+                kwargs["additional_headers"] = self.headers
+            elif "extra_headers" in params:
+                kwargs["extra_headers"] = self.headers
+        self._socket = await websockets.connect(self.url, **kwargs)
 
     async def receive(self) -> dict[str, Any] | None:
         if not self._socket:

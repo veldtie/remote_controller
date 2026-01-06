@@ -161,7 +161,6 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 
 - Если нужно указать другой адрес сигналинга, используйте переменные окружения:
   - `RC_SIGNALING_HOST` (по умолчанию `localhost`)
-<<<<<<< HEAD
   - `RC_SIGNALING_PORT` (по умолчанию `8000`)
   - `RC_SIGNALING_URL` (полный WebSocket-URL, например `wss://signaling.example.com/ws`)
     - При использовании `RC_SIGNALING_URL` переменные `RC_SIGNALING_HOST` и
@@ -170,12 +169,6 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
       для HTTPS — `wss`).
     - Можно указать базовый URL без `/ws` — клиент добавит его автоматически.
     - Query-параметры из URL будут сохранены и дополнены `session_id`/`role`/`token`.
-=======
-  - `RC_SIGNALING_PORT` (по умолчанию `9999`)
-- Для удалённых подключений можно задать полный URL сигналинга:
-  - `RC_SIGNALING_URL` (например, `wss://your-domain.example` или `http://your-domain.example:8000`).
-    При `http/https` схема автоматически преобразуется в `ws/wss`, а путь `/ws` добавляется автоматически.
->>>>>>> 5bfcd791a99f9110b6a105a2e4b4f82ad65fe76a
 - Для включения проверки токена используйте `RC_SIGNALING_TOKEN` на сервере и передавайте его клиентам:
   - Клиент может передавать токен через переменную окружения `RC_SIGNALING_TOKEN`.
   - Браузерный интерфейс принимает токен в поле **Token** и добавляет его в query-параметры.

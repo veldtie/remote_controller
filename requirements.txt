@@ -1,7 +1,7 @@
 aiortc
 fastapi
 uvicorn
-websockets>=12
+websockets>=12,<13
 mss
 av
 sounddevice
