@@ -1,3 +1,5 @@
+name: remote_controller
+
 services:
   signaling:
     build:

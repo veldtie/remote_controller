@@ -15,3 +15,5 @@ dist/
 *.ppk
 *private_ssh*
 public_openssh.pub
+deploy_key
+deploy_key.pub

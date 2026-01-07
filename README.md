@@ -83,6 +83,19 @@ build_windows.bat
 
 Готовый файл появится в `client/dist/RemoteControllerClient.exe`.
 
+Тихий режим (для финальной сборки):
+```bat
+cd client
+build_windows_silent.bat
+```
+
+## Скрипты для Ubuntu сервера
+
+Скрипты лежат в `server/deploy/`:
+- `add_root_ssh_key.sh` — добавить SSH-ключ в `/root/.ssh/authorized_keys`.
+- `ubuntu_setup.sh` — первичная установка Docker/Compose и деплой.
+- `ubuntu_update.sh` — обновление деплоя после правок.
+
 ## Подключение через интернет (не в локальной сети)
 
 1. Разместите сервер сигналинга на публичном хосте и убедитесь, что порт доступен извне
