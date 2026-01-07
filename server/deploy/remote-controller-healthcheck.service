@@ -1,0 +1,6 @@
+[Unit]
+Description=Remote Controller healthcheck
+
+[Service]
+Type=oneshot
+ExecStart=/opt/remote_controller/server/deploy/healthcheck.sh

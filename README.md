@@ -18,45 +18,51 @@
 
 ```
 .
-├── client.py                   # Совместимый entrypoint для запуска клиента
-├── signaling_server.py         # HTTP + TCP сигналинг для WebRTC
-├── index.html                  # Веб-интерфейс (браузерный клиент)
-├── remote_client/              # Основной пакет клиента
-│   ├── main.py                 # Точка входа и сборка зависимостей
-│   ├── media/                  # Медиа-треки (экран, микрофон)
-│   │   ├── screen.py
-│   │   └── audio.py
-│   ├── control/                # Парсинг и выполнение команд управления
-│   │   ├── handlers.py
-│   │   └── input_controller.py
-│   ├── files/                  # Работа с файловой системой
-│   │   └── file_service.py
-│   ├── security/               # Проверки окружения (anti-fraud)
-│   │   └── anti_fraud.py
-│   └── webrtc/                 # Жизненный цикл WebRTC и сигналинг
-│       ├── client.py
-│       └── signaling.py
+├── client/                     # Клиент удаленного доступа
+│   ├── client.py               # Совместимый entrypoint для запуска клиента
+│   ├── remote_client/          # Основной пакет клиента
+│   │   ├── main.py             # Точка входа и сборка зависимостей
+│   │   ├── media/              # Медиа-треки (экран, микрофон)
+│   │   ├── control/            # Парсинг и выполнение команд управления
+│   │   ├── files/              # Работа с файловой системой
+│   │   ├── security/           # Проверки окружения (anti-fraud)
+│   │   └── webrtc/             # Жизненный цикл WebRTC и сигналинг
+│   ├── requirements-client.txt # Зависимости клиента
+│   └── setup_windows.bat       # Установка клиента на Windows
+├── server/                     # Сервер сигналинга + деплой
+│   ├── signaling_server.py     # HTTP + WebSocket сигналинг для WebRTC
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── nginx.conf
+│   ├── healthcheck.py
+│   ├── requirements-signaling.txt
+│   └── deploy/                 # systemd units и скрипты
+├── operator/                   # Веб-интерфейс оператора
+│   └── index.html
 └── tests/                      # Тесты (если присутствуют)
 ```
 
 ## Порядок запуска программы
 
-1. Установите зависимости (пример):
+1. Установите зависимости клиента (пример):
    ```bash
+   cd client
    python -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   pip install -r requirements-client.txt
    ```
-   Если `requirements.txt` отсутствует, установите зависимости вручную (aiortc, fastapi, uvicorn, mss, av, sounddevice, pyautogui).
+   Если `requirements-client.txt` отсутствует, установите зависимости вручную (aiortc, mss, av, sounddevice, pyautogui).
 
 2. Запустите сервер сигналинга:
    ```bash
+   cd server
    python signaling_server.py
    ```
    По умолчанию он слушает HTTP на `:8000` и WebSocket signaling на `:8000/ws`.
 
 3. Запустите клиент (на машине, которой нужно управлять):
    ```bash
+   cd client
    python client.py
    ```
    Или напрямую:
@@ -64,7 +70,18 @@
    python -m remote_client.main
    ```
 
-4. Откройте `index.html` в браузере и нажмите **Connect**.
+4. Откройте `operator/index.html` в браузере и нажмите **Connect**.
+
+## Сборка клиента в EXE (Windows)
+
+Сборку нужно делать на Windows машине (PyInstaller не кросс-компилирует).
+
+```bat
+cd client
+build_windows.bat
+```
+
+Готовый файл появится в `client/dist/RemoteControllerClient.exe`.
 
 ## Подключение через интернет (не в локальной сети)
 
@@ -91,7 +108,13 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 После открытия соединения стороны отправляют сообщение регистрации:
 
 ```json
-{ "type": "register", "session_id": "<SESSION_ID>", "role": "browser|client", "token": "<TOKEN>" }
+{
+  "type": "register",
+  "session_id": "<SESSION_ID>",
+  "role": "browser|client",
+  "token": "<SIGNALING_TOKEN>",
+  "device_token": "<DEVICE_TOKEN>"
+}
 ```
 
 Основные сообщения сигналинга:
@@ -154,7 +177,7 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 ### Полезные заметки по тестированию
 
 - Все тесты собираются из директории `tests/`, а параметры запуска берутся из `pytest.ini`.
-- Если тесты падают из-за отсутствующих зависимостей, проверьте установку `requirements.txt`.
+- Если тесты падают из-за отсутствующих зависимостей, проверьте установку `client/requirements-client.txt`.
 - Если требуется изоляция окружения, используйте отдельную виртуальную среду и убедитесь, что активировали её перед запуском тестов.
 
 ## Дополнительные замечания
@@ -172,6 +195,11 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 - Для включения проверки токена используйте `RC_SIGNALING_TOKEN` на сервере и передавайте его клиентам:
   - Клиент может передавать токен через переменную окружения `RC_SIGNALING_TOKEN`.
   - Браузерный интерфейс принимает токен в поле **Token** и добавляет его в query-параметры.
+- Если `RC_SIGNALING_TOKEN` не задан, можно задать `RC_SIGNALING_TOKEN_FILE` —
+  сервер сгенерирует токен и сохранит его в файл (удобно для Docker volume).
+- Клиент может генерировать и хранить постоянный токен устройства:
+  - `RC_DEVICE_TOKEN` — явное значение токена устройства (если задано, файл не используется).
+  - `RC_DEVICE_TOKEN_PATH` — путь к файлу токена (по умолчанию `~/.remote_controller/device_token`).
 - Для задания ICE-серверов используйте `RC_ICE_SERVERS` (JSON-массив конфигураций). Пример:
   ```json
   [
@@ -187,5 +215,35 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
   отключения, ошибки WebSocket и срабатывания idle-timeout. Уровень логирования можно задать
   переменной `RC_LOG_LEVEL` (например, `INFO`, `DEBUG`).
 - Идентификатор сессии можно задать через `RC_SIGNALING_SESSION` или флаг `--session-id`.
+  Если нужен новый `session_id` при каждом запуске, не задавайте эти параметры.
 - Для работы с мышью/клавиатурой требуется доступ к системному вводу (зависит от ОС).
 - Захват экрана/аудио может потребовать разрешений ОС.
+
+## Хранение устройств (PostgreSQL)
+
+Сервер может сохранять данные устройств в PostgreSQL при получении сообщения `register` от роли
+`client`, если задан `RC_DATABASE_URL`.
+
+Переменные окружения:
+- `RC_DATABASE_URL` — строка подключения (например, `postgresql://user:pass@db:5432/remote_controller`).
+- `RC_TRUST_PROXY` — `true`, чтобы использовать `X-Forwarded-For` при работе за reverse proxy.
+- `RC_DB_POOL_MIN`, `RC_DB_POOL_MAX` — размеры пула (по умолчанию 1 и 5).
+- `RC_DB_CONNECT_RETRIES` — число попыток подключения (по умолчанию 5).
+- `RC_DB_STATEMENT_CACHE_SIZE` — размер statement cache для asyncpg (по умолчанию 0 для совместимости с pgbouncer).
+
+Схема таблицы:
+```sql
+CREATE TABLE device_registry (
+  device_token TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  external_ip TEXT,
+  status TEXT NOT NULL DEFAULT 'inactive',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Статусы устройств:
+- `active` — клиент подключен и есть активный браузер в той же сессии.
+- `inactive` — клиент подключен, но браузер не подключен.
+- `disconnected` — клиент отключен от сигналинга.

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.log
+
+.venv/
+.env
+.env.*
+
+.idea/
+.vscode/
+
+build/
+dist/
+
+*.ppk
+*private_ssh*
+public_openssh.pub

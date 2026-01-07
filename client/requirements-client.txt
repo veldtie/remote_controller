@@ -1,0 +1,7 @@
+aiortc
+websockets>=12,<13
+mss
+av
+sounddevice
+pyautogui
+numpy

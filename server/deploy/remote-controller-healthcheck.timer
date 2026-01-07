@@ -1,0 +1,10 @@
+[Unit]
+Description=Remote Controller healthcheck timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=remote-controller-healthcheck.service
+
+[Install]
+WantedBy=timers.target

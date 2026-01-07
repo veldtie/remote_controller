@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+websockets>=12,<13
+asyncpg
