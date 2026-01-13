@@ -5,11 +5,11 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY requirements-signaling.txt ./
-RUN pip install --no-cache-dir -r requirements-signaling.txt
+COPY app/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY signaling_server.py ./
-COPY healthcheck.py ./
+COPY app/signaling_server.py ./
+COPY app/healthcheck.py ./
 
 EXPOSE 8000
 

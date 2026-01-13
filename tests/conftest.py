@@ -32,9 +32,18 @@ class DummyFileService:
         self.listed_paths.append(path)
         return list(self._entries)
 
+    def list_files_with_base(self, path: str) -> tuple[str, list[FileEntry]]:
+        self.listed_paths.append(path)
+        return path, list(self._entries)
+
     def serialize_entries(self, entries: list[FileEntry]) -> list[dict[str, object]]:
         return [
-            {"name": entry.name, "is_dir": entry.is_dir, "size": entry.size}
+            {
+                "name": entry.name,
+                "path": entry.path,
+                "is_dir": entry.is_dir,
+                "size": entry.size,
+            }
             for entry in entries
         ]
 
@@ -54,8 +63,8 @@ class DummyChannel:
 @pytest.fixture
 def file_entries() -> list[FileEntry]:
     return [
-        FileEntry(name="alpha.txt", is_dir=False, size=12),
-        FileEntry(name="docs", is_dir=True, size=None),
+        FileEntry(name="alpha.txt", path="/tmp/alpha.txt", is_dir=False, size=12),
+        FileEntry(name="docs", path="/tmp/docs", is_dir=True, size=None),
     ]
 
 
@@ -93,7 +102,6 @@ def client(
     return WebRTCClient(
         session_id=session_id,
         signaling=DummySignaling(),
-        control_handler=control_handler,
+        session_factory=lambda _mode: (control_handler, []),
         file_service=file_service,
-        media_tracks=[],
     )

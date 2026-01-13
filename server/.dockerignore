@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
-deploy/
+deploy/*
+!deploy/docker/
+!deploy/docker/Dockerfile
 .env
 .env.*

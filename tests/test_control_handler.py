@@ -46,12 +46,12 @@ def test_handle_message_control_invokes_input_controller(
     monkeypatch, file_service, channel
 ):
     fake_pyautogui = install_fake_pyautogui(monkeypatch)
+    handler = ControlHandler(InputController())
     client = WebRTCClient(
         session_id="test-session",
         signaling=None,
-        control_handler=ControlHandler(InputController()),
+        session_factory=lambda _mode: (handler, []),
         file_service=file_service,
-        media_tracks=[],
     )
 
     payload = {
@@ -61,6 +61,6 @@ def test_handle_message_control_invokes_input_controller(
         "y": 12,
         "button": "right",
     }
-    asyncio.run(client._handle_message(channel, payload))
+    asyncio.run(client._handle_message(channel, payload, handler))
 
     assert fake_pyautogui.clicks == [(11, 12, "right")]
