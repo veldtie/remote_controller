@@ -7,6 +7,7 @@ import json
 import os
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aiortc import (
@@ -68,7 +69,15 @@ def _load_ice_servers() -> list[RTCIceServer]:
     return [RTCIceServer(**server) for server in servers]
 
 
-SessionFactory = Callable[[str | None], tuple[ControlHandler, list[Any]]]
+@dataclass
+class SessionResources:
+    """Resources required to serve a remote session."""
+    control_handler: ControlHandler
+    media_tracks: list[Any]
+    close: Callable[[], None] | None = None
+
+
+SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
 
 
 class WebRTCClient:
@@ -100,6 +109,7 @@ class WebRTCClient:
         peer_connection = RTCPeerConnection(self._rtc_configuration)
         connection_done = asyncio.Event()
         control_handler: ControlHandler | None = None
+        session_cleanup: Callable[[], None] | None = None
         operator_id_holder: dict[str, str | None] = {"value": None}
 
         @peer_connection.on("connectionstatechange")
@@ -151,7 +161,14 @@ class WebRTCClient:
                 return
             operator_id_holder["value"] = offer_payload.get("operator_id")
             session_mode = offer_payload.get("mode")
-            control_handler, media_tracks = self._session_factory(session_mode)
+            resources = self._session_factory(session_mode)
+            if isinstance(resources, tuple):
+                control_handler, media_tracks = resources
+                session_cleanup = None
+            else:
+                control_handler = resources.control_handler
+                media_tracks = resources.media_tracks
+                session_cleanup = resources.close
             offer = RTCSessionDescription(
                 sdp=offer_payload["sdp"], type=offer_payload["type"]
             )
@@ -186,6 +203,11 @@ class WebRTCClient:
         finally:
             await peer_connection.close()
             await self._signaling.close()
+            if session_cleanup:
+                try:
+                    session_cleanup()
+                except Exception as exc:
+                    logger.warning("Session cleanup failed: %s", exc)
 
     async def _await_offer(self) -> dict[str, Any] | None:
         """Wait for an SDP offer from the signaling server."""
