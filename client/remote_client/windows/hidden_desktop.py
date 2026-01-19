@@ -22,11 +22,13 @@ from remote_client.control.input_controller import ControlCommand, InputControll
 
 logger = logging.getLogger(__name__)
 
-CHROMIUM_APPS = {"chrome", "brave", "opera"}
+CHROMIUM_APPS = {"chrome", "brave", "opera", "edge", "yandex"}
 APP_EXECUTABLES = {
     "chrome": ["chrome.exe"],
     "brave": ["brave.exe", "brave-browser.exe"],
     "opera": ["opera.exe", "launcher.exe"],
+    "edge": ["msedge.exe"],
+    "yandex": ["browser.exe"],
     "firefox": ["firefox.exe"],
 }
 APP_PATHS = {
@@ -48,6 +50,16 @@ APP_PATHS = {
     + [
         os.path.join(base, "Programs", "Opera", "launcher.exe")
         for base in (os.getenv("LocalAppData"),)
+        if base
+    ],
+    "edge": [
+        os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LocalAppData"))
+        if base
+    ],
+    "yandex": [
+        os.path.join(base, "Yandex", "YandexBrowser", "Application", "browser.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LocalAppData"))
         if base
     ],
     "firefox": [

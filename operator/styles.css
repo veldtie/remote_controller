@@ -14,6 +14,13 @@
   --warn: #f2b04b;
   --bad: #ff6b5f;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  --edge-gap: 16px;
+  --panel-width: 280px;
+  --panel-gap: 12px;
+  --manage-panel-height: 320px;
+  --view-panel-height: 112px;
+  --workspace-left: calc(var(--edge-gap) + var(--panel-width) + var(--panel-gap));
+  --workspace-bottom: 0px;
 }
 
 * {
@@ -45,9 +52,10 @@ body::after {
 
 #screen {
   position: fixed;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  right: 0;
+  bottom: var(--workspace-bottom);
+  left: var(--workspace-left);
   object-fit: contain;
   background: #050608;
   cursor: crosshair;
@@ -58,15 +66,35 @@ body.view-mode #screen {
   cursor: default;
 }
 
-#hud {
+#managePanel {
   position: fixed;
-  top: 16px;
-  left: 16px;
-  right: 16px;
-  max-width: 1200px;
-  margin: 0 auto;
+  top: var(--edge-gap);
+  left: var(--edge-gap);
+  bottom: var(--edge-gap);
+  width: var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 9;
+  overflow: auto;
+}
+
+#interactionMenu {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+  animation: dropIn 0.6s ease;
+}
+
+#hud {
+  position: relative;
+  width: 100%;
   display: grid;
-  grid-template-columns: 2.1fr 1fr 0.8fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   padding: 12px 14px;
   background: var(--panel);
@@ -74,7 +102,6 @@ body.view-mode #screen {
   border-radius: 16px;
   backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
-  z-index: 10;
   animation: dropIn 0.6s ease;
 }
 
@@ -106,7 +133,7 @@ body.view-mode #screen {
 .fields {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .field label {
@@ -233,7 +260,11 @@ button:disabled {
 }
 
 .hud-actions {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#appLauncher {
+  grid-column: 1 / -1;
 }
 
 .app-buttons {
@@ -262,6 +293,7 @@ button:disabled {
 #status {
   font-size: 0.9rem;
   color: var(--muted);
+  grid-column: 1 / -1;
 }
 
 #status[data-state="ok"] {
@@ -278,7 +310,7 @@ button:disabled {
 
 #storageDrawer {
   position: fixed;
-  top: 92px;
+  top: var(--edge-gap);
   right: 16px;
   bottom: 16px;
   width: 560px;
@@ -441,9 +473,8 @@ tbody tr:hover {
 }
 
 .mode-badge {
-  position: fixed;
-  bottom: 18px;
-  left: 18px;
+  align-self: flex-start;
+  margin-top: auto;
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(15, 18, 28, 0.7);
@@ -452,7 +483,6 @@ tbody tr:hover {
   font-size: 0.75rem;
   letter-spacing: 0.18em;
   color: var(--muted);
-  z-index: 8;
 }
 
 body.manage-mode .mode-badge {
@@ -464,20 +494,23 @@ body.view-mode .mode-badge {
 }
 
 @media (max-width: 1000px) {
-  #hud {
-    grid-template-columns: 1fr;
+  :root {
+    --workspace-left: 0px;
+    --manage-panel-height: 45vh;
+    --workspace-bottom: calc(var(--manage-panel-height) + var(--edge-gap));
   }
 
-  .fields {
-    grid-template-columns: 1fr;
+  #managePanel {
+    top: auto;
+    bottom: var(--edge-gap);
+    left: var(--edge-gap);
+    right: var(--edge-gap);
+    width: auto;
+    max-height: var(--manage-panel-height);
   }
 
-  .hud-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  #status {
-    grid-column: 1 / -1;
+  #screen {
+    left: 0;
   }
 
   #storageDrawer {
@@ -494,4 +527,27 @@ body.view-mode .mode-badge {
     top: auto;
     height: 70vh;
   }
+}
+
+body.view-mode {
+  --workspace-left: 0px;
+  --workspace-bottom: calc(var(--view-panel-height) + var(--edge-gap));
+}
+
+body.view-mode #managePanel {
+  top: auto;
+  bottom: var(--edge-gap);
+  left: var(--edge-gap);
+  right: var(--edge-gap);
+  width: auto;
+  max-height: var(--view-panel-height);
+}
+
+body.view-mode #hud,
+body.view-mode #modeBadge {
+  display: none;
+}
+
+body.view-mode #interactionMenu {
+  width: 100%;
 }

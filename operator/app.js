@@ -488,19 +488,60 @@
     }
     state.controlsBound = true;
 
+    function getVideoMetrics() {
+      const rect = dom.screenEl.getBoundingClientRect();
+      const videoWidth = dom.screenEl.videoWidth || rect.width;
+      const videoHeight = dom.screenEl.videoHeight || rect.height;
+      if (!videoWidth || !videoHeight || !rect.width || !rect.height) {
+        return null;
+      }
+      const scale = Math.min(rect.width / videoWidth, rect.height / videoHeight);
+      const renderWidth = videoWidth * scale;
+      const renderHeight = videoHeight * scale;
+      const offsetX = (rect.width - renderWidth) / 2;
+      const offsetY = (rect.height - renderHeight) / 2;
+      return { rect, videoWidth, videoHeight, renderWidth, renderHeight, offsetX, offsetY };
+    }
+
+    function mapPointerToVideo(event) {
+      const metrics = getVideoMetrics();
+      if (!metrics) {
+        return { x: event.offsetX, y: event.offsetY };
+      }
+      const x = event.clientX - metrics.rect.left - metrics.offsetX;
+      const y = event.clientY - metrics.rect.top - metrics.offsetY;
+      if (x < 0 || y < 0 || x > metrics.renderWidth || y > metrics.renderHeight) {
+        return null;
+      }
+      const mappedX = Math.round((x / metrics.renderWidth) * metrics.videoWidth);
+      const mappedY = Math.round((y / metrics.renderHeight) * metrics.videoHeight);
+      return {
+        x: Math.max(0, Math.min(metrics.videoWidth - 1, mappedX)),
+        y: Math.max(0, Math.min(metrics.videoHeight - 1, mappedY))
+      };
+    }
+
     dom.screenEl.addEventListener("mousemove", (event) => {
+      const coords = mapPointerToVideo(event);
+      if (!coords) {
+        return;
+      }
       void sendControl({
         type: CONTROL_TYPES.mouseMove,
-        x: event.offsetX,
-        y: event.offsetY
+        x: coords.x,
+        y: coords.y
       });
     });
 
     dom.screenEl.addEventListener("click", (event) => {
+      const coords = mapPointerToVideo(event);
+      if (!coords) {
+        return;
+      }
       void sendControl({
         type: CONTROL_TYPES.mouseClick,
-        x: event.offsetX,
-        y: event.offsetY,
+        x: coords.x,
+        y: coords.y,
         button: "left"
       });
     });
@@ -852,16 +893,11 @@
   }
 
   function updateDrawerOffset() {
-    const hud = document.getElementById("hud");
-    if (!hud) {
-      return;
-    }
-    const hudRect = hud.getBoundingClientRect();
-    const gap = 12;
-    const minTop = 16;
-    const maxTop = Math.max(minTop, window.innerHeight - 220);
-    const nextTop = Math.min(Math.max(minTop, hudRect.bottom + gap), maxTop);
-    dom.storageDrawer.style.top = `${nextTop}px`;
+    const edgeGap = getComputedStyle(document.documentElement)
+      .getPropertyValue("--edge-gap")
+      .trim();
+    const minTop = Number.parseFloat(edgeGap) || 16;
+    dom.storageDrawer.style.top = `${minTop}px`;
   }
 
   function bindEvents() {

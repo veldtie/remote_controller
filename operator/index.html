@@ -13,30 +13,8 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body class="manage-mode">
-  <div id="hud">
-    <div class="hud-section">
-      <div class="section-title">Session</div>
-      <div class="fields">
-        <div class="field">
-          <label for="serverUrl">Server URL</label>
-          <input id="serverUrl" type="text" value="" placeholder="http://localhost:8000" />
-        </div>
-        <div class="field">
-          <label for="sessionId">Session</label>
-          <input id="sessionId" type="text" value="default-session" />
-        </div>
-        <div class="field">
-          <label for="authToken">Token</label>
-          <input id="authToken" type="text" placeholder="optional" />
-        </div>
-        <div class="field">
-          <label for="e2eeKey">E2EE Key</label>
-          <input id="e2eeKey" type="password" placeholder="optional" autocomplete="off" />
-        </div>
-      </div>
-    </div>
-
-    <div class="hud-section">
+  <div id="managePanel">
+    <div id="interactionMenu" class="hud-section">
       <div class="section-title">Interaction</div>
       <div class="toggle-row">
         <span class="toggle-label">View</span>
@@ -49,22 +27,50 @@
       <div id="interactionState" class="hint">Managing</div>
     </div>
 
-    <div class="hud-actions">
-      <button id="connectButton" type="button">Connect</button>
-      <button id="storageToggle" class="ghost" type="button">Storage</button>
-      <span id="status" data-state="">Idle</span>
+    <div id="hud">
+      <div class="hud-section">
+        <div class="section-title">Session</div>
+        <div class="fields">
+          <div class="field">
+            <label for="serverUrl">Server URL</label>
+            <input id="serverUrl" type="text" value="" placeholder="http://localhost:8000" />
+          </div>
+          <div class="field">
+            <label for="sessionId">Session</label>
+            <input id="sessionId" type="text" value="default-session" />
+          </div>
+          <div class="field">
+            <label for="authToken">Token</label>
+            <input id="authToken" type="text" placeholder="optional" />
+          </div>
+          <div class="field">
+            <label for="e2eeKey">E2EE Key</label>
+            <input id="e2eeKey" type="password" placeholder="optional" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-actions">
+        <button id="connectButton" type="button">Connect</button>
+        <button id="storageToggle" class="ghost" type="button">Storage</button>
+        <span id="status" data-state="">Idle</span>
+      </div>
+
+      <div class="hud-section" id="appLauncher">
+        <div class="section-title">Apps</div>
+        <div class="app-buttons">
+          <button class="secondary" type="button" data-app="chrome">Chrome</button>
+          <button class="secondary" type="button" data-app="brave">Brave</button>
+          <button class="secondary" type="button" data-app="opera">Opera</button>
+          <button class="secondary" type="button" data-app="firefox">Firefox</button>
+          <button class="secondary" type="button" data-app="edge">Edge</button>
+          <button class="secondary" type="button" data-app="yandex">Yandex</button>
+        </div>
+        <div id="appStatus" class="hint" data-state="">Ready</div>
+      </div>
     </div>
 
-    <div class="hud-section" id="appLauncher">
-      <div class="section-title">Apps</div>
-      <div class="app-buttons">
-        <button class="secondary" type="button" data-app="chrome">Chrome</button>
-        <button class="secondary" type="button" data-app="brave">Brave</button>
-        <button class="secondary" type="button" data-app="opera">Opera</button>
-        <button class="secondary" type="button" data-app="firefox">Firefox</button>
-      </div>
-      <div id="appStatus" class="hint" data-state="">Ready</div>
-    </div>
+    <div id="modeBadge" class="mode-badge">Manage mode</div>
   </div>
 
   <div id="storageDrawer" aria-hidden="true">
@@ -118,7 +124,6 @@
     </div>
   </div>
 
-  <div id="modeBadge" class="mode-badge">Manage mode</div>
   <video id="screen" autoplay playsinline></video>
   <script src="app.js" defer></script>
 </body>
