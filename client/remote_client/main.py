@@ -8,7 +8,6 @@ import os
 from remote_client.config import resolve_session_id
 from remote_client.runtime import build_client, load_or_create_device_token
 from remote_client.security.anti_fraud import analyze_device, silent_uninstall_and_cleanup
-<<<<<<< HEAD
 from remote_client.security.e2ee import load_e2ee_context
 from remote_client.webrtc.client import WebRTCClient
 from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
@@ -87,13 +86,6 @@ def _resolve_session_id(session_id: str | None) -> str:
     if env_session:
         return env_session
     return uuid.uuid4().hex
-=======
-
-
-def _anti_fraud_disabled() -> bool:
-    value = os.getenv("RC_DISABLE_ANTIFRAUD", "1")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
->>>>>>> c4e2918e9de6745a3288236346c012c4da4d4a7e
 
 
 def main() -> None:
