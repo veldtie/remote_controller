@@ -286,19 +286,12 @@ class WebRTCClient:
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
                 return
-<<<<<<< HEAD
             self._send_payload(
                 data_channel,
-                {"files": self._file_service.serialize_entries(entries)},
-=======
-            data_channel.send(
-                json.dumps(
-                    {
-                        "path": base_path,
-                        "files": self._file_service.serialize_entries(entries),
-                    }
-                )
->>>>>>> c4e2918e9de6745a3288236346c012c4da4d4a7e
+                {
+                    "path": base_path,
+                    "files": self._file_service.serialize_entries(entries),
+                },
             )
             return
 

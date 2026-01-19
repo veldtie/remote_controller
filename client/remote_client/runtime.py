@@ -5,6 +5,7 @@ import os
 import uuid
 
 from remote_client.files.file_service import FileService
+from remote_client.security.e2ee import load_e2ee_context
 from remote_client.session_factory import build_session_resources
 from remote_client.webrtc.client import WebRTCClient
 from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
@@ -62,10 +63,12 @@ def build_client(session_id: str, token: str | None, device_token: str | None) -
         signaling = create_signaling(signaling_host, signaling_port, session_id, token)
 
     file_service = FileService()
+    e2ee_context = load_e2ee_context(session_id)
     return WebRTCClient(
         session_id=session_id,
         signaling=signaling,
         session_factory=build_session_resources,
         file_service=file_service,
         device_token=device_token,
+        e2ee=e2ee_context,
     )

@@ -3,7 +3,7 @@ name: remote_controller
 services:
   signaling:
     build:
-      context: .
+      context: ../..
       dockerfile: deploy/docker/Dockerfile
     restart: unless-stopped
     environment:
@@ -58,12 +58,8 @@ services:
     ports:
       - "80:80"
     volumes:
-<<<<<<< HEAD:server/docker-compose.yml
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ../operator:/usr/share/nginx/html:ro
-=======
-      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
->>>>>>> c4e2918e9de6745a3288236346c012c4da4d4a7e:server/deploy/docker/docker-compose.yml
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../../operator:/usr/share/nginx/html:ro
     depends_on:
       - signaling
     networks:

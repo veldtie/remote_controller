@@ -7,6 +7,11 @@
     mouseClick: "mouse_click",
     keypress: "keypress"
   };
+  const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
+  const E2EE_PBKDF2_ITERS = 150000;
+  const E2EE_SALT_PREFIX = "remote-controller:";
+  const textEncoder = new TextEncoder();
+  const textDecoder = new TextDecoder();
 
   const state = {
     operatorId:
@@ -22,7 +27,8 @@
     controlsBound: false,
     remoteCurrentPath: ".",
     pendingDownload: null,
-    isConnected: false
+    isConnected: false,
+    e2eeContext: null
   };
 
   const dom = {
@@ -30,6 +36,7 @@
     serverUrlInput: document.getElementById("serverUrl"),
     sessionIdInput: document.getElementById("sessionId"),
     authTokenInput: document.getElementById("authToken"),
+    e2eeKeyInput: document.getElementById("e2eeKey"),
     interactionToggle: document.getElementById("interactionToggle"),
     interactionState: document.getElementById("interactionState"),
     modeBadge: document.getElementById("modeBadge"),
@@ -54,6 +61,12 @@
         dom.serverUrlInput.value = window.location.origin;
       } else {
         dom.serverUrlInput.value = "http://localhost:8000";
+      }
+    }
+    if (dom.e2eeKeyInput) {
+      const storedPassphrase = sessionStorage.getItem(E2EE_STORAGE_KEY);
+      if (!dom.e2eeKeyInput.value && storedPassphrase) {
+        dom.e2eeKeyInput.value = storedPassphrase;
       }
     }
   }
@@ -99,19 +112,176 @@
     updateInteractionMode();
     if (state.isConnected && !state.modeLocked) {
       setStatus("Switching mode...", "warn");
-      connect();
+      void connect();
     }
+  }
+
+  function isSecureCryptoAvailable() {
+    return window.isSecureContext && window.crypto && window.crypto.subtle;
+  }
+
+  function isE2eeEnvelope(payload) {
+    return payload && payload.e2ee === 1 && payload.nonce && payload.ciphertext;
+  }
+
+  function base64EncodeBytes(bytes) {
+    const chunkSize = 0x8000;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  }
+
+  function base64DecodeBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  async function deriveE2eeKey(passphrase, sessionId) {
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      textEncoder.encode(passphrase),
+      { name: "PBKDF2" },
+      false,
+      ["deriveKey"]
+    );
+    const salt = textEncoder.encode(`${E2EE_SALT_PREFIX}${sessionId}`);
+    return crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations: E2EE_PBKDF2_ITERS,
+        hash: "SHA-256"
+      },
+      keyMaterial,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  }
+
+  async function encryptE2ee(plaintext) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      state.e2eeContext.key,
+      textEncoder.encode(plaintext)
+    );
+    return JSON.stringify({
+      e2ee: 1,
+      nonce: base64EncodeBytes(iv),
+      ciphertext: base64EncodeBytes(new Uint8Array(ciphertext))
+    });
+  }
+
+  async function decryptE2ee(envelope) {
+    if (!isE2eeEnvelope(envelope)) {
+      throw new Error("E2EE envelope required.");
+    }
+    const iv = base64DecodeBytes(envelope.nonce);
+    const ciphertext = base64DecodeBytes(envelope.ciphertext);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      state.e2eeContext.key,
+      ciphertext
+    );
+    return textDecoder.decode(plaintext);
+  }
+
+  async function prepareE2ee(sessionId) {
+    if (!dom.e2eeKeyInput) {
+      state.e2eeContext = null;
+      return;
+    }
+    const passphrase = dom.e2eeKeyInput.value.trim();
+    if (!passphrase) {
+      state.e2eeContext = null;
+      return;
+    }
+    if (!isSecureCryptoAvailable()) {
+      throw new Error("E2EE requires HTTPS or localhost.");
+    }
+    const key = await deriveE2eeKey(passphrase, sessionId);
+    state.e2eeContext = { key };
+  }
+
+  async function encodeOutgoing(payload) {
+    const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+    if (!state.e2eeContext) {
+      return message;
+    }
+    return encryptE2ee(message);
+  }
+
+  async function normalizeIncomingData(data) {
+    if (typeof data === "string") {
+      return data;
+    }
+    if (data instanceof ArrayBuffer) {
+      return textDecoder.decode(data);
+    }
+    if (ArrayBuffer.isView(data)) {
+      const view = data;
+      return textDecoder.decode(
+        view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
+      );
+    }
+    if (data instanceof Blob) {
+      return data.text();
+    }
+    return "";
+  }
+
+  async function decodeIncoming(data) {
+    const text = await normalizeIncomingData(data);
+    if (!text) {
+      throw new Error("Empty payload.");
+    }
+    if (!state.e2eeContext) {
+      let parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch (error) {
+        parsed = null;
+      }
+      if (parsed && isE2eeEnvelope(parsed)) {
+        throw new Error("E2EE key required.");
+      }
+      return text;
+    }
+
+    let envelope;
+    try {
+      envelope = JSON.parse(text);
+    } catch (error) {
+      throw new Error("E2EE envelope required.");
+    }
+    if (!isE2eeEnvelope(envelope)) {
+      throw new Error("E2EE envelope required.");
+    }
+    return decryptE2ee(envelope);
   }
 
   function ensureChannelOpen() {
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
 
-  function sendControl(payload) {
+  async function sendControl(payload) {
     if (!ensureChannelOpen() || !state.controlEnabled) {
       return;
     }
-    state.controlChannel.send(JSON.stringify({ action: CONTROL_ACTION, ...payload }));
+    try {
+      const message = await encodeOutgoing({ action: CONTROL_ACTION, ...payload });
+      state.controlChannel.send(message);
+    } catch (error) {
+      setStatus(`E2EE error: ${error.message}`, "bad");
+    }
   }
 
   async function loadIceConfig(apiBase, authToken) {
@@ -171,6 +341,15 @@
     const sessionId = dom.sessionIdInput.value.trim() || "default-session";
     const authToken = dom.authTokenInput.value.trim();
     const sessionMode = state.controlEnabled ? "manage" : "view";
+
+    try {
+      await prepareE2ee(sessionId);
+    } catch (error) {
+      const reason = error && error.message ? error.message : "E2EE unavailable";
+      setStatus(reason, "bad");
+      setModeLocked(false);
+      return;
+    }
 
     state.rtcConfig = await loadIceConfig(apiBase, authToken);
     const apiUrl = new URL(apiBase);
@@ -241,11 +420,12 @@
 
       state.controlChannel = state.peerConnection.createDataChannel("control");
       state.controlChannel.onopen = () => {
-        setStatus("Connected", "ok");
+        const label = state.e2eeContext ? "Connected (E2EE)" : "Connected";
+        setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
         if (dom.storageDrawer.classList.contains("open")) {
-          requestRemoteList(state.remoteCurrentPath);
+          void requestRemoteList(state.remoteCurrentPath);
         }
       };
       state.controlChannel.onclose = () => {
@@ -254,7 +434,7 @@
         setModeLocked(false);
       };
       state.controlChannel.onmessage = (event) => {
-        handleDataChannelMessage(event.data);
+        void handleIncomingData(event.data);
       };
 
       const offer = await state.peerConnection.createOffer();
@@ -279,7 +459,7 @@
     state.controlsBound = true;
 
     dom.screenEl.addEventListener("mousemove", (event) => {
-      sendControl({
+      void sendControl({
         type: CONTROL_TYPES.mouseMove,
         x: event.offsetX,
         y: event.offsetY
@@ -287,7 +467,7 @@
     });
 
     dom.screenEl.addEventListener("click", (event) => {
-      sendControl({
+      void sendControl({
         type: CONTROL_TYPES.mouseClick,
         x: event.offsetX,
         y: event.offsetY,
@@ -300,7 +480,7 @@
       if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
         return;
       }
-      sendControl({
+      void sendControl({
         type: CONTROL_TYPES.keypress,
         key: event.key
       });
@@ -316,7 +496,7 @@
     dom.storageDrawer.setAttribute("aria-hidden", (!shouldOpen).toString());
     if (shouldOpen) {
       if (state.isConnected) {
-        requestRemoteList(state.remoteCurrentPath);
+        void requestRemoteList(state.remoteCurrentPath);
       } else {
         setRemoteStatus("Connect to load files", "warn");
       }
@@ -380,7 +560,7 @@
     return `${size.toFixed(size < 10 && unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
   }
 
-  function requestRemoteList(path) {
+  async function requestRemoteList(path) {
     if (!ensureChannelOpen()) {
       setRemoteStatus("Data channel not ready", "warn");
       return;
@@ -388,15 +568,18 @@
     state.remoteCurrentPath = path || ".";
     dom.remotePathInput.value = state.remoteCurrentPath;
     setRemoteStatus("Loading...", "warn");
-    state.controlChannel.send(
-      JSON.stringify({
+    try {
+      const message = await encodeOutgoing({
         action: "list_files",
         path: state.remoteCurrentPath
-      })
-    );
+      });
+      state.controlChannel.send(message);
+    } catch (error) {
+      setRemoteStatus(`E2EE error: ${error.message}`, "bad");
+    }
   }
 
-  function requestDownload(path) {
+  async function requestDownload(path) {
     if (!ensureChannelOpen()) {
       setDownloadStatus("Data channel not ready", "warn");
       return;
@@ -406,12 +589,16 @@
       name: getBaseName(path)
     };
     setDownloadStatus(`Downloading ${state.pendingDownload.name}`, "warn");
-    state.controlChannel.send(
-      JSON.stringify({
+    try {
+      const message = await encodeOutgoing({
         action: "download",
         path
-      })
-    );
+      });
+      state.controlChannel.send(message);
+    } catch (error) {
+      setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+      state.pendingDownload = null;
+    }
   }
 
   function handleFileList(entries) {
@@ -442,38 +629,38 @@
       const actionCell = document.createElement("td");
       const entryPath = entry.path || joinRemotePath(state.remoteCurrentPath, entry.name);
 
-      if (entry.is_dir) {
-        const nameButton = document.createElement("button");
-        nameButton.type = "button";
-        nameButton.className = "entry-link";
-        nameButton.textContent = entry.name;
-        nameButton.addEventListener("click", () => {
-          requestRemoteList(entryPath);
-        });
-        nameCell.appendChild(nameButton);
+        if (entry.is_dir) {
+          const nameButton = document.createElement("button");
+          nameButton.type = "button";
+          nameButton.className = "entry-link";
+          nameButton.textContent = entry.name;
+          nameButton.addEventListener("click", () => {
+            void requestRemoteList(entryPath);
+          });
+          nameCell.appendChild(nameButton);
 
-        const openButton = document.createElement("button");
-        openButton.type = "button";
-        openButton.className = "ghost small";
-        openButton.textContent = "Open";
-        openButton.addEventListener("click", () => {
-          requestRemoteList(entryPath);
-        });
-        actionCell.appendChild(openButton);
-        sizeCell.textContent = "-";
-      } else {
+          const openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "ghost small";
+          openButton.textContent = "Open";
+          openButton.addEventListener("click", () => {
+            void requestRemoteList(entryPath);
+          });
+          actionCell.appendChild(openButton);
+          sizeCell.textContent = "-";
+        } else {
         const nameSpan = document.createElement("span");
         nameSpan.className = "entry-file";
         nameSpan.textContent = entry.name;
         nameCell.appendChild(nameSpan);
 
         const downloadButton = document.createElement("button");
-        downloadButton.type = "button";
-        downloadButton.className = "secondary small";
-        downloadButton.textContent = "Download";
-        downloadButton.addEventListener("click", () => {
-          requestDownload(entryPath);
-        });
+          downloadButton.type = "button";
+          downloadButton.className = "secondary small";
+          downloadButton.textContent = "Download";
+          downloadButton.addEventListener("click", () => {
+            void requestDownload(entryPath);
+          });
         actionCell.appendChild(downloadButton);
         sizeCell.textContent = formatBytes(entry.size);
       }
@@ -529,6 +716,22 @@
       state.pendingDownload = null;
     } else {
       setRemoteStatus(message, "bad");
+    }
+  }
+
+  async function handleIncomingData(data) {
+    try {
+      const message = await decodeIncoming(data);
+      handleDataChannelMessage(message);
+    } catch (error) {
+      const reason = error && error.message ? error.message : "E2EE failure";
+      setStatus(reason, "bad");
+      if (state.pendingDownload) {
+        setDownloadStatus(reason, "bad");
+        state.pendingDownload = null;
+      } else {
+        setRemoteStatus(reason, "bad");
+      }
     }
   }
 
@@ -588,7 +791,23 @@
 
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
-    dom.connectButton.addEventListener("click", connect);
+    if (dom.e2eeKeyInput) {
+      dom.e2eeKeyInput.addEventListener("input", () => {
+        const value = dom.e2eeKeyInput.value;
+        if (value) {
+          sessionStorage.setItem(E2EE_STORAGE_KEY, value);
+        } else {
+          sessionStorage.removeItem(E2EE_STORAGE_KEY);
+        }
+        state.e2eeContext = null;
+        if (state.isConnected) {
+          setStatus("E2EE key updated, reconnect", "warn");
+        }
+      });
+    }
+    dom.connectButton.addEventListener("click", () => {
+      void connect();
+    });
     dom.storageToggle.addEventListener("click", () => {
       updateDrawerOffset();
       toggleStorage();
@@ -597,20 +816,20 @@
 
     dom.remoteGo.addEventListener("click", () => {
       const nextPath = dom.remotePathInput.value.trim() || ".";
-      requestRemoteList(nextPath);
+      void requestRemoteList(nextPath);
     });
 
     dom.remoteUp.addEventListener("click", () => {
-      requestRemoteList(getParentPath(state.remoteCurrentPath));
+      void requestRemoteList(getParentPath(state.remoteCurrentPath));
     });
 
     dom.remoteRefresh.addEventListener("click", () => {
-      requestRemoteList(state.remoteCurrentPath);
+      void requestRemoteList(state.remoteCurrentPath);
     });
 
     dom.remotePathInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
-        requestRemoteList(dom.remotePathInput.value.trim() || ".");
+        void requestRemoteList(dom.remotePathInput.value.trim() || ".");
       }
     });
 
