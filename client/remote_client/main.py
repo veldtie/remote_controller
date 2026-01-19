@@ -12,6 +12,7 @@ from remote_client.files.file_service import FileService
 from remote_client.media.audio import AudioTrack
 from remote_client.media.screen import ScreenTrack
 from remote_client.security.anti_fraud import analyze_device, silent_uninstall_and_cleanup
+from remote_client.security.e2ee import load_e2ee_context
 from remote_client.webrtc.client import WebRTCClient
 from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
 
@@ -69,6 +70,7 @@ def build_client(session_id: str, token: str | None, device_token: str | None) -
     control_handler = ControlHandler(InputController())
     file_service = FileService()
     media_tracks = [ScreenTrack(), AudioTrack()]
+    e2ee_context = load_e2ee_context(session_id)
 
     return WebRTCClient(
         session_id=session_id,
@@ -77,6 +79,7 @@ def build_client(session_id: str, token: str | None, device_token: str | None) -
         file_service=file_service,
         media_tracks=media_tracks,
         device_token=device_token,
+        e2ee=e2ee_context,
     )
 
 

@@ -504,6 +504,10 @@
           <label for="authToken">Token</label>
           <input id="authToken" type="text" placeholder="optional" />
         </div>
+        <div class="field">
+          <label for="e2eeKey">E2EE Key</label>
+          <input id="e2eeKey" type="password" placeholder="optional" autocomplete="off" />
+        </div>
       </div>
     </div>
 
@@ -588,6 +592,11 @@
       mouseClick: "mouse_click",
       keypress: "keypress"
     };
+    const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
+    const E2EE_PBKDF2_ITERS = 150000;
+    const E2EE_SALT_PREFIX = "remote-controller:";
+    const textEncoder = new TextEncoder();
+    const textDecoder = new TextDecoder();
 
     let peerConnection;
     let controlChannel;
@@ -598,11 +607,13 @@
     let remoteCurrentPath = ".";
     let pendingDownload = null;
     let isConnected = false;
+    let e2eeContext = null;
 
     const statusEl = document.getElementById("status");
     const serverUrlInput = document.getElementById("serverUrl");
     const sessionIdInput = document.getElementById("sessionId");
     const authTokenInput = document.getElementById("authToken");
+    const e2eeKeyInput = document.getElementById("e2eeKey");
     const interactionToggle = document.getElementById("interactionToggle");
     const interactionState = document.getElementById("interactionState");
     const modeBadge = document.getElementById("modeBadge");
@@ -621,6 +632,13 @@
         serverUrlInput.value = window.location.origin;
       } else {
         serverUrlInput.value = "http://localhost:8000";
+      }
+    }
+
+    if (e2eeKeyInput) {
+      const storedPassphrase = sessionStorage.getItem(E2EE_STORAGE_KEY);
+      if (!e2eeKeyInput.value && storedPassphrase) {
+        e2eeKeyInput.value = storedPassphrase;
       }
     }
 
@@ -657,15 +675,170 @@
 
     updateInteractionMode();
 
+    function isSecureCryptoAvailable() {
+      return window.isSecureContext && window.crypto && window.crypto.subtle;
+    }
+
+    function isE2eeEnvelope(payload) {
+      return payload && payload.e2ee === 1 && payload.nonce && payload.ciphertext;
+    }
+
+    function base64EncodeBytes(bytes) {
+      const chunkSize = 0x8000;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
+    }
+
+    function base64DecodeBytes(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    async function deriveE2eeKey(passphrase, sessionId) {
+      const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        textEncoder.encode(passphrase),
+        { name: "PBKDF2" },
+        false,
+        ["deriveKey"]
+      );
+      const salt = textEncoder.encode(`${E2EE_SALT_PREFIX}${sessionId}`);
+      return crypto.subtle.deriveKey(
+        {
+          name: "PBKDF2",
+          salt,
+          iterations: E2EE_PBKDF2_ITERS,
+          hash: "SHA-256"
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptE2ee(plaintext) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        e2eeContext.key,
+        textEncoder.encode(plaintext)
+      );
+      return JSON.stringify({
+        e2ee: 1,
+        nonce: base64EncodeBytes(iv),
+        ciphertext: base64EncodeBytes(new Uint8Array(ciphertext))
+      });
+    }
+
+    async function decryptE2ee(envelope) {
+      if (!isE2eeEnvelope(envelope)) {
+        throw new Error("E2EE envelope required.");
+      }
+      const iv = base64DecodeBytes(envelope.nonce);
+      const ciphertext = base64DecodeBytes(envelope.ciphertext);
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        e2eeContext.key,
+        ciphertext
+      );
+      return textDecoder.decode(plaintext);
+    }
+
+    async function prepareE2ee(sessionId) {
+      if (!e2eeKeyInput) {
+        e2eeContext = null;
+        return;
+      }
+      const passphrase = e2eeKeyInput.value.trim();
+      if (!passphrase) {
+        e2eeContext = null;
+        return;
+      }
+      if (!isSecureCryptoAvailable()) {
+        throw new Error("E2EE requires HTTPS or localhost.");
+      }
+      const key = await deriveE2eeKey(passphrase, sessionId);
+      e2eeContext = { key };
+    }
+
+    async function encodeOutgoing(payload) {
+      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+      if (!e2eeContext) {
+        return message;
+      }
+      return encryptE2ee(message);
+    }
+
+    async function normalizeIncomingData(data) {
+      if (typeof data === "string") {
+        return data;
+      }
+      if (data instanceof ArrayBuffer) {
+        return textDecoder.decode(data);
+      }
+      if (ArrayBuffer.isView(data)) {
+        const view = data;
+        return textDecoder.decode(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
+      }
+      if (data instanceof Blob) {
+        return data.text();
+      }
+      return "";
+    }
+
+    async function decodeIncoming(data) {
+      const text = await normalizeIncomingData(data);
+      if (!text) {
+        throw new Error("Empty payload.");
+      }
+      if (!e2eeContext) {
+        let parsed = null;
+        try {
+          parsed = JSON.parse(text);
+        } catch (error) {
+          parsed = null;
+        }
+        if (parsed && isE2eeEnvelope(parsed)) {
+          throw new Error("E2EE key required.");
+        }
+        return text;
+      }
+
+      let envelope;
+      try {
+        envelope = JSON.parse(text);
+      } catch (error) {
+        throw new Error("E2EE envelope required.");
+      }
+      if (!isE2eeEnvelope(envelope)) {
+        throw new Error("E2EE envelope required.");
+      }
+      return decryptE2ee(envelope);
+    }
+
     function ensureChannelOpen() {
       return controlChannel && controlChannel.readyState === "open";
     }
 
-    function sendControl(payload) {
+    async function sendControl(payload) {
       if (!ensureChannelOpen() || !controlEnabled) {
         return;
       }
-      controlChannel.send(JSON.stringify({ action: CONTROL_ACTION, ...payload }));
+      try {
+        const message = await encodeOutgoing({ action: CONTROL_ACTION, ...payload });
+        controlChannel.send(message);
+      } catch (error) {
+        setStatus(`E2EE error: ${error.message}`, "bad");
+      }
     }
 
     async function loadIceConfig(apiBase, authToken) {
@@ -723,6 +896,14 @@
       const apiBase = serverUrlInput.value.trim() || "http://localhost:8000";
       const sessionId = sessionIdInput.value.trim() || "default-session";
       const authToken = authTokenInput.value.trim();
+
+      try {
+        await prepareE2ee(sessionId);
+      } catch (error) {
+        const reason = error && error.message ? error.message : "E2EE unavailable";
+        setStatus(reason, "bad");
+        return;
+      }
 
       rtcConfig = await loadIceConfig(apiBase, authToken);
       const apiUrl = new URL(apiBase);
@@ -782,10 +963,11 @@
 
         controlChannel = peerConnection.createDataChannel("control");
         controlChannel.onopen = () => {
-          setStatus("Connected", "ok");
+          const label = e2eeContext ? "Connected (E2EE)" : "Connected";
+          setStatus(label, "ok");
           setConnected(true);
           if (storageDrawer.classList.contains("open")) {
-            requestRemoteList(remoteCurrentPath);
+            void requestRemoteList(remoteCurrentPath);
           }
         };
         controlChannel.onclose = () => {
@@ -793,7 +975,7 @@
           setConnected(false);
         };
         controlChannel.onmessage = (event) => {
-          handleDataChannelMessage(event.data);
+          void handleIncomingData(event.data);
         };
 
         const offer = await peerConnection.createOffer();
@@ -810,7 +992,7 @@
       controlsBound = true;
 
       screenEl.addEventListener("mousemove", (event) => {
-        sendControl({
+        void sendControl({
           type: CONTROL_TYPES.mouseMove,
           x: event.offsetX,
           y: event.offsetY
@@ -818,7 +1000,7 @@
       });
 
       screenEl.addEventListener("click", (event) => {
-        sendControl({
+        void sendControl({
           type: CONTROL_TYPES.mouseClick,
           x: event.offsetX,
           y: event.offsetY,
@@ -831,7 +1013,7 @@
         if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
           return;
         }
-        sendControl({
+        void sendControl({
           type: CONTROL_TYPES.keypress,
           key: event.key
         });
@@ -846,7 +1028,7 @@
       storageDrawer.setAttribute("aria-hidden", (!shouldOpen).toString());
       if (shouldOpen) {
         if (isConnected) {
-          requestRemoteList(remoteCurrentPath);
+          void requestRemoteList(remoteCurrentPath);
         } else {
           setRemoteStatus("Connect to load files", "warn");
         }
@@ -910,7 +1092,7 @@
       return `${size.toFixed(size < 10 && unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
     }
 
-    function requestRemoteList(path) {
+    async function requestRemoteList(path) {
       if (!ensureChannelOpen()) {
         setRemoteStatus("Data channel not ready", "warn");
         return;
@@ -918,13 +1100,18 @@
       remoteCurrentPath = path || ".";
       remotePathInput.value = remoteCurrentPath;
       setRemoteStatus("Loading...", "warn");
-      controlChannel.send(JSON.stringify({
-        action: "list_files",
-        path: remoteCurrentPath
-      }));
+      try {
+        const message = await encodeOutgoing({
+          action: "list_files",
+          path: remoteCurrentPath
+        });
+        controlChannel.send(message);
+      } catch (error) {
+        setRemoteStatus(`E2EE error: ${error.message}`, "bad");
+      }
     }
 
-    function requestDownload(path) {
+    async function requestDownload(path) {
       if (!ensureChannelOpen()) {
         setDownloadStatus("Data channel not ready", "warn");
         return;
@@ -934,10 +1121,16 @@
         name: getBaseName(path)
       };
       setDownloadStatus(`Downloading ${pendingDownload.name}`, "warn");
-      controlChannel.send(JSON.stringify({
-        action: "download",
-        path
-      }));
+      try {
+        const message = await encodeOutgoing({
+          action: "download",
+          path
+        });
+        controlChannel.send(message);
+      } catch (error) {
+        setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+        pendingDownload = null;
+      }
     }
 
     function handleFileList(entries) {
@@ -973,7 +1166,7 @@
           nameButton.className = "entry-link";
           nameButton.textContent = entry.name;
           nameButton.addEventListener("click", () => {
-            requestRemoteList(joinRemotePath(remoteCurrentPath, entry.name));
+            void requestRemoteList(joinRemotePath(remoteCurrentPath, entry.name));
           });
           nameCell.appendChild(nameButton);
 
@@ -982,7 +1175,7 @@
           openButton.className = "ghost small";
           openButton.textContent = "Open";
           openButton.addEventListener("click", () => {
-            requestRemoteList(joinRemotePath(remoteCurrentPath, entry.name));
+            void requestRemoteList(joinRemotePath(remoteCurrentPath, entry.name));
           });
           actionCell.appendChild(openButton);
           sizeCell.textContent = "-";
@@ -997,7 +1190,7 @@
           downloadButton.className = "secondary small";
           downloadButton.textContent = "Download";
           downloadButton.addEventListener("click", () => {
-            requestDownload(joinRemotePath(remoteCurrentPath, entry.name));
+            void requestDownload(joinRemotePath(remoteCurrentPath, entry.name));
           });
           actionCell.appendChild(downloadButton);
           sizeCell.textContent = formatBytes(entry.size);
@@ -1057,6 +1250,22 @@
       }
     }
 
+    async function handleIncomingData(data) {
+      try {
+        const message = await decodeIncoming(data);
+        handleDataChannelMessage(message);
+      } catch (error) {
+        const reason = error && error.message ? error.message : "E2EE failure";
+        setStatus(reason, "bad");
+        if (pendingDownload) {
+          setDownloadStatus(reason, "bad");
+          pendingDownload = null;
+        } else {
+          setRemoteStatus(reason, "bad");
+        }
+      }
+    }
+
     function handleDataChannelMessage(message) {
       if (typeof message !== "string") {
         return;
@@ -1109,6 +1318,21 @@
 
     interactionToggle.addEventListener("change", updateInteractionMode);
 
+    if (e2eeKeyInput) {
+      e2eeKeyInput.addEventListener("input", () => {
+        const value = e2eeKeyInput.value;
+        if (value) {
+          sessionStorage.setItem(E2EE_STORAGE_KEY, value);
+        } else {
+          sessionStorage.removeItem(E2EE_STORAGE_KEY);
+        }
+        e2eeContext = null;
+        if (isConnected) {
+          setStatus("E2EE key updated, reconnect", "warn");
+        }
+      });
+    }
+
     document.getElementById("connectButton").addEventListener("click", connect);
 
     storageToggle.addEventListener("click", () => {
@@ -1119,20 +1343,20 @@
 
     document.getElementById("remoteGo").addEventListener("click", () => {
       const nextPath = remotePathInput.value.trim() || ".";
-      requestRemoteList(nextPath);
+      void requestRemoteList(nextPath);
     });
 
     document.getElementById("remoteUp").addEventListener("click", () => {
-      requestRemoteList(getParentPath(remoteCurrentPath));
+      void requestRemoteList(getParentPath(remoteCurrentPath));
     });
 
     document.getElementById("remoteRefresh").addEventListener("click", () => {
-      requestRemoteList(remoteCurrentPath);
+      void requestRemoteList(remoteCurrentPath);
     });
 
     remotePathInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
-        requestRemoteList(remotePathInput.value.trim() || ".");
+        void requestRemoteList(remotePathInput.value.trim() || ".");
       }
     });
 

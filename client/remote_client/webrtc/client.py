@@ -18,6 +18,7 @@ from aiortc.sdp import candidate_from_sdp
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
+from remote_client.security.e2ee import E2EEContext, E2EEError
 from remote_client.webrtc.signaling import WebSocketSignaling
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class WebRTCClient:
         file_service: FileService,
         media_tracks: list[Any],
         device_token: str | None = None,
+        e2ee: E2EEContext | None = None,
     ) -> None:
         self._session_id = session_id
         self._signaling = signaling
@@ -85,6 +87,7 @@ class WebRTCClient:
         self._file_service = file_service
         self._media_tracks = media_tracks
         self._device_token = device_token
+        self._e2ee = e2ee
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
 
     async def run_forever(self) -> None:
@@ -108,7 +111,12 @@ class WebRTCClient:
             @data_channel.on("message")
             async def on_message(message):
                 try:
-                    payload = json.loads(message)
+                    plaintext = self._prepare_incoming(message)
+                except E2EEError as exc:
+                    self._send_error(data_channel, "e2ee_error", str(exc))
+                    return
+                try:
+                    payload = json.loads(plaintext)
                 except json.JSONDecodeError as exc:
                     self._send_error(data_channel, "invalid_json", str(exc))
                     return
@@ -224,8 +232,9 @@ class WebRTCClient:
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
                 return
-            data_channel.send(
-                json.dumps({"files": self._file_service.serialize_entries(entries)})
+            self._send_payload(
+                data_channel,
+                {"files": self._file_service.serialize_entries(entries)},
             )
             return
 
@@ -236,7 +245,10 @@ class WebRTCClient:
                 self._send_error(data_channel, "missing_path", "Download missing 'path'.")
                 return
             try:
-                data_channel.send(self._file_service.read_file_base64(path))
+                self._send_payload(
+                    data_channel,
+                    self._file_service.read_file_base64(path),
+                )
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
             return
@@ -245,7 +257,35 @@ class WebRTCClient:
             data_channel, "unknown_action", f"Unknown action '{action}'."
         )
 
-    @staticmethod
-    def _send_error(data_channel, code: str, message: str) -> None:
+    def _prepare_incoming(self, message: str | bytes | bytearray) -> str:
+        """Decode and optionally decrypt incoming data channel messages."""
+        if isinstance(message, (bytes, bytearray)):
+            try:
+                text = bytes(message).decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise E2EEError("Invalid text encoding.") from exc
+        else:
+            text = message
+        if not self._e2ee:
+            return text
+        try:
+            envelope = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise E2EEError("E2EE envelope required.") from exc
+        if not self._e2ee.is_envelope(envelope):
+            raise E2EEError("E2EE envelope required.")
+        return self._e2ee.decrypt_envelope(envelope)
+
+    def _send_payload(self, data_channel, payload: dict[str, Any] | str) -> None:
+        """Send a payload over the data channel, applying E2EE if configured."""
+        if isinstance(payload, str):
+            message = payload
+        else:
+            message = json.dumps(payload)
+        if self._e2ee:
+            message = self._e2ee.encrypt_text(message)
+        data_channel.send(message)
+
+    def _send_error(self, data_channel, code: str, message: str) -> None:
         """Send a structured error over the data channel."""
-        data_channel.send(json.dumps({"error": {"code": code, "message": message}}))
+        self._send_payload(data_channel, {"error": {"code": code, "message": message}})

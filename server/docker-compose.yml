@@ -14,7 +14,12 @@ services:
       RC_SIGNALING_TOKEN_FILE: ${RC_SIGNALING_TOKEN_FILE:-/data/signaling_token}
       RC_SESSION_IDLE_TIMEOUT: ${RC_SESSION_IDLE_TIMEOUT:-300}
       RC_SESSION_CLEANUP_INTERVAL: ${RC_SESSION_CLEANUP_INTERVAL:-30}
+      RC_LOG_LEVEL: ${RC_LOG_LEVEL:-INFO}
+      RC_DB_POOL_MIN: ${RC_DB_POOL_MIN:-1}
+      RC_DB_POOL_MAX: ${RC_DB_POOL_MAX:-5}
+      RC_DB_CONNECT_RETRIES: ${RC_DB_CONNECT_RETRIES:-5}
       RC_DB_STATEMENT_CACHE_SIZE: ${RC_DB_STATEMENT_CACHE_SIZE:-0}
+      RC_ICE_SERVERS: ${RC_ICE_SERVERS}
       RC_TRUST_PROXY: "true"
     networks:
       - rcnet
@@ -34,6 +39,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../operator:/usr/share/nginx/html:ro
     depends_on:
       - signaling
     networks:

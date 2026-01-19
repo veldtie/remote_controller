@@ -2,10 +2,15 @@
 set -euo pipefail
 
 APP_DIR="/opt/remote_controller/server"
+OPERATOR_DIR="/opt/remote_controller/operator"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Upload server folder to $APP_DIR before running this script."
   exit 1
+fi
+
+if [[ ! -f "$OPERATOR_DIR/index.html" ]]; then
+  echo "Operator UI not found at $OPERATOR_DIR/index.html; upload operator/ to serve the web UI."
 fi
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
