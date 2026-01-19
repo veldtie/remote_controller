@@ -27,6 +27,7 @@
     controlsBound: false,
     remoteCurrentPath: ".",
     pendingDownload: null,
+    pendingAppLaunch: null,
     isConnected: false,
     e2eeContext: null
   };
@@ -43,6 +44,8 @@
     storageToggle: document.getElementById("storageToggle"),
     storageClose: document.getElementById("storageClose"),
     storageDrawer: document.getElementById("storageDrawer"),
+    appStatus: document.getElementById("appStatus"),
+    appButtons: Array.from(document.querySelectorAll("[data-app]")),
     remotePathInput: document.getElementById("remotePathInput"),
     remoteFileList: document.getElementById("remoteFileList"),
     remoteStatus: document.getElementById("remoteStatus"),
@@ -86,6 +89,30 @@
     dom.downloadStatus.dataset.state = stateKey;
   }
 
+  function setAppStatus(message, stateKey = "") {
+    if (!dom.appStatus) {
+      return;
+    }
+    dom.appStatus.textContent = message;
+    dom.appStatus.dataset.state = stateKey;
+  }
+
+  function updateAppLaunchAvailability() {
+    const enabled = state.isConnected && state.controlEnabled;
+    dom.appButtons.forEach((button) => {
+      button.disabled = !enabled;
+    });
+    if (!enabled) {
+      if (!state.isConnected) {
+        setAppStatus("Connect to launch apps", "warn");
+      } else {
+        setAppStatus("Switch to manage mode to launch apps", "warn");
+      }
+    } else {
+      setAppStatus("Ready", "");
+    }
+  }
+
   function setModeLocked(locked) {
     state.modeLocked = locked;
     dom.interactionToggle.disabled = locked;
@@ -97,6 +124,7 @@
     if (!connected) {
       setRemoteStatus("Not connected", "warn");
     }
+    updateAppLaunchAvailability();
   }
 
   function updateInteractionMode() {
@@ -106,6 +134,7 @@
     dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
+    updateAppLaunchAvailability();
   }
 
   function handleModeToggle() {
@@ -329,6 +358,7 @@
     state.controlChannel = null;
     state.peerConnection = null;
     state.signalingWebSocket = null;
+    state.pendingAppLaunch = null;
   }
 
   async function connect() {
@@ -601,6 +631,29 @@
     }
   }
 
+  async function requestAppLaunch(appName) {
+    if (!ensureChannelOpen()) {
+      setAppStatus("Data channel not ready", "warn");
+      return;
+    }
+    if (!state.controlEnabled) {
+      setAppStatus("Switch to manage mode to launch apps", "warn");
+      return;
+    }
+    state.pendingAppLaunch = appName;
+    setAppStatus(`Launching ${appName}...`, "warn");
+    try {
+      const message = await encodeOutgoing({
+        action: "launch_app",
+        app: appName
+      });
+      state.controlChannel.send(message);
+    } catch (error) {
+      setAppStatus(`E2EE error: ${error.message}`, "bad");
+      state.pendingAppLaunch = null;
+    }
+  }
+
   function handleFileList(entries) {
     dom.remoteFileList.textContent = "";
     if (!entries.length) {
@@ -711,12 +764,27 @@
 
   function handleError(errorPayload) {
     const message = errorPayload.message || "Unknown error";
+    if (state.pendingAppLaunch) {
+      setAppStatus(message, "bad");
+      state.pendingAppLaunch = null;
+      return;
+    }
     if (state.pendingDownload) {
       setDownloadStatus(message, "bad");
       state.pendingDownload = null;
     } else {
       setRemoteStatus(message, "bad");
     }
+  }
+
+  function handleAppLaunchStatus(payload) {
+    const appName = payload.app || "app";
+    if (payload.status === "launched") {
+      setAppStatus(`Launched ${appName}`, "ok");
+    } else {
+      setAppStatus(`Launch failed: ${appName}`, "bad");
+    }
+    state.pendingAppLaunch = null;
   }
 
   async function handleIncomingData(data) {
@@ -726,7 +794,10 @@
     } catch (error) {
       const reason = error && error.message ? error.message : "E2EE failure";
       setStatus(reason, "bad");
-      if (state.pendingDownload) {
+      if (state.pendingAppLaunch) {
+        setAppStatus(reason, "bad");
+        state.pendingAppLaunch = null;
+      } else if (state.pendingDownload) {
         setDownloadStatus(reason, "bad");
         state.pendingDownload = null;
       } else {
@@ -749,6 +820,10 @@
     if (parsed) {
       if (parsed.error) {
         handleError(parsed.error);
+        return;
+      }
+      if (parsed.action === "launch_app") {
+        handleAppLaunchStatus(parsed);
         return;
       }
       if (Array.isArray(parsed.files)) {
@@ -805,6 +880,14 @@
         }
       });
     }
+    dom.appButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const appName = button.dataset.app;
+        if (appName) {
+          void requestAppLaunch(appName);
+        }
+      });
+    });
     dom.connectButton.addEventListener("click", () => {
       void connect();
     });

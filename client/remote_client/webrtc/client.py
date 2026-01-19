@@ -76,6 +76,7 @@ class SessionResources:
     control_handler: ControlHandler
     media_tracks: list[Any]
     close: Callable[[], None] | None = None
+    launch_app: Callable[[str], None] | None = None
 
 
 SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
@@ -113,6 +114,7 @@ class WebRTCClient:
         connection_done = asyncio.Event()
         control_handler: ControlHandler | None = None
         session_cleanup: Callable[[], None] | None = None
+        session_actions: SessionResources | None = None
         operator_id_holder: dict[str, str | None] = {"value": None}
 
         @peer_connection.on("connectionstatechange")
@@ -137,7 +139,9 @@ class WebRTCClient:
                 if control_handler is None:
                     self._send_error(data_channel, "not_ready", "Session not ready.")
                     return
-                await self._handle_message(data_channel, payload, control_handler)
+                await self._handle_message(
+                    data_channel, payload, control_handler, session_actions
+                )
 
         @peer_connection.on("icecandidate")
         async def on_icecandidate(candidate) -> None:
@@ -173,10 +177,12 @@ class WebRTCClient:
             if isinstance(resources, tuple):
                 control_handler, media_tracks = resources
                 session_cleanup = None
+                session_actions = None
             else:
                 control_handler = resources.control_handler
                 media_tracks = resources.media_tracks
                 session_cleanup = resources.close
+                session_actions = resources
             offer = RTCSessionDescription(
                 sdp=offer_payload["sdp"], type=offer_payload["type"]
             )
@@ -266,6 +272,7 @@ class WebRTCClient:
         data_channel,
         payload: dict[str, Any],
         control_handler: ControlHandler,
+        session_actions: SessionResources | None = None,
     ) -> None:
         """Dispatch data channel actions."""
         action = payload.get("action")
@@ -308,6 +315,33 @@ class WebRTCClient:
                 )
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
+            return
+
+        if action == "launch_app":
+            app_name = payload.get("app")
+            if not app_name:
+                self._send_error(data_channel, "missing_app", "Launch missing 'app'.")
+                return
+            if not session_actions or not session_actions.launch_app:
+                self._send_error(
+                    data_channel,
+                    "unsupported",
+                    "Application launch is unavailable for this session.",
+                )
+                return
+            try:
+                session_actions.launch_app(str(app_name))
+            except (ValueError, FileNotFoundError) as exc:
+                self._send_error(data_channel, "launch_failed", str(exc))
+                return
+            except Exception as exc:
+                self._send_error(data_channel, "launch_failed", "Launch failed.")
+                logger.warning("Failed to launch app '%s': %s", app_name, exc)
+                return
+            self._send_payload(
+                data_channel,
+                {"action": "launch_app", "app": app_name, "status": "launched"},
+            )
             return
 
         self._send_error(

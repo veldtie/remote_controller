@@ -51,7 +51,12 @@ def build_session_resources(mode: str | None) -> SessionResources:
             else:
                 control_handler = ControlHandler(session.input_controller)
                 media_tracks: list[Any] = [session.screen_track, AudioTrack()]
-                return SessionResources(control_handler, media_tracks, close=session.close)
+                return SessionResources(
+                    control_handler,
+                    media_tracks,
+                    close=session.close,
+                    launch_app=session.launch_application,
+                )
 
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=False)
