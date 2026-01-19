@@ -13,7 +13,7 @@ from av import VideoFrame
 class ScreenTrack(VideoStreamTrack):
     """Video track that captures the primary monitor."""
 
-    def __init__(self) -> None:
+    def __init__(self, draw_cursor: bool = True) -> None:
         super().__init__()
         import mss
         import numpy as np
@@ -22,6 +22,7 @@ class ScreenTrack(VideoStreamTrack):
         self._sct = None
         self._monitor = None
         self._frame_size = (1280, 720)
+        self._draw_cursor_enabled = draw_cursor
         self._cursor_enabled = False
         self._cursor_info = None
         self._get_cursor_info = None
@@ -51,7 +52,8 @@ class ScreenTrack(VideoStreamTrack):
             img = self._np.zeros((height, width, 3), dtype=self._np.uint8)
         else:
             img = self._np.array(self._sct.grab(self._monitor))[:, :, :3]
-        self._draw_cursor(img)
+        if self._draw_cursor_enabled:
+            self._draw_cursor(img)
         frame = VideoFrame.from_ndarray(img, format="bgr24")
         frame.pts = pts
         frame.time_base = time_base

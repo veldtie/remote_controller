@@ -121,29 +121,32 @@ def test_list_files_dir_and_file(tmp_path):
 def test_handle_control_message_routes_to_handler(client, control_handler, channel):
     payload = {"action": "control", "type": "mouse_move", "x": 10, "y": 15}
 
-    asyncio.run(client._handle_message(channel, payload))
+    asyncio.run(client._handle_message(channel, payload, control_handler))
 
     assert control_handler.handled == [payload]
     assert channel.sent == []
 
 
 def test_handle_list_files_sends_serialized_entries(
-    client, file_service, file_entries, channel
+    client, control_handler, file_service, file_entries, channel
 ):
     payload = {"action": "list_files", "path": "/tmp"}
 
-    asyncio.run(client._handle_message(channel, payload))
+    asyncio.run(client._handle_message(channel, payload, control_handler))
 
     assert file_service.listed_paths == ["/tmp"]
     assert len(channel.sent) == 1
     message = json.loads(channel.sent[0])
+    assert message["path"] == "/tmp"
     assert message["files"] == file_service.serialize_entries(file_entries)
 
 
-def test_handle_download_sends_payload(client, file_service, base64_payload, channel):
+def test_handle_download_sends_payload(
+    client, control_handler, file_service, base64_payload, channel
+):
     payload = {"action": "download", "path": "/tmp/report.txt"}
 
-    asyncio.run(client._handle_message(channel, payload))
+    asyncio.run(client._handle_message(channel, payload, control_handler))
 
     assert file_service.read_paths == ["/tmp/report.txt"]
     assert channel.sent == [base64_payload]
@@ -158,14 +161,13 @@ def test_integration_download_reads_and_transfers_file(tmp_path, control_handler
     client = WebRTCClient(
         session_id="test-session",
         signaling=None,
-        control_handler=control_handler,
+        session_factory=lambda _mode: (control_handler, []),
         file_service=file_service,
-        media_tracks=[],
     )
     channel = CapturingChannel()
 
     payload = {"action": "download", "path": str(source_file)}
-    asyncio.run(client._handle_message(channel, payload))
+    asyncio.run(client._handle_message(channel, payload, control_handler))
 
     assert channel.sent == [base64.b64encode(source_bytes).decode()]
 
@@ -183,9 +185,8 @@ def test_run_once_successful_handshake_marks_connected(monkeypatch):
     client = WebRTCClient(
         session_id="test-session",
         signaling=signaling,
-        control_handler=object(),
+        session_factory=lambda _mode: (object(), []),
         file_service=object(),
-        media_tracks=[],
     )
 
     monkeypatch.setattr(
@@ -219,9 +220,8 @@ def test_run_once_failed_connection_closes_peer(monkeypatch):
     client = WebRTCClient(
         session_id="test-session",
         signaling=FailingSignaling(),
-        control_handler=object(),
+        session_factory=lambda _mode: (object(), []),
         file_service=object(),
-        media_tracks=[],
     )
 
     monkeypatch.setattr(

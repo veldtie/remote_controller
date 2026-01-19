@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import asyncpg
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -246,7 +246,7 @@ app.add_middleware(
 @dataclass
 class SessionPair:
     """Active WebSocket pair for a single session."""
-    browser: WebSocket | None = None
+    browsers: dict[str, WebSocket] = field(default_factory=dict)
     client: WebSocket | None = None
     device_token: str | None = None
 
@@ -257,24 +257,38 @@ class SessionRegistry:
         self._sessions: dict[str, SessionPair] = {}
         self._client_by_session: dict[str, WebSocket] = {}
         self._session_by_client: dict[WebSocket, str] = {}
-        self._browser_by_session: dict[str, WebSocket] = {}
         self._session_by_browser: dict[WebSocket, str] = {}
+        self._browser_id_by_socket: dict[WebSocket, str] = {}
         self._last_activity: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
-    async def register(self, session_id: str, role: str, websocket: WebSocket) -> None:
+    async def register(
+        self,
+        session_id: str,
+        role: str,
+        websocket: WebSocket,
+        operator_id: str | None = None,
+    ) -> WebSocket | None:
         """Register a websocket for the given role in a session."""
+        replaced_browser: WebSocket | None = None
         async with self._lock:
             session_pair = self._sessions.setdefault(session_id, SessionPair())
             if role == "browser":
-                session_pair.browser = websocket
-                self._browser_by_session[session_id] = websocket
+                if not operator_id:
+                    operator_id = secrets.token_hex(8)
+                replaced_browser = session_pair.browsers.get(operator_id)
+                if replaced_browser and replaced_browser is not websocket:
+                    self._session_by_browser.pop(replaced_browser, None)
+                    self._browser_id_by_socket.pop(replaced_browser, None)
+                session_pair.browsers[operator_id] = websocket
                 self._session_by_browser[websocket] = session_id
+                self._browser_id_by_socket[websocket] = operator_id
             elif role == "client":
                 session_pair.client = websocket
                 self._client_by_session[session_id] = websocket
                 self._session_by_client[websocket] = session_id
             self._last_activity[session_id] = time.monotonic()
+        return replaced_browser
 
     async def unregister(self, session_id: str, role: str, websocket: WebSocket) -> None:
         """Remove a websocket from session tracking."""
@@ -282,26 +296,41 @@ class SessionRegistry:
             session_pair = self._sessions.get(session_id)
             if not session_pair:
                 return
-            if role == "browser" and session_pair.browser is websocket:
-                session_pair.browser = None
-                self._browser_by_session.pop(session_id, None)
+            if role == "browser":
+                operator_id = self._browser_id_by_socket.pop(websocket, None)
+                if operator_id and session_pair.browsers.get(operator_id) is websocket:
+                    session_pair.browsers.pop(operator_id, None)
                 self._session_by_browser.pop(websocket, None)
             if role == "client" and session_pair.client is websocket:
                 session_pair.client = None
                 session_pair.device_token = None
                 self._client_by_session.pop(session_id, None)
                 self._session_by_client.pop(websocket, None)
-            if session_pair.browser is None and session_pair.client is None:
+            if not session_pair.browsers and session_pair.client is None:
                 self._sessions.pop(session_id, None)
                 self._last_activity.pop(session_id, None)
 
-    async def forward(self, session_id: str, role: str, message: str) -> None:
+    async def forward(
+        self,
+        session_id: str,
+        role: str,
+        message: str,
+        operator_id: str | None = None,
+    ) -> None:
         """Forward signaling payloads to the opposite role in a session."""
         async with self._lock:
             session_pair = self._sessions.get(session_id)
             if not session_pair:
                 return
-            peer = session_pair.client if role == "browser" else session_pair.browser
+            if role == "browser":
+                peer = session_pair.client
+            else:
+                if operator_id:
+                    peer = session_pair.browsers.get(operator_id)
+                elif len(session_pair.browsers) == 1:
+                    peer = next(iter(session_pair.browsers.values()))
+                else:
+                    peer = None
         if peer is not None:
             await peer.send_text(message)
 
@@ -318,7 +347,7 @@ class SessionRegistry:
             if not session_pair:
                 return False, False
             session_pair.device_token = device_token
-            return session_pair.browser is not None, session_pair.client is not None
+            return bool(session_pair.browsers), session_pair.client is not None
 
     async def get_session_state(self, session_id: str) -> tuple[bool, bool, str | None]:
         """Return browser/client presence and device token for a session."""
@@ -327,10 +356,15 @@ class SessionRegistry:
             if not session_pair:
                 return False, False, None
             return (
-                session_pair.browser is not None,
+                bool(session_pair.browsers),
                 session_pair.client is not None,
                 session_pair.device_token,
             )
+
+    async def get_operator_id(self, websocket: WebSocket) -> str | None:
+        """Return the operator id for a browser websocket."""
+        async with self._lock:
+            return self._browser_id_by_socket.get(websocket)
 
     async def pop_inactive_sessions(self, idle_timeout: float) -> list[tuple[str, SessionPair]]:
         """Remove and return sessions that have been idle past the timeout."""
@@ -344,9 +378,10 @@ class SessionRegistry:
                 if not session:
                     self._last_activity.pop(session_id, None)
                     continue
-                if session.browser is not None:
-                    self._browser_by_session.pop(session_id, None)
-                    self._session_by_browser.pop(session.browser, None)
+                if session.browsers:
+                    for browser_ws in list(session.browsers.values()):
+                        self._session_by_browser.pop(browser_ws, None)
+                        self._browser_id_by_socket.pop(browser_ws, None)
                 if session.client is not None:
                     self._client_by_session.pop(session_id, None)
                     self._session_by_client.pop(session.client, None)
@@ -385,8 +420,8 @@ async def _cleanup_inactive_sessions() -> None:
             logger.warning("Session %s idle timeout exceeded, closing connections", session_id)
             if session.client is not None and session.device_token:
                 await _update_device_status(session.device_token, DEVICE_STATUS_DISCONNECTED)
-            if session.browser is not None:
-                await _close_websocket(session.browser, code=1001, reason="Idle timeout")
+            for browser_ws in session.browsers.values():
+                await _close_websocket(browser_ws, code=1001, reason="Idle timeout")
             if session.client is not None:
                 await _close_websocket(session.client, code=1001, reason="Idle timeout")
 
@@ -425,6 +460,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
     """WebSocket endpoint for signaling between browser and client."""
     session_id = websocket.query_params.get("session_id")
     role = websocket.query_params.get("role")
+    operator_id = websocket.query_params.get("operator_id") if role == "browser" else None
     if SIGNALING_TOKEN:
         provided_token = websocket.query_params.get("token") or websocket.headers.get("x-rc-token")
         if not provided_token or provided_token != SIGNALING_TOKEN:
@@ -441,8 +477,19 @@ async def websocket_signaling(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
     await websocket.accept()
-    await registry.register(session_id, role, websocket)
-    logger.info("Connected %s for session %s from %s", role, session_id, _client_label(websocket))
+    replaced_browser = await registry.register(session_id, role, websocket, operator_id=operator_id)
+    if replaced_browser and replaced_browser is not websocket:
+        await _close_websocket(replaced_browser, code=1000, reason="Replaced by new connection")
+    if role == "browser" and operator_id:
+        logger.info(
+            "Connected %s for session %s (operator %s) from %s",
+            role,
+            session_id,
+            operator_id,
+            _client_label(websocket),
+        )
+    else:
+        logger.info("Connected %s for session %s from %s", role, session_id, _client_label(websocket))
     try:
         while True:
             message = await websocket.receive_text()
@@ -451,8 +498,15 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 payload = None
+            operator_id = None
             if isinstance(payload, dict):
                 message_type = payload.get("type")
+                operator_id = payload.get("operator_id")
+                if role == "browser" and not operator_id:
+                    operator_id = await registry.get_operator_id(websocket)
+                    if operator_id:
+                        payload["operator_id"] = operator_id
+                        message = json.dumps(payload)
                 if message_type == "register":
                     if role == "client":
                         device_token = payload.get("device_token")
@@ -486,7 +540,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             await registry.touch(session_id)
             if target_session_id != session_id:
                 await registry.touch(target_session_id)
-            await registry.forward(target_session_id, role, message)
+            await registry.forward(target_session_id, role, message, operator_id=operator_id)
     except WebSocketDisconnect:
         logger.info("Disconnected %s for session %s from %s", role, session_id, _client_label(websocket))
     except Exception:
@@ -496,11 +550,11 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             _, _, device_token = await registry.get_session_state(session_id)
             if device_token:
                 await _update_device_status(device_token, DEVICE_STATUS_DISCONNECTED)
-        elif role == "browser":
-            _, has_client, device_token = await registry.get_session_state(session_id)
-            if device_token and has_client:
-                await _update_device_status(device_token, DEVICE_STATUS_INACTIVE)
         await registry.unregister(session_id, role, websocket)
+        if role == "browser":
+            has_browser, has_client, device_token = await registry.get_session_state(session_id)
+            if device_token and has_client and not has_browser:
+                await _update_device_status(device_token, DEVICE_STATUS_INACTIVE)
 
 
 if __name__ == "__main__":

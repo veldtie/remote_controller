@@ -6,6 +6,8 @@ import contextlib
 import json
 import os
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aiortc import (
@@ -68,6 +70,17 @@ def _load_ice_servers() -> list[RTCIceServer]:
     return [RTCIceServer(**server) for server in servers]
 
 
+@dataclass
+class SessionResources:
+    """Resources required to serve a remote session."""
+    control_handler: ControlHandler
+    media_tracks: list[Any]
+    close: Callable[[], None] | None = None
+
+
+SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
+
+
 class WebRTCClient:
     """Manages WebRTC connections and dispatches data channel actions."""
 
@@ -75,17 +88,15 @@ class WebRTCClient:
         self,
         session_id: str,
         signaling: WebSocketSignaling,
-        control_handler: ControlHandler,
+        session_factory: SessionFactory,
         file_service: FileService,
-        media_tracks: list[Any],
         device_token: str | None = None,
         e2ee: E2EEContext | None = None,
     ) -> None:
         self._session_id = session_id
         self._signaling = signaling
-        self._control_handler = control_handler
+        self._session_factory = session_factory
         self._file_service = file_service
-        self._media_tracks = media_tracks
         self._device_token = device_token
         self._e2ee = e2ee
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
@@ -100,6 +111,9 @@ class WebRTCClient:
         """Run a single signaling and WebRTC session."""
         peer_connection = RTCPeerConnection(self._rtc_configuration)
         connection_done = asyncio.Event()
+        control_handler: ControlHandler | None = None
+        session_cleanup: Callable[[], None] | None = None
+        operator_id_holder: dict[str, str | None] = {"value": None}
 
         @peer_connection.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
@@ -120,21 +134,25 @@ class WebRTCClient:
                 except json.JSONDecodeError as exc:
                     self._send_error(data_channel, "invalid_json", str(exc))
                     return
-                await self._handle_message(data_channel, payload)
+                if control_handler is None:
+                    self._send_error(data_channel, "not_ready", "Session not ready.")
+                    return
+                await self._handle_message(data_channel, payload, control_handler)
 
         @peer_connection.on("icecandidate")
         async def on_icecandidate(candidate) -> None:
             if candidate is None:
                 return
-            await self._signaling.send(
-                {
-                    "type": "ice",
-                    "session_id": self._session_id,
-                    "candidate": candidate.candidate,
-                    "sdpMid": candidate.sdpMid,
-                    "sdpMLineIndex": candidate.sdpMLineIndex,
-                }
-            )
+            payload = {
+                "type": "ice",
+                "session_id": self._session_id,
+                "candidate": candidate.candidate,
+                "sdpMid": candidate.sdpMid,
+                "sdpMLineIndex": candidate.sdpMLineIndex,
+            }
+            if operator_id_holder["value"]:
+                payload["operator_id"] = operator_id_holder["value"]
+            await self._signaling.send(payload)
 
         try:
             await self._signaling.connect()
@@ -149,6 +167,16 @@ class WebRTCClient:
             offer_payload = await self._await_offer()
             if offer_payload is None:
                 return
+            operator_id_holder["value"] = offer_payload.get("operator_id")
+            session_mode = offer_payload.get("mode")
+            resources = self._session_factory(session_mode)
+            if isinstance(resources, tuple):
+                control_handler, media_tracks = resources
+                session_cleanup = None
+            else:
+                control_handler = resources.control_handler
+                media_tracks = resources.media_tracks
+                session_cleanup = resources.close
             offer = RTCSessionDescription(
                 sdp=offer_payload["sdp"], type=offer_payload["type"]
             )
@@ -157,20 +185,23 @@ class WebRTCClient:
             offered_kinds = {
                 transceiver.kind for transceiver in peer_connection.getTransceivers()
             }
-            for track in self._media_tracks:
+            for track in media_tracks:
                 if track.kind in offered_kinds:
                     peer_connection.addTrack(track)
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)
-            await self._signaling.send(
-                {
-                    "type": peer_connection.localDescription.type,
-                    "sdp": peer_connection.localDescription.sdp,
-                }
-            )
+            answer_payload = {
+                "type": peer_connection.localDescription.type,
+                "sdp": peer_connection.localDescription.sdp,
+            }
+            if operator_id_holder["value"]:
+                answer_payload["operator_id"] = operator_id_holder["value"]
+            await self._signaling.send(answer_payload)
 
-            signaling_task = asyncio.create_task(self._signaling_loop(peer_connection))
+            signaling_task = asyncio.create_task(
+                self._signaling_loop(peer_connection, operator_id_holder)
+            )
             await connection_done.wait()
             signaling_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -180,6 +211,11 @@ class WebRTCClient:
         finally:
             await peer_connection.close()
             await self._signaling.close()
+            if session_cleanup:
+                try:
+                    session_cleanup()
+                except Exception as exc:
+                    logger.warning("Session cleanup failed: %s", exc)
 
     async def _await_offer(self) -> dict[str, Any] | None:
         """Wait for an SDP offer from the signaling server."""
@@ -190,7 +226,11 @@ class WebRTCClient:
             if signaling_message.get("type") == "offer":
                 return signaling_message
 
-    async def _signaling_loop(self, peer_connection: RTCPeerConnection) -> None:
+    async def _signaling_loop(
+        self,
+        peer_connection: RTCPeerConnection,
+        operator_id_holder: dict[str, str | None],
+    ) -> None:
         """Relay ICE candidates from signaling to the peer connection."""
         while True:
             message = await self._signaling.receive()
@@ -198,6 +238,15 @@ class WebRTCClient:
                 return
             message_type = message.get("type")
             if message_type == "ice":
+                message_operator = message.get("operator_id")
+                if (
+                    operator_id_holder["value"]
+                    and message_operator
+                    and message_operator != operator_id_holder["value"]
+                ):
+                    continue
+                if operator_id_holder["value"] is None and message_operator:
+                    operator_id_holder["value"] = message_operator
                 candidate = message.get("candidate")
                 if not candidate:
                     continue
@@ -212,7 +261,12 @@ class WebRTCClient:
                 except Exception as exc:
                     logger.warning("Failed to apply ICE candidate: %s", exc)
 
-    async def _handle_message(self, data_channel, payload: dict[str, Any]) -> None:
+    async def _handle_message(
+        self,
+        data_channel,
+        payload: dict[str, Any],
+        control_handler: ControlHandler,
+    ) -> None:
         """Dispatch data channel actions."""
         action = payload.get("action")
         if not action:
@@ -220,7 +274,7 @@ class WebRTCClient:
             return
         if action == "control":
             try:
-                self._control_handler.handle(payload)
+                control_handler.handle(payload)
             except (KeyError, ValueError, TypeError) as exc:
                 self._send_error(data_channel, "invalid_control", str(exc))
             return
@@ -228,13 +282,23 @@ class WebRTCClient:
         if action == "list_files":
             path = payload.get("path", ".")
             try:
-                entries = self._file_service.list_files(path)
+                base_path, entries = self._file_service.list_files_with_base(path)
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
                 return
+<<<<<<< HEAD
             self._send_payload(
                 data_channel,
                 {"files": self._file_service.serialize_entries(entries)},
+=======
+            data_channel.send(
+                json.dumps(
+                    {
+                        "path": base_path,
+                        "files": self._file_service.serialize_entries(entries),
+                    }
+                )
+>>>>>>> c4e2918e9de6745a3288236346c012c4da4d4a7e
             )
             return
 

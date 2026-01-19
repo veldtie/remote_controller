@@ -61,3 +61,13 @@ class InputController:
             self._pyautogui.click(command.x, command.y, button=command.button)
         elif isinstance(command, KeyPress):
             self._pyautogui.press(command.key)
+
+
+class NullInputController(InputController):
+    """No-op controller for view-only sessions."""
+
+    def __init__(self) -> None:
+        self._pyautogui = None
+
+    def execute(self, command: ControlCommand) -> None:
+        return
