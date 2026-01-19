@@ -5,7 +5,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -152,6 +152,39 @@ TRANSLATIONS = {
               <li>Keep audit logs for support sessions.</li>
             </ul>
         """,
+        "nav_teams": "Teams",
+        "teams_title": "Teams",
+        "teams_subtitle": "Manage operator teams and subscriptions",
+        "teams_list_title": "Team list",
+        "teams_select_hint": "Select a team to view details",
+        "team_name": "Team name",
+        "team_name_placeholder": "Enter team name",
+        "team_status": "Status",
+        "team_status_active": "Active",
+        "team_status_expired": "Expired",
+        "team_subscription": "Subscription ends",
+        "team_renew": "Renew subscription",
+        "team_members": "Team members",
+        "team_member_name": "Name",
+        "team_member_tag": "Tag",
+        "team_member_clients": "Remote clients",
+        "team_add_member": "Add member",
+        "team_remove_member": "Remove member",
+        "team_add_dialog_title": "Add team member",
+        "team_add_name": "Name",
+        "team_add_account_id": "Account ID",
+        "team_add_password": "Password",
+        "team_add_tag": "Role",
+        "team_add_confirm": "Add",
+        "team_add_cancel": "Cancel",
+        "teams_no_members": "No members yet",
+        "tag_operator": "Operator",
+        "tag_administrator": "Administrator",
+        "tag_moderator": "Moderator",
+        "settings_role": "Role",
+        "settings_role_operator": "Operator",
+        "settings_role_administrator": "Administrator",
+        "settings_role_moderator": "Moderator",
     },
 }
 
@@ -286,6 +319,39 @@ TRANSLATIONS.update(
               <li>为支持会话保留审计日志。</li>
             </ul>
         """,
+        "nav_teams": "团队",
+        "teams_title": "团队",
+        "teams_subtitle": "管理操作员团队与订阅",
+        "teams_list_title": "团队列表",
+        "teams_select_hint": "选择团队查看详情",
+        "team_name": "团队名称",
+        "team_name_placeholder": "输入团队名称",
+        "team_status": "状态",
+        "team_status_active": "有效",
+        "team_status_expired": "已过期",
+        "team_subscription": "订阅到期",
+        "team_renew": "续订订阅",
+        "team_members": "团队成员",
+        "team_member_name": "姓名",
+        "team_member_tag": "角色",
+        "team_member_clients": "远程客户端",
+        "team_add_member": "添加成员",
+        "team_remove_member": "移除成员",
+        "team_add_dialog_title": "添加团队成员",
+        "team_add_name": "姓名",
+        "team_add_account_id": "账号 ID",
+        "team_add_password": "密码",
+        "team_add_tag": "角色",
+        "team_add_confirm": "添加",
+        "team_add_cancel": "取消",
+        "teams_no_members": "暂无成员",
+        "tag_operator": "操作员",
+        "tag_administrator": "管理员",
+        "tag_moderator": "版主",
+        "settings_role": "角色",
+        "settings_role_operator": "操作员",
+        "settings_role_administrator": "管理员",
+        "settings_role_moderator": "版主",
         }
     }
 )
@@ -298,6 +364,7 @@ DEFAULT_CLIENTS = [
         "region": "region_eu",
         "ip": "192.168.32.10",
         "connected": False,
+        "assigned_operator_id": "OP-1002",
     },
     {
         "id": "RC-1184",
@@ -305,6 +372,7 @@ DEFAULT_CLIENTS = [
         "region": "region_na",
         "ip": "10.0.5.77",
         "connected": False,
+        "assigned_operator_id": "OP-1001",
     },
     {
         "id": "RC-3920",
@@ -312,6 +380,7 @@ DEFAULT_CLIENTS = [
         "region": "region_apac",
         "ip": "172.16.4.18",
         "connected": False,
+        "assigned_operator_id": "OP-2002",
     },
     {
         "id": "RC-4420",
@@ -319,17 +388,67 @@ DEFAULT_CLIENTS = [
         "region": "region_sa",
         "ip": "192.168.12.54",
         "connected": False,
+        "assigned_operator_id": "OP-2001",
+    },
+]
+
+DEFAULT_TEAMS = [
+    {
+        "id": "TEAM-01",
+        "name": "Northline Support",
+        "subscription_end": "2025-12-31",
+        "members": [
+            {
+                "name": "Avery Grant",
+                "tag": "administrator",
+                "account_id": "OP-1001",
+                "password": "Passw0rd!",
+            },
+            {
+                "name": "Leo Martinez",
+                "tag": "operator",
+                "account_id": "OP-1002",
+                "password": "Passw0rd!",
+            },
+            {
+                "name": "Mia Chen",
+                "tag": "moderator",
+                "account_id": "MOD-2001",
+                "password": "Passw0rd!",
+            },
+        ],
+    },
+    {
+        "id": "TEAM-02",
+        "name": "Atlas Helpdesk",
+        "subscription_end": "2025-10-15",
+        "members": [
+            {
+                "name": "Nora Patel",
+                "tag": "administrator",
+                "account_id": "OP-2001",
+                "password": "Passw0rd!",
+            },
+            {
+                "name": "Ivan Volkov",
+                "tag": "operator",
+                "account_id": "OP-2002",
+                "password": "Passw0rd!",
+            },
+        ],
     },
 ]
 
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "language": "en",
+    "role": "operator",
     "remember_me": False,
     "account_id": "",
     "session_token": "",
     "recent_account_ids": [],
     "session_logs": [],
+    "teams": DEFAULT_TEAMS,
     "clients": DEFAULT_CLIENTS,
     "builder": {
         "source_dir": "",
@@ -385,6 +504,7 @@ class SettingsStore:
         self.data["session_token"] = ""
         self.data["recent_account_ids"] = []
         self.data["session_logs"] = []
+        self.data["role"] = "operator"
         self.save()
 
 
@@ -1172,6 +1292,369 @@ class DashboardPage(QtWidgets.QWidget):
         self.settings.save()
 
 
+class AddMemberDialog(QtWidgets.QDialog):
+    def __init__(self, i18n: I18n, parent=None):
+        super().__init__(parent)
+        self.i18n = i18n
+        self.setWindowTitle(self.i18n.t("team_add_dialog_title"))
+        self.setMinimumWidth(360)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.name_input = QtWidgets.QLineEdit()
+        self.account_input = QtWidgets.QLineEdit()
+        self.password_input = QtWidgets.QLineEdit()
+        self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.tag_combo = QtWidgets.QComboBox()
+        self.tag_combo.addItem(self.i18n.t("tag_operator"), "operator")
+        self.tag_combo.addItem(self.i18n.t("tag_administrator"), "administrator")
+        self.tag_combo.addItem(self.i18n.t("tag_moderator"), "moderator")
+
+        form.addRow(self.i18n.t("team_add_name"), self.name_input)
+        form.addRow(self.i18n.t("team_add_account_id"), self.account_input)
+        form.addRow(self.i18n.t("team_add_password"), self.password_input)
+        form.addRow(self.i18n.t("team_add_tag"), self.tag_combo)
+        layout.addLayout(form)
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch()
+        self.cancel_button = make_button(self.i18n.t("team_add_cancel"), "ghost")
+        self.confirm_button = make_button(self.i18n.t("team_add_confirm"), "primary")
+        self.cancel_button.clicked.connect(self.reject)
+        self.confirm_button.clicked.connect(self.accept)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+
+    def member_data(self) -> Dict[str, str]:
+        return {
+            "name": self.name_input.text().strip(),
+            "account_id": self.account_input.text().strip(),
+            "password": self.password_input.text(),
+            "tag": self.tag_combo.currentData(),
+        }
+
+
+class TeamsPage(QtWidgets.QWidget):
+    def __init__(self, i18n: I18n, settings: SettingsStore):
+        super().__init__()
+        self.i18n = i18n
+        self.settings = settings
+        self.teams = deep_copy(settings.get("teams", DEFAULT_TEAMS))
+        self.current_role = settings.get("role", "operator")
+        self.current_team_id = None
+        self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(16)
+
+        header = QtWidgets.QVBoxLayout()
+        self.title_label = QtWidgets.QLabel()
+        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.subtitle_label = QtWidgets.QLabel()
+        self.subtitle_label.setObjectName("Muted")
+        header.addWidget(self.title_label)
+        header.addWidget(self.subtitle_label)
+        layout.addLayout(header)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(16)
+
+        self.list_card = QtWidgets.QFrame()
+        self.list_card.setObjectName("Card")
+        list_layout = QtWidgets.QVBoxLayout(self.list_card)
+        self.list_title = QtWidgets.QLabel()
+        self.list_title.setStyleSheet("font-weight: 600;")
+        list_layout.addWidget(self.list_title)
+        self.team_list = QtWidgets.QListWidget()
+        self.team_list.itemSelectionChanged.connect(self.on_team_selected)
+        list_layout.addWidget(self.team_list, 1)
+        body.addWidget(self.list_card, 2)
+
+        self.details_card = QtWidgets.QFrame()
+        self.details_card.setObjectName("Card")
+        details_layout = QtWidgets.QVBoxLayout(self.details_card)
+
+        self.details_stack = QtWidgets.QStackedWidget()
+        placeholder = QtWidgets.QLabel()
+        placeholder.setObjectName("Muted")
+        placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.placeholder_label = placeholder
+        self.details_stack.addWidget(placeholder)
+
+        details_container = QtWidgets.QWidget()
+        container_layout = QtWidgets.QVBoxLayout(details_container)
+        container_layout.setSpacing(12)
+
+        form = QtWidgets.QGridLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
+
+        self.team_name_label = QtWidgets.QLabel()
+        self.team_name_input = QtWidgets.QLineEdit()
+        self.team_name_input.editingFinished.connect(self.commit_team_name)
+        self.team_name_input.setPlaceholderText(self.i18n.t("team_name_placeholder"))
+
+        self.team_status_label = QtWidgets.QLabel()
+        self.team_status_value = QtWidgets.QLabel()
+        self.team_status_value.setStyleSheet("font-weight: 600;")
+
+        self.team_subscription_label = QtWidgets.QLabel()
+        self.team_subscription_value = QtWidgets.QLabel()
+
+        form.addWidget(self.team_name_label, 0, 0)
+        form.addWidget(self.team_name_input, 0, 1, 1, 3)
+        form.addWidget(self.team_status_label, 1, 0)
+        form.addWidget(self.team_status_value, 1, 1)
+        form.addWidget(self.team_subscription_label, 1, 2)
+        form.addWidget(self.team_subscription_value, 1, 3)
+
+        container_layout.addLayout(form)
+
+        self.renew_button = make_button("", "primary")
+        self.renew_button.clicked.connect(self.renew_subscription)
+        container_layout.addWidget(self.renew_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.members_label = QtWidgets.QLabel()
+        self.members_label.setStyleSheet("font-weight: 600;")
+        container_layout.addWidget(self.members_label)
+
+        self.members_table = QtWidgets.QTableWidget(0, 3)
+        self.members_table.verticalHeader().setVisible(False)
+        self.members_table.setAlternatingRowColors(True)
+        self.members_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.members_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.members_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        header = self.members_table.horizontalHeader()
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.members_table.verticalHeader().setDefaultSectionSize(36)
+        container_layout.addWidget(self.members_table, 1)
+
+        member_actions = QtWidgets.QHBoxLayout()
+        self.add_member_button = make_button("", "ghost")
+        self.add_member_button.clicked.connect(self.add_member)
+        self.remove_member_button = make_button("", "ghost")
+        self.remove_member_button.clicked.connect(self.remove_member)
+        member_actions.addWidget(self.add_member_button)
+        member_actions.addWidget(self.remove_member_button)
+        member_actions.addStretch()
+        container_layout.addLayout(member_actions)
+
+        self.details_stack.addWidget(details_container)
+        details_layout.addWidget(self.details_stack, 1)
+        body.addWidget(self.details_card, 5)
+
+        layout.addLayout(body, 1)
+
+        self.apply_translations()
+        self.populate_team_list()
+        self.update_role_controls()
+
+    @staticmethod
+    def parse_date(value: str) -> datetime:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return datetime.now()
+
+    def apply_translations(self) -> None:
+        self.title_label.setText(self.i18n.t("teams_title"))
+        self.subtitle_label.setText(self.i18n.t("teams_subtitle"))
+        self.list_title.setText(self.i18n.t("teams_list_title"))
+        self.placeholder_label.setText(self.i18n.t("teams_select_hint"))
+        self.team_name_label.setText(self.i18n.t("team_name"))
+        self.team_name_input.setPlaceholderText(self.i18n.t("team_name_placeholder"))
+        self.team_status_label.setText(self.i18n.t("team_status"))
+        self.team_subscription_label.setText(self.i18n.t("team_subscription"))
+        self.renew_button.setText(self.i18n.t("team_renew"))
+        self.members_label.setText(self.i18n.t("team_members"))
+        self.add_member_button.setText(self.i18n.t("team_add_member"))
+        self.remove_member_button.setText(self.i18n.t("team_remove_member"))
+        self.members_table.setHorizontalHeaderLabels(
+            [
+                self.i18n.t("team_member_name"),
+                self.i18n.t("team_member_tag"),
+                self.i18n.t("team_member_clients"),
+            ]
+        )
+        self.populate_team_list(self.current_team_id)
+        self.render_team_details()
+
+    def set_role(self, role: str) -> None:
+        self.current_role = role
+        self.update_role_controls()
+        self.populate_team_list(self.current_team_id)
+        self.render_team_details()
+
+    def update_role_controls(self) -> None:
+        is_moderator = self.current_role == "moderator"
+        self.team_name_input.setReadOnly(not is_moderator)
+        self.renew_button.setEnabled(is_moderator)
+        self.add_member_button.setEnabled(is_moderator)
+        self.remove_member_button.setEnabled(is_moderator)
+
+    def visible_teams(self) -> List[Dict]:
+        if self.current_role == "moderator":
+            return self.teams
+        account_id = self.settings.get("account_id", "")
+        for team in self.teams:
+            for member in team.get("members", []):
+                if member.get("account_id") == account_id:
+                    return [team]
+        return self.teams[:1] if self.teams else []
+
+    def populate_team_list(self, select_team_id: Optional[str] = None) -> None:
+        self.team_list.clear()
+        teams = self.visible_teams()
+        for team in teams:
+            item = QtWidgets.QListWidgetItem(team["name"])
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, team["id"])
+            self.team_list.addItem(item)
+            if select_team_id and team["id"] == select_team_id:
+                self.team_list.setCurrentItem(item)
+        if self.team_list.count() > 0 and self.team_list.currentItem() is None:
+            self.team_list.setCurrentRow(0)
+
+    def on_team_selected(self) -> None:
+        self.render_team_details()
+
+    def render_team_details(self) -> None:
+        team = self.selected_team()
+        if team is None:
+            self.details_stack.setCurrentIndex(0)
+            return
+        self.details_stack.setCurrentIndex(1)
+        self.current_team_id = team["id"]
+        self.team_name_input.blockSignals(True)
+        self.team_name_input.setText(team.get("name", ""))
+        self.team_name_input.blockSignals(False)
+        self.update_subscription_display(team)
+        self.render_members(team)
+
+    def selected_team(self) -> Optional[Dict]:
+        item = self.team_list.currentItem()
+        if not item:
+            return None
+        team_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        for team in self.teams:
+            if team["id"] == team_id:
+                return team
+        return None
+
+    def update_subscription_display(self, team: Dict) -> None:
+        end_date = self.parse_date(team.get("subscription_end", "")).date()
+        today = datetime.now().date()
+        is_active = end_date >= today
+        status_key = "team_status_active" if is_active else "team_status_expired"
+        self.team_status_value.setText(self.i18n.t(status_key))
+        color = self.theme.colors["accent"] if is_active else self.theme.colors["danger"]
+        self.team_status_value.setStyleSheet(f"font-weight: 600; color: {color};")
+        self.team_subscription_value.setText(end_date.strftime("%Y-%m-%d"))
+
+    def client_count_for_member(self, member: Dict) -> int:
+        account_id = member.get("account_id")
+        if not account_id:
+            return 0
+        clients = self.settings.get("clients", [])
+        count = 0
+        for client in clients:
+            assigned = client.get("assigned_operator_id")
+            if assigned == account_id:
+                count += 1
+        return count
+
+    def render_members(self, team: Dict) -> None:
+        members = team.get("members", [])
+        self.members_table.setRowCount(0)
+        if not members:
+            row = self.members_table.rowCount()
+            self.members_table.insertRow(row)
+            item = QtWidgets.QTableWidgetItem(self.i18n.t("teams_no_members"))
+            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+            self.members_table.setItem(row, 0, item)
+            self.members_table.setSpan(row, 0, 1, 3)
+            return
+        for member in members:
+            row = self.members_table.rowCount()
+            self.members_table.insertRow(row)
+            name_item = QtWidgets.QTableWidgetItem(member["name"])
+            tag_label = self.i18n.t(f"tag_{member['tag']}")
+            tag_item = QtWidgets.QTableWidgetItem(tag_label)
+            clients_item = QtWidgets.QTableWidgetItem(str(self.client_count_for_member(member)))
+            self.members_table.setItem(row, 0, name_item)
+            self.members_table.setItem(row, 1, tag_item)
+            self.members_table.setItem(row, 2, clients_item)
+
+    def commit_team_name(self) -> None:
+        if self.current_role != "moderator":
+            return
+        team = self.selected_team()
+        if team is None:
+            return
+        name = self.team_name_input.text().strip()
+        if not name:
+            return
+        team["name"] = name
+        self.save_teams()
+        self.populate_team_list(team["id"])
+
+    def renew_subscription(self) -> None:
+        if self.current_role != "moderator":
+            return
+        team = self.selected_team()
+        if team is None:
+            return
+        end_date = self.parse_date(team.get("subscription_end", "")).date()
+        today = datetime.now().date()
+        base_date = end_date if end_date >= today else today
+        new_end = base_date + timedelta(days=30)
+        team["subscription_end"] = new_end.strftime("%Y-%m-%d")
+        self.save_teams()
+        self.update_subscription_display(team)
+
+    def add_member(self) -> None:
+        if self.current_role != "moderator":
+            return
+        team = self.selected_team()
+        if team is None:
+            return
+        dialog = AddMemberDialog(self.i18n, self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        data = dialog.member_data()
+        if not data["name"] or not data["account_id"] or not data["password"]:
+            return
+        team.setdefault("members", []).append(data)
+        self.save_teams()
+        self.render_members(team)
+        self.populate_team_list(team["id"])
+
+    def remove_member(self) -> None:
+        if self.current_role != "moderator":
+            return
+        team = self.selected_team()
+        if team is None:
+            return
+        row = self.members_table.currentRow()
+        if row < 0 or row >= len(team.get("members", [])):
+            return
+        team["members"].pop(row)
+        self.save_teams()
+        self.render_members(team)
+        self.populate_team_list(team["id"])
+
+    def save_teams(self) -> None:
+        self.settings.set("teams", self.teams)
+        self.settings.save()
+
+    def apply_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        team = self.selected_team()
+        if team is not None:
+            self.update_subscription_display(team)
+
+
 class CompilerPage(QtWidgets.QWidget):
     def __init__(self, i18n: I18n, settings: SettingsStore, logger: EventLogger):
         super().__init__()
@@ -1226,10 +1709,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_combo.addItem(self.i18n.t("compiler_mode_onefile"), "onefile")
         self.mode_combo.addItem(self.i18n.t("compiler_mode_onedir"), "onedir")
 
-        self.console_label = QtWidgets.QLabel()
-        self.console_combo = QtWidgets.QComboBox()
-        self.console_combo.addItem(self.i18n.t("compiler_console_hide"), "hide")
-        self.console_combo.addItem(self.i18n.t("compiler_console_show"), "show")
+        self.console_check = QtWidgets.QCheckBox()
 
         form_layout.addWidget(self.source_label, 0, 0)
         form_layout.addWidget(self.source_input, 0, 1)
@@ -1247,8 +1727,7 @@ class CompilerPage(QtWidgets.QWidget):
         form_layout.addWidget(self.icon_button, 4, 2)
         form_layout.addWidget(self.mode_label, 5, 0)
         form_layout.addWidget(self.mode_combo, 5, 1)
-        form_layout.addWidget(self.console_label, 5, 2)
-        form_layout.addWidget(self.console_combo, 6, 2)
+        form_layout.addWidget(self.console_check, 5, 2)
 
         layout.addWidget(form_card)
 
@@ -1286,7 +1765,7 @@ class CompilerPage(QtWidgets.QWidget):
         mode = builder.get("mode", "onefile")
         self.mode_combo.setCurrentIndex(0 if mode == "onefile" else 1)
         console = builder.get("console", "hide")
-        self.console_combo.setCurrentIndex(0 if console == "hide" else 1)
+        self.console_check.setChecked(console == "show")
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("compiler_title"))
@@ -1297,7 +1776,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_dir_label.setText(self.i18n.t("compiler_output_dir"))
         self.icon_label.setText(self.i18n.t("compiler_icon"))
         self.mode_label.setText(self.i18n.t("compiler_mode"))
-        self.console_label.setText(self.i18n.t("compiler_console"))
+        self.console_check.setText(self.i18n.t("compiler_console_show"))
         self.source_button.setText(self.i18n.t("compiler_browse"))
         self.entry_button.setText(self.i18n.t("compiler_browse"))
         self.output_dir_button.setText(self.i18n.t("compiler_browse"))
@@ -1307,8 +1786,6 @@ class CompilerPage(QtWidgets.QWidget):
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
         self.mode_combo.setItemText(0, self.i18n.t("compiler_mode_onefile"))
         self.mode_combo.setItemText(1, self.i18n.t("compiler_mode_onedir"))
-        self.console_combo.setItemText(0, self.i18n.t("compiler_console_hide"))
-        self.console_combo.setItemText(1, self.i18n.t("compiler_console_show"))
         if self.log_output.toPlainText().strip() == "":
             self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
 
@@ -1355,7 +1832,7 @@ class CompilerPage(QtWidgets.QWidget):
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
         mode = self.mode_combo.currentData()
-        console = self.console_combo.currentData()
+        console = "show" if self.console_check.isChecked() else "hide"
 
         if not source_dir.exists() or not entrypoint.exists():
             self.log_output.appendPlainText(self.i18n.t("log_build_failed"))
@@ -1416,6 +1893,7 @@ class CompilerPage(QtWidgets.QWidget):
 class SettingsPage(QtWidgets.QWidget):
     theme_changed = QtCore.pyqtSignal(str)
     language_changed = QtCore.pyqtSignal(str)
+    role_changed = QtCore.pyqtSignal(str)
     logout_requested = QtCore.pyqtSignal()
 
     def __init__(self, i18n: I18n, settings: SettingsStore):
@@ -1477,9 +1955,26 @@ class SettingsPage(QtWidgets.QWidget):
         self.account_label = QtWidgets.QLabel()
         self.account_label.setStyleSheet("font-weight: 600;")
         account_layout.addWidget(self.account_label)
+        self.role_label = QtWidgets.QLabel()
+        self.role_combo = QtWidgets.QComboBox()
+        self.role_combo.addItem(self.i18n.t("settings_role_operator"), "operator")
+        self.role_combo.addItem(self.i18n.t("settings_role_administrator"), "administrator")
+        self.role_combo.addItem(self.i18n.t("settings_role_moderator"), "moderator")
+        account_layout.addWidget(self.role_label)
+        account_layout.addWidget(self.role_combo)
         self.logout_button = make_button("", "danger")
         self.logout_button.clicked.connect(self.logout_requested.emit)
         account_layout.addWidget(self.logout_button)
+        account_layout.addSpacing(12)
+        self.data_label = QtWidgets.QLabel()
+        self.data_label.setStyleSheet("font-weight: 600;")
+        self.data_button = make_button("", "ghost")
+        self.data_button.clicked.connect(self.clear_data)
+        self.data_status = QtWidgets.QLabel()
+        self.data_status.setObjectName("Muted")
+        account_layout.addWidget(self.data_label)
+        account_layout.addWidget(self.data_button)
+        account_layout.addWidget(self.data_status)
         grid.addWidget(self.account_card, 1, 0)
 
         self.about_card = QtWidgets.QFrame()
@@ -1494,25 +1989,12 @@ class SettingsPage(QtWidgets.QWidget):
         about_layout.addWidget(self.about_body)
         grid.addWidget(self.about_card, 1, 1)
 
-        self.data_card = QtWidgets.QFrame()
-        self.data_card.setObjectName("Card")
-        data_layout = QtWidgets.QVBoxLayout(self.data_card)
-        self.data_label = QtWidgets.QLabel()
-        self.data_label.setStyleSheet("font-weight: 600;")
-        self.data_button = make_button("", "ghost")
-        self.data_button.clicked.connect(self.clear_data)
-        self.data_status = QtWidgets.QLabel()
-        self.data_status.setObjectName("Muted")
-        data_layout.addWidget(self.data_label)
-        data_layout.addWidget(self.data_button)
-        data_layout.addWidget(self.data_status)
-        grid.addWidget(self.data_card, 2, 0)
-
         layout.addLayout(grid)
         layout.addStretch()
 
         self.theme_group.buttonToggled.connect(self.emit_theme)
         self.language_combo.currentIndexChanged.connect(self.emit_language)
+        self.role_combo.currentIndexChanged.connect(self.emit_role)
 
         self.load_state()
         self.apply_translations()
@@ -1525,6 +2007,10 @@ class SettingsPage(QtWidgets.QWidget):
         index = self.language_combo.findData(lang)
         if index >= 0:
             self.language_combo.setCurrentIndex(index)
+        role = self.settings.get("role", "operator")
+        role_index = self.role_combo.findData(role)
+        if role_index >= 0:
+            self.role_combo.setCurrentIndex(role_index)
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("settings_title"))
@@ -1534,6 +2020,10 @@ class SettingsPage(QtWidgets.QWidget):
         self.theme_light.setText(self.i18n.t("settings_theme_light"))
         self.language_label.setText(self.i18n.t("settings_language"))
         self.account_label.setText(self.i18n.t("settings_account"))
+        self.role_label.setText(self.i18n.t("settings_role"))
+        self.role_combo.setItemText(0, self.i18n.t("settings_role_operator"))
+        self.role_combo.setItemText(1, self.i18n.t("settings_role_administrator"))
+        self.role_combo.setItemText(2, self.i18n.t("settings_role_moderator"))
         self.logout_button.setText(self.i18n.t("settings_logout"))
         self.about_label.setText(self.i18n.t("settings_about"))
         self.about_body.setText(self.i18n.t("settings_about_body"))
@@ -1550,6 +2040,13 @@ class SettingsPage(QtWidgets.QWidget):
         lang = self.language_combo.currentData()
         if lang:
             self.language_changed.emit(lang)
+
+    def emit_role(self) -> None:
+        role = self.role_combo.currentData()
+        if role:
+            self.settings.set("role", role)
+            self.settings.save()
+            self.role_changed.emit(role)
 
     def clear_data(self) -> None:
         self.settings.clear_user_data()
@@ -1588,6 +2085,7 @@ class MainShell(QtWidgets.QWidget):
         self.i18n = i18n
         self.settings = settings
         self.logger = logger
+        self.current_role = self.settings.get("role", "operator")
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -1617,7 +2115,7 @@ class MainShell(QtWidgets.QWidget):
         self.nav_buttons = {}
         self.nav_group = QtWidgets.QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        for key in ["main", "compiler", "settings", "instructions"]:
+        for key in ["main", "teams", "compiler", "settings", "instructions"]:
             button = make_button("", "ghost")
             button.setCheckable(True)
             button.setMinimumHeight(40)
@@ -1654,10 +2152,12 @@ class MainShell(QtWidgets.QWidget):
 
         self.stack = QtWidgets.QStackedWidget()
         self.dashboard = DashboardPage(i18n, settings, logger)
+        self.teams_page = TeamsPage(i18n, settings)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings)
         self.instructions_page = InstructionsPage(i18n)
         self.stack.addWidget(self.dashboard)
+        self.stack.addWidget(self.teams_page)
         self.stack.addWidget(self.compiler)
         self.stack.addWidget(self.settings_page)
         self.stack.addWidget(self.instructions_page)
@@ -1670,8 +2170,10 @@ class MainShell(QtWidgets.QWidget):
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
         self.settings_page.theme_changed.connect(self.emit_theme_change)
         self.settings_page.language_changed.connect(self.emit_language_change)
+        self.settings_page.role_changed.connect(self.handle_role_change)
 
         self.apply_translations()
+        self.update_role_visibility()
         self.nav_buttons["main"].setChecked(True)
         self.switch_page("main")
 
@@ -1679,6 +2181,7 @@ class MainShell(QtWidgets.QWidget):
         self.brand_title.setText(self.i18n.t("app_title"))
         self.brand_subtitle.setText(self.i18n.t("app_subtitle"))
         self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
+        self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
         self.nav_buttons["compiler"].setText(self.i18n.t("nav_compiler"))
         self.nav_buttons["settings"].setText(self.i18n.t("nav_settings"))
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
@@ -1686,6 +2189,7 @@ class MainShell(QtWidgets.QWidget):
         self.logout_button.setText(self.i18n.t("top_logout"))
         self.status_label.setText(f'{self.i18n.t("top_status_label")}: {self.i18n.t("top_status_mock")}')
         self.dashboard.apply_translations()
+        self.teams_page.apply_translations()
         self.compiler.apply_translations()
         self.settings_page.apply_translations()
         self.instructions_page.apply_translations()
@@ -1695,6 +2199,7 @@ class MainShell(QtWidgets.QWidget):
         index = self.stack.currentIndex()
         titles = [
             self.i18n.t("nav_main"),
+            self.i18n.t("nav_teams"),
             self.i18n.t("nav_compiler"),
             self.i18n.t("nav_settings"),
             self.i18n.t("nav_instructions"),
@@ -1702,16 +2207,27 @@ class MainShell(QtWidgets.QWidget):
         self.page_title.setText(titles[index])
 
     def switch_page(self, key: str) -> None:
+        if key == "teams" and self.current_role != "moderator":
+            key = "main"
+        if key in self.nav_buttons:
+            self.nav_buttons[key].setChecked(True)
         mapping = {
             "main": 0,
-            "compiler": 1,
-            "settings": 2,
-            "instructions": 3,
+            "teams": 1,
+            "compiler": 2,
+            "settings": 3,
+            "instructions": 4,
         }
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
         self.update_page_title()
         animate_widget(self.stack.currentWidget())
+
+    def update_role_visibility(self) -> None:
+        is_moderator = self.current_role == "moderator"
+        self.nav_buttons["teams"].setVisible(is_moderator)
+        if not is_moderator and self.stack.currentIndex() == 1:
+            self.switch_page("main")
 
     def open_storage(self, client_id: str) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -1740,6 +2256,11 @@ class MainShell(QtWidgets.QWidget):
 
     def emit_language_change(self, lang: str) -> None:
         self.page_changed.emit(f"lang:{lang}")
+
+    def handle_role_change(self, role: str) -> None:
+        self.current_role = role
+        self.teams_page.set_role(role)
+        self.update_role_visibility()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -1784,6 +2305,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background.set_theme(self.theme)
         self.settings.set("theme", theme_name)
         self.setStyleSheet(build_stylesheet(self.theme))
+        self.shell.teams_page.apply_theme(self.theme)
 
     def apply_translations(self) -> None:
         self.login_page.apply_translations()
@@ -2000,6 +2522,39 @@ TRANSLATIONS.update(
               <li>Conserva registros de auditoría de las sesiones.</li>
             </ul>
         """,
+        "nav_teams": "Equipos",
+        "teams_title": "Equipos",
+        "teams_subtitle": "Gestiona equipos de operadores y suscripciones",
+        "teams_list_title": "Lista de equipos",
+        "teams_select_hint": "Selecciona un equipo para ver detalles",
+        "team_name": "Nombre del equipo",
+        "team_name_placeholder": "Introduce el nombre del equipo",
+        "team_status": "Estado",
+        "team_status_active": "Activo",
+        "team_status_expired": "Vencido",
+        "team_subscription": "Vence la suscripción",
+        "team_renew": "Renovar suscripción",
+        "team_members": "Miembros del equipo",
+        "team_member_name": "Nombre",
+        "team_member_tag": "Rol",
+        "team_member_clients": "Clientes remotos",
+        "team_add_member": "Añadir miembro",
+        "team_remove_member": "Eliminar miembro",
+        "team_add_dialog_title": "Añadir miembro del equipo",
+        "team_add_name": "Nombre",
+        "team_add_account_id": "ID de cuenta",
+        "team_add_password": "Contraseña",
+        "team_add_tag": "Rol",
+        "team_add_confirm": "Añadir",
+        "team_add_cancel": "Cancelar",
+        "teams_no_members": "Sin miembros aún",
+        "tag_operator": "Operador",
+        "tag_administrator": "Administrador",
+        "tag_moderator": "Moderador",
+        "settings_role": "Rol",
+        "settings_role_operator": "Operador",
+        "settings_role_administrator": "Administrador",
+        "settings_role_moderator": "Moderador",
         }
     }
 )
@@ -2135,6 +2690,39 @@ TRANSLATIONS.update(
               <li>Сохраняйте аудит-логи для сессий поддержки.</li>
             </ul>
         """,
+        "nav_teams": "Команда",
+        "teams_title": "Команда",
+        "teams_subtitle": "Управление командами и подписками",
+        "teams_list_title": "Список команд",
+        "teams_select_hint": "Выберите команду для просмотра",
+        "team_name": "Название команды",
+        "team_name_placeholder": "Введите название команды",
+        "team_status": "Статус",
+        "team_status_active": "Активна",
+        "team_status_expired": "Истекла",
+        "team_subscription": "Подписка до",
+        "team_renew": "Продлить подписку",
+        "team_members": "Участники",
+        "team_member_name": "Имя",
+        "team_member_tag": "Роль",
+        "team_member_clients": "Удаленные клиенты",
+        "team_add_member": "Добавить участника",
+        "team_remove_member": "Удалить участника",
+        "team_add_dialog_title": "Добавить участника",
+        "team_add_name": "Имя",
+        "team_add_account_id": "ID аккаунта",
+        "team_add_password": "Пароль",
+        "team_add_tag": "Роль",
+        "team_add_confirm": "Добавить",
+        "team_add_cancel": "Отмена",
+        "teams_no_members": "Участников пока нет",
+        "tag_operator": "Оператор",
+        "tag_administrator": "Администратор",
+        "tag_moderator": "Модератор",
+        "settings_role": "Роль",
+        "settings_role_operator": "Оператор",
+        "settings_role_administrator": "Администратор",
+        "settings_role_moderator": "Модератор",
         }
     }
 )
