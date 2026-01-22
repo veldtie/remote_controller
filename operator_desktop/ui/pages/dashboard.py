@@ -9,7 +9,7 @@ from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
-from ..common import make_button
+from ..common import load_icon, make_button
 
 
 class DashboardPage(QtWidgets.QWidget):
@@ -59,23 +59,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
-        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(7, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(8, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(2, 140)
-        self.table.setColumnWidth(5, 170)
-        self.table.setColumnWidth(6, 190)
-        self.table.setColumnWidth(7, 140)
-        self.table.setColumnWidth(8, 120)
+        self.configure_table_layout()
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
@@ -114,6 +101,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.refresh_clients()
         self.refresh_logs()
         self.poll_server_status()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.update_adaptive_columns()
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("main_title"))
@@ -224,11 +215,32 @@ class DashboardPage(QtWidgets.QWidget):
             self.table.setCellWidget(row, 6, connect_button)
 
             more_button = self.build_more_button(client["id"])
-            self.table.setCellWidget(row, 7, more_button)
+            self.table.setCellWidget(row, 7, self.wrap_cell_widget(more_button))
 
-            delete_button = make_button(self.i18n.t("button_delete"), "danger")
+            delete_button = QtWidgets.QToolButton()
+            delete_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+            delete_button.setToolTip(self.i18n.t("button_delete"))
+            delete_button.setAutoRaise(True)
+            delete_button.setFixedSize(40, 30)
+            delete_icon = load_icon("delete", self.theme.name)
+            if delete_icon.isNull():
+                delete_button.setText("X")
+            else:
+                delete_button.setIcon(delete_icon)
+                delete_button.setIconSize(QtCore.QSize(16, 16))
+            delete_button.setStyleSheet(
+                "QToolButton {"
+                f"background: {self.theme.colors['danger']};"
+                "border: none;"
+                "border-radius: 8px;"
+                "color: #ffffff;"
+                "}"
+                "QToolButton:hover {"
+                f"background: {self.theme.colors['danger']};"
+                "}"
+            )
             delete_button.clicked.connect(lambda _, cid=client["id"]: self.confirm_delete_client(cid))
-            self.table.setCellWidget(row, 8, delete_button)
+            self.table.setCellWidget(row, 8, self.wrap_cell_widget(delete_button))
         self.table.blockSignals(False)
 
     def handle_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
@@ -269,13 +281,58 @@ class DashboardPage(QtWidgets.QWidget):
 
     def configure_table_layout(self) -> None:
         header = self.table.horizontalHeader()
-        self.table.setColumnWidth(2, 140)
-        self.table.setColumnWidth(5, 170)
-        self.table.setColumnWidth(6, 190)
-        self.table.setColumnWidth(7, 140)
-        self.table.setColumnWidth(8, 120)
-        header.setMinimumSectionSize(80)
-        self.table.verticalHeader().setDefaultSectionSize(44)
+        header.setMinimumSectionSize(50)
+        for col in range(self.table.columnCount()):
+            header.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.update_adaptive_columns()
+
+    def update_adaptive_columns(self) -> None:
+        header = self.table.horizontalHeader()
+        total = max(self.table.viewport().width(), 0)
+        if total == 0:
+            return
+
+        config = {
+            0: (3.5, 170),  # name
+            1: (1.4, 80),   # id
+            2: (1.6, 110),  # status
+            3: (1.4, 100),  # region
+            4: (1.4, 100),  # ip
+            5: (1.4, 110),  # storage
+            6: (1.8, 140),  # connect
+            7: (0.8, 60),   # more
+            8: (0.8, 60),   # delete
+        }
+
+        min_total = sum(min_w for _, min_w in config.values())
+        if total <= min_total:
+            for col, (_, min_w) in config.items():
+                header.resizeSection(col, min_w)
+            return
+
+        extra = total - min_total
+        weight_total = sum(weight for weight, _ in config.values())
+        widths = {}
+        allocated = 0
+        for col, (weight, min_w) in config.items():
+            width = min_w + int(extra * (weight / weight_total))
+            widths[col] = width
+            allocated += width
+        remainder = total - allocated
+        widths[0] = max(widths[0] + remainder, config[0][1])
+
+        for col, width in widths.items():
+            header.resizeSection(col, width)
+
+    @staticmethod
+    def wrap_cell_widget(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addStretch()
+        layout.addWidget(widget)
+        layout.addStretch()
+        return container
 
     def build_name_cell(self, client: Dict) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
@@ -288,7 +345,12 @@ class DashboardPage(QtWidgets.QWidget):
         button = QtWidgets.QToolButton()
         button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         button.setAutoRaise(True)
-        button.setText("✎")
+        edit_icon = load_icon("edit", self.theme.name)
+        if edit_icon.isNull():
+            button.setText("✎")
+        else:
+            button.setIcon(edit_icon)
+            button.setIconSize(QtCore.QSize(16, 16))
         button.setToolTip(self.i18n.t("button_edit_name"))
         button.clicked.connect(lambda _, cid=client["id"]: self.edit_client_name(cid))
         layout.addWidget(label, 1)
@@ -297,7 +359,31 @@ class DashboardPage(QtWidgets.QWidget):
         return container
 
     def build_more_button(self, client_id: str) -> QtWidgets.QPushButton:
-        button = make_button(self.i18n.t("button_more"), "ghost")
+        button = QtWidgets.QToolButton()
+        button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        button.setToolTip(self.i18n.t("button_more"))
+        button.setAutoRaise(True)
+        button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setFixedSize(40, 30)
+        button.setArrowType(QtCore.Qt.ArrowType.NoArrow)
+        button.setStyleSheet(
+            "QToolButton::menu-indicator { image: none; width: 0px; }"
+            "QToolButton {"
+            f"background: {self.theme.colors['card_alt']};"
+            f"border: 1px solid {self.theme.colors['border']};"
+            "border-radius: 8px;"
+            "padding: 0;"
+            "}"
+            "QToolButton:hover {"
+            f"border-color: {self.theme.colors['accent']};"
+            "}"
+        )
+        more_icon = load_icon("more", self.theme.name)
+        if more_icon.isNull():
+            button.setText("...")
+        else:
+            button.setIcon(more_icon)
+            button.setIconSize(QtCore.QSize(16, 16))
         menu = QtWidgets.QMenu(button)
         placeholder = menu.addAction(self.i18n.t("menu_more_placeholder"))
         placeholder.setEnabled(False)
@@ -333,9 +419,28 @@ class DashboardPage(QtWidgets.QWidget):
         if client is None:
             return
         dialog = QtWidgets.QMessageBox(self)
+        dialog.setOption(QtWidgets.QMessageBox.Option.DontUseNativeDialog, True)
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         dialog.setWindowTitle(self.i18n.t("dialog_delete_title"))
         dialog.setText(self.i18n.t("dialog_delete_body"))
+        dialog.setStyleSheet(
+            "QMessageBox {"
+            f"background: {self.theme.colors['card']};"
+            f"color: {self.theme.colors['text']};"
+            "}"
+            "QLabel {"
+            f"color: {self.theme.colors['text']};"
+            "}"
+            "QPushButton {"
+            f"background: {self.theme.colors['card_alt']};"
+            f"border: 1px solid {self.theme.colors['border']};"
+            "border-radius: 8px;"
+            "padding: 6px 12px;"
+            "}"
+            "QPushButton:hover {"
+            f"border-color: {self.theme.colors['accent']};"
+            "}"
+        )
         confirm = dialog.addButton(
             self.i18n.t("dialog_delete_confirm"),
             QtWidgets.QMessageBox.ButtonRole.DestructiveRole,

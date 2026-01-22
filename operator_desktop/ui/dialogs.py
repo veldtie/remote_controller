@@ -13,6 +13,9 @@ class StorageDialog(QtWidgets.QDialog):
         self.i18n = i18n
         self.logger = logger
         self.client_name = client_name
+        self.last_download_dir = QtCore.QStandardPaths.writableLocation(
+            QtCore.QStandardPaths.StandardLocation.DownloadLocation
+        )
         self.remote_files = [
             {"name": "Documents", "size": "-", "type": "dir"},
             {"name": "Support_Log.txt", "size": "48 KB", "type": "file"},
@@ -69,6 +72,14 @@ class StorageDialog(QtWidgets.QDialog):
         self.remote_table.setAlternatingRowColors(True)
         self.remote_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.remote_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.remote_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.remote_table.setWordWrap(False)
+        self.remote_table.verticalHeader().setDefaultSectionSize(36)
+        header = self.remote_table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.remote_table.setColumnWidth(2, 120)
         remote_layout.addWidget(self.remote_table, 1)
 
         self.remote_status = QtWidgets.QLabel()
@@ -133,6 +144,7 @@ class StorageDialog(QtWidgets.QDialog):
         for entry in self.remote_files:
             row = self.remote_table.rowCount()
             self.remote_table.insertRow(row)
+            self.remote_table.setRowHeight(row, 36)
             name_item = QtWidgets.QTableWidgetItem(entry["name"])
             size_item = QtWidgets.QTableWidgetItem(entry["size"])
             self.remote_table.setItem(row, 0, name_item)
@@ -144,7 +156,6 @@ class StorageDialog(QtWidgets.QDialog):
                 lambda _, filename=entry["name"]: self.queue_download(filename)
             )
             self.remote_table.setCellWidget(row, 2, action_button)
-        self.remote_table.resizeColumnsToContents()
         self.remote_status.setText(self.i18n.t("storage_status_ready"))
 
     def move_up(self) -> None:
@@ -152,11 +163,18 @@ class StorageDialog(QtWidgets.QDialog):
         self.refresh_files()
 
     def queue_download(self, filename: str) -> None:
+        start_dir = self.last_download_dir or ""
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, self.i18n.t("storage_pick_folder"), start_dir
+        )
+        if not folder:
+            return
+        self.last_download_dir = folder
         if self.download_list.count() == 0:
             self.download_list.clear()
-        self.download_list.addItem(filename)
+        self.download_list.addItem(f"{filename} -> {folder}")
         self.download_status.setText(self.i18n.t("storage_status_ready"))
-        self.logger.log("log_storage_download", file=filename)
+        self.logger.log("log_storage_download", file=filename, path=folder)
 
 
 class AddMemberDialog(QtWidgets.QDialog):

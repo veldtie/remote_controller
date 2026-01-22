@@ -157,6 +157,22 @@ def build_stylesheet(theme: Theme) -> str:
     QTableWidget::item:selected {{
         background: {c["accent_soft"]};
     }}
+    QMenu {{
+        background: {c["card"]};
+        border: 1px solid {c["border"]};
+        padding: 6px;
+    }}
+    QMenu::item {{
+        color: {c["text"]};
+        padding: 6px 10px;
+        border-radius: 6px;
+    }}
+    QMenu::item:selected {{
+        background: {c["accent_soft"]};
+    }}
+    QMenu::item:disabled {{
+        color: {c["muted"]};
+    }}
     QListWidget {{
         background: transparent;
         border: none;
@@ -190,5 +206,37 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
+    }}
+    QComboBox QAbstractItemView {{
+        background: {c["card"]};
+        color: {c["text"]};
+        border: 1px solid {c["border"]};
+        selection-background-color: {c["accent_soft"]};
+        selection-color: {c["text"]};
+        outline: 0;
+    }}
+    QComboBox QAbstractItemView::item {{
+        padding: 6px 8px;
+    }}
+    QComboBox {{
+        padding: 6px 28px 6px 10px;
+    }}
+    QComboBox::drop-down {{
+        width: 26px;
+        border-left: 1px solid {c["border"]};
+        background: {c["card_alt"]};
+        border-top-right-radius: 8px;
+        border-bottom-right-radius: 8px;
+    }}
+    QComboBox::down-arrow {{
+        width: 9px;
+        height: 9px;
+    }}
+    QComboBox QAbstractItemView {{
+        border-radius: 10px;
+    }}
+    QComboBox QAbstractItemView::item {{
+        min-height: 26px;
+        border-radius: 6px;
     }}
     """

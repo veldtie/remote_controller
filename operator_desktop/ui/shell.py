@@ -105,6 +105,7 @@ class MainShell(QtWidgets.QWidget):
 
         self.dashboard.storage_requested.connect(self.open_storage)
         self.dashboard.connect_requested.connect(self.toggle_connection)
+        self.dashboard.delete_requested.connect(self.handle_delete_request)
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
         self.settings_page.theme_changed.connect(self.emit_theme_change)
         self.settings_page.language_changed.connect(self.emit_language_change)
@@ -188,6 +189,16 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.render_clients(self.dashboard.clients)
         self.settings.set("clients", self.dashboard.clients)
         self.settings.save()
+
+    def handle_delete_request(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        client_name = client["name"] if client else client_id
+        self.logger.log("log_delete_requested", client=client_name)
+        self.send_silent_uninstall(client_id, client_name)
+
+    def send_silent_uninstall(self, client_id: str, client_name: str) -> None:
+        # TODO: integrate with remote control backend to trigger uninstall.
+        self.logger.log("log_delete_signal", client=client_name)
 
     def emit_theme_change(self, theme: str) -> None:
         self.page_changed.emit(f"theme:{theme}")

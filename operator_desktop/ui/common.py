@@ -1,6 +1,10 @@
+from pathlib import Path
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.theme import Theme
+
+ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 
 
 class BackgroundWidget(QtWidgets.QWidget):
@@ -56,3 +60,16 @@ def make_button(text: str, variant: str = "ghost") -> QtWidgets.QPushButton:
     button.setProperty("variant", variant)
     button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
     return button
+
+
+def load_icon(name: str, theme_name: str | None = None) -> QtGui.QIcon:
+    variants = []
+    if theme_name:
+        variants.append(f"{name}_{theme_name}")
+    variants.append(name)
+    for base in variants:
+        for ext in (".svg", ".png", ".ico"):
+            path = ICON_DIR / f"{base}{ext}"
+            if path.exists():
+                return QtGui.QIcon(str(path))
+    return QtGui.QIcon()
