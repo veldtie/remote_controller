@@ -62,6 +62,10 @@ body::after {
   z-index: 1;
 }
 
+body.manage-mode #screen {
+  cursor: none;
+}
+
 body.view-mode #screen {
   cursor: default;
 }

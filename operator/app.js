@@ -29,7 +29,12 @@
     pendingDownload: null,
     pendingAppLaunch: null,
     isConnected: false,
-    e2eeContext: null
+    e2eeContext: null,
+    cursorX: 0,
+    cursorY: 0,
+    cursorLocked: false,
+    cursorInitialized: false,
+    cursorBounds: { width: 0, height: 0 }
   };
 
   const dom = {
@@ -135,6 +140,121 @@
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
     updateAppLaunchAvailability();
+    if (!state.controlEnabled) {
+      releasePointerLock();
+    }
+  }
+
+  function releasePointerLock() {
+    if (document.pointerLockElement === dom.screenEl) {
+      document.exitPointerLock();
+    }
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function getVideoMetrics() {
+    const rect = dom.screenEl.getBoundingClientRect();
+    const videoWidth = dom.screenEl.videoWidth || rect.width;
+    const videoHeight = dom.screenEl.videoHeight || rect.height;
+    if (!videoWidth || !videoHeight || !rect.width || !rect.height) {
+      return null;
+    }
+    const scale = Math.min(rect.width / videoWidth, rect.height / videoHeight);
+    const renderWidth = videoWidth * scale;
+    const renderHeight = videoHeight * scale;
+    const offsetX = (rect.width - renderWidth) / 2;
+    const offsetY = (rect.height - renderHeight) / 2;
+    return {
+      rect,
+      videoWidth,
+      videoHeight,
+      renderWidth,
+      renderHeight,
+      offsetX,
+      offsetY
+    };
+  }
+
+  function mapClientToVideo(clientX, clientY) {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return null;
+    }
+    const x = clientX - metrics.rect.left - metrics.offsetX;
+    const y = clientY - metrics.rect.top - metrics.offsetY;
+    if (x < 0 || y < 0 || x > metrics.renderWidth || y > metrics.renderHeight) {
+      return null;
+    }
+    const mappedX = Math.round((x / metrics.renderWidth) * metrics.videoWidth);
+    const mappedY = Math.round((y / metrics.renderHeight) * metrics.videoHeight);
+    return {
+      x: clamp(mappedX, 0, metrics.videoWidth - 1),
+      y: clamp(mappedY, 0, metrics.videoHeight - 1)
+    };
+  }
+
+  function updateCursorBounds() {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return;
+    }
+    state.cursorBounds = { width: metrics.videoWidth, height: metrics.videoHeight };
+    if (!state.cursorInitialized) {
+      state.cursorX = metrics.videoWidth / 2;
+      state.cursorY = metrics.videoHeight / 2;
+      state.cursorInitialized = true;
+    }
+  }
+
+  function setCursorFromAbsolute(clientX, clientY) {
+    const coords = mapClientToVideo(clientX, clientY);
+    if (!coords) {
+      return null;
+    }
+    state.cursorX = coords.x;
+    state.cursorY = coords.y;
+    state.cursorInitialized = true;
+    return coords;
+  }
+
+  function setCursorFromDelta(deltaX, deltaY) {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return;
+    }
+    const scaleX = metrics.videoWidth / metrics.renderWidth;
+    const scaleY = metrics.videoHeight / metrics.renderHeight;
+    const nextX = clamp(
+      state.cursorX + deltaX * scaleX,
+      0,
+      metrics.videoWidth - 1
+    );
+    const nextY = clamp(
+      state.cursorY + deltaY * scaleY,
+      0,
+      metrics.videoHeight - 1
+    );
+    state.cursorX = nextX;
+    state.cursorY = nextY;
+    state.cursorInitialized = true;
+  }
+
+  function getCursorPosition() {
+    updateCursorBounds();
+    return {
+      x: Math.round(state.cursorX),
+      y: Math.round(state.cursorY)
+    };
+  }
+
+  function handlePointerLockChange() {
+    state.cursorLocked = document.pointerLockElement === dom.screenEl;
+    if (!state.cursorLocked) {
+      updateCursorBounds();
+    }
   }
 
   function handleModeToggle() {
@@ -359,6 +479,7 @@
     state.peerConnection = null;
     state.signalingWebSocket = null;
     state.pendingAppLaunch = null;
+    releasePointerLock();
   }
 
   async function connect() {
@@ -488,41 +609,11 @@
     }
     state.controlsBound = true;
 
-    function getVideoMetrics() {
-      const rect = dom.screenEl.getBoundingClientRect();
-      const videoWidth = dom.screenEl.videoWidth || rect.width;
-      const videoHeight = dom.screenEl.videoHeight || rect.height;
-      if (!videoWidth || !videoHeight || !rect.width || !rect.height) {
-        return null;
-      }
-      const scale = Math.min(rect.width / videoWidth, rect.height / videoHeight);
-      const renderWidth = videoWidth * scale;
-      const renderHeight = videoHeight * scale;
-      const offsetX = (rect.width - renderWidth) / 2;
-      const offsetY = (rect.height - renderHeight) / 2;
-      return { rect, videoWidth, videoHeight, renderWidth, renderHeight, offsetX, offsetY };
-    }
-
-    function mapPointerToVideo(event) {
-      const metrics = getVideoMetrics();
-      if (!metrics) {
-        return { x: event.offsetX, y: event.offsetY };
-      }
-      const x = event.clientX - metrics.rect.left - metrics.offsetX;
-      const y = event.clientY - metrics.rect.top - metrics.offsetY;
-      if (x < 0 || y < 0 || x > metrics.renderWidth || y > metrics.renderHeight) {
-        return null;
-      }
-      const mappedX = Math.round((x / metrics.renderWidth) * metrics.videoWidth);
-      const mappedY = Math.round((y / metrics.renderHeight) * metrics.videoHeight);
-      return {
-        x: Math.max(0, Math.min(metrics.videoWidth - 1, mappedX)),
-        y: Math.max(0, Math.min(metrics.videoHeight - 1, mappedY))
-      };
-    }
-
     dom.screenEl.addEventListener("mousemove", (event) => {
-      const coords = mapPointerToVideo(event);
+      if (state.cursorLocked) {
+        return;
+      }
+      const coords = setCursorFromAbsolute(event.clientX, event.clientY);
       if (!coords) {
         return;
       }
@@ -533,8 +624,35 @@
       });
     });
 
+    dom.screenEl.addEventListener("mousedown", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked && dom.screenEl.requestPointerLock) {
+        dom.screenEl.requestPointerLock();
+      }
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (!state.cursorLocked) {
+        return;
+      }
+      setCursorFromDelta(event.movementX || 0, event.movementY || 0);
+      const coords = getCursorPosition();
+      void sendControl({
+        type: CONTROL_TYPES.mouseMove,
+        x: coords.x,
+        y: coords.y
+      });
+    });
+
     dom.screenEl.addEventListener("click", (event) => {
-      const coords = mapPointerToVideo(event);
+      let coords = null;
+      if (state.cursorLocked) {
+        coords = getCursorPosition();
+      } else {
+        coords = setCursorFromAbsolute(event.clientX, event.clientY);
+      }
       if (!coords) {
         return;
       }
@@ -902,6 +1020,8 @@
 
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
+    document.addEventListener("pointerlockchange", handlePointerLockChange);
+    dom.screenEl.addEventListener("loadedmetadata", updateCursorBounds);
     if (dom.e2eeKeyInput) {
       dom.e2eeKeyInput.addEventListener("input", () => {
         const value = dom.e2eeKeyInput.value;
