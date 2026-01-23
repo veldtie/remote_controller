@@ -1,10 +1,12 @@
 import random
+import time
 from datetime import datetime
 from typing import Dict, List
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.data import DEFAULT_CLIENTS, deep_copy
+from ...core.db import RemoteControllerRepository
 from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
@@ -18,14 +20,24 @@ class DashboardPage(QtWidgets.QWidget):
     extra_action_requested = QtCore.pyqtSignal(str, str)
     delete_requested = QtCore.pyqtSignal(str)
 
-    def __init__(self, i18n: I18n, settings: SettingsStore, logger: EventLogger):
+    def __init__(
+        self,
+        i18n: I18n,
+        settings: SettingsStore,
+        logger: EventLogger,
+        repo: RemoteControllerRepository | None = None,
+    ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
         self.logger = logger
+        self.repo = repo
         self.clients = deep_copy(settings.get("clients", DEFAULT_CLIENTS))
         self.last_sync = None
         self.theme = THEMES.get(settings.get("theme", "dark"), THEMES["dark"])
+        self._last_poll = time.monotonic()
+        self._ensure_client_state()
+        self._load_clients_from_db()
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -94,13 +106,70 @@ class DashboardPage(QtWidgets.QWidget):
 
         self.logger.updated.connect(self.refresh_logs)
         self.poll_timer = QtCore.QTimer(self)
-        self.poll_timer.setInterval(10_000)
+        self.poll_timer.setInterval(500)
         self.poll_timer.timeout.connect(self.poll_server_status)
         self.poll_timer.start()
         self.apply_translations()
         self.refresh_clients()
         self.refresh_logs()
         self.poll_server_status()
+
+    def _ensure_client_state(self) -> None:
+        updated = False
+        for client in self.clients:
+            if "status" not in client:
+                if "server_connected" in client:
+                    client["status"] = "connected" if client.get("server_connected") else "disconnected"
+                else:
+                    client["status"] = "disconnected"
+                updated = True
+            if "connected_time" not in client:
+                client["connected_time"] = 0
+                updated = True
+            if "connected" not in client:
+                client["connected"] = False
+                updated = True
+            if "server_connected" in client:
+                client.pop("server_connected", None)
+                updated = True
+        if updated:
+            self.settings.set("clients", self.clients)
+            self.settings.save()
+
+    def _load_clients_from_db(self) -> None:
+        if not self.repo:
+            return
+        db_clients = self.repo.load_clients()
+        if not db_clients:
+            return
+        local_by_id = {client["id"]: client for client in self.clients}
+        merged = []
+        for db_client in db_clients:
+            local = local_by_id.get(db_client.get("id"), {})
+            merged_client = {
+                "id": db_client.get("id", ""),
+                "name": db_client.get("name", ""),
+                "status": db_client.get("status", "disconnected"),
+                "connected_time": db_client.get("connected_time", 0),
+                "ip": db_client.get("ip", ""),
+                "region": db_client.get("region", ""),
+                "connected": local.get("connected", False),
+            }
+            if "assigned_operator_id" in local:
+                merged_client["assigned_operator_id"] = local.get("assigned_operator_id", "")
+            merged.append(merged_client)
+        if merged:
+            self.clients = merged
+            self.settings.set("clients", self.clients)
+            self.settings.save()
+
+    @staticmethod
+    def _format_duration(total_seconds: int) -> str:
+        total_seconds = max(0, int(total_seconds))
+        days, remainder = divmod(total_seconds, 86_400)
+        hours, remainder = divmod(remainder, 3_600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{days}:{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -155,6 +224,7 @@ class DashboardPage(QtWidgets.QWidget):
     def refresh_clients(self) -> None:
         self.last_sync = datetime.now()
         self.update_last_sync_label()
+        self._load_clients_from_db()
         self.render_clients(self.clients)
 
     def filter_clients(self, text: str) -> None:
@@ -164,7 +234,8 @@ class DashboardPage(QtWidgets.QWidget):
             return
         filtered = []
         for client in self.clients:
-            status_key = "status_connected" if client.get("server_connected") else "status_disconnected"
+            connected = client.get("status") == "connected"
+            status_key = "status_connected" if connected else "status_disconnected"
             values = [
                 client["name"],
                 client["id"],
@@ -188,10 +259,13 @@ class DashboardPage(QtWidgets.QWidget):
             name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             name_item.setText("")
             id_item = QtWidgets.QTableWidgetItem(client["id"])
-            status_key = "status_connected" if client.get("server_connected") else "status_disconnected"
-            status_item = QtWidgets.QTableWidgetItem(self.i18n.t(status_key))
+            connected = client.get("status") == "connected"
+            status_key = "status_connected" if connected else "status_disconnected"
+            time_value = client.get("connected_time", 0)
+            status_text = f"{self.i18n.t(status_key)} / {self._format_duration(time_value)}"
+            status_item = QtWidgets.QTableWidgetItem(status_text)
             status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.apply_status_style(status_item, client.get("server_connected"))
+            self.apply_status_style(status_item, connected)
             region_item = QtWidgets.QTableWidgetItem(self.i18n.t(client["region"]))
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
             for item in (id_item, status_item, region_item, ip_item):
@@ -250,6 +324,8 @@ class DashboardPage(QtWidgets.QWidget):
         for client in self.clients:
             if client["id"] == client_id:
                 client["name"] = item.text().strip() or client["name"]
+                if self.repo:
+                    self.repo.update_client_name(client_id, client["name"])
                 break
         self.settings.set("clients", self.clients)
         self.settings.save()
@@ -259,12 +335,24 @@ class DashboardPage(QtWidgets.QWidget):
         self.render_clients(self.clients)
 
     def poll_server_status(self) -> None:
+        now = time.monotonic()
+        delta = max(0.0, now - self._last_poll)
+        self._last_poll = now
         for client in self.clients:
-            if "server_connected" not in client:
-                client["server_connected"] = True
-                continue
-            if random.random() < 0.15:
-                client["server_connected"] = not client["server_connected"]
+            previous_status = client.get("status", "disconnected")
+            if "status" not in client:
+                client["status"] = "connected"
+            elif random.random() < 0.15:
+                client["status"] = "disconnected" if previous_status == "connected" else "connected"
+            if client["status"] != previous_status:
+                client["connected_time"] = 0
+            client["connected_time"] = float(client.get("connected_time") or 0) + delta
+            if self.repo:
+                self.repo.update_client_status(
+                    client.get("id", ""),
+                    client.get("status", "disconnected"),
+                    int(client.get("connected_time") or 0),
+                )
         self.render_clients(self.clients)
 
     def apply_status_style(self, item: QtWidgets.QTableWidgetItem, connected: bool) -> None:
@@ -281,7 +369,7 @@ class DashboardPage(QtWidgets.QWidget):
 
     def configure_table_layout(self) -> None:
         header = self.table.horizontalHeader()
-        header.setMinimumSectionSize(50)
+        header.setMinimumSectionSize(40)
         for col in range(self.table.columnCount()):
             header.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Fixed)
         self.update_adaptive_columns()
@@ -293,21 +381,32 @@ class DashboardPage(QtWidgets.QWidget):
             return
 
         config = {
-            0: (3.5, 170),  # name
-            1: (1.4, 80),   # id
-            2: (1.6, 110),  # status
-            3: (1.4, 100),  # region
-            4: (1.4, 100),  # ip
-            5: (1.4, 110),  # storage
-            6: (1.8, 140),  # connect
+            0: (3.2, 170),  # name
+            1: (1.2, 80),   # id
+            2: (2.1, 160),  # status + time
+            3: (1.3, 100),  # region
+            4: (1.3, 100),  # ip
+            5: (1.3, 110),  # storage
+            6: (1.6, 140),  # connect
             7: (0.8, 60),   # more
             8: (0.8, 60),   # delete
         }
 
         min_total = sum(min_w for _, min_w in config.values())
         if total <= min_total:
+            scale = total / min_total if min_total else 1
+            widths = {}
+            allocated = 0
+            min_size = header.minimumSectionSize()
             for col, (_, min_w) in config.items():
-                header.resizeSection(col, min_w)
+                width = max(int(min_w * scale), min_size)
+                widths[col] = width
+                allocated += width
+            remainder = total - allocated
+            if widths:
+                widths[0] = max(widths[0] + remainder, min_size)
+            for col, width in widths.items():
+                header.resizeSection(col, width)
             return
 
         extra = total - min_total
@@ -408,6 +507,8 @@ class DashboardPage(QtWidgets.QWidget):
         client["name"] = name
         self.settings.set("clients", self.clients)
         self.settings.save()
+        if self.repo:
+            self.repo.update_client_name(client_id, name)
         search_text = self.search_input.text()
         if search_text.strip():
             self.filter_clients(search_text)
@@ -459,6 +560,8 @@ class DashboardPage(QtWidgets.QWidget):
         self.clients = [c for c in self.clients if c["id"] != client_id]
         self.settings.set("clients", self.clients)
         self.settings.save()
+        if self.repo:
+            self.repo.delete_client(client_id)
         self.delete_requested.emit(client_id)
         search_text = self.search_input.text()
         if search_text.strip():

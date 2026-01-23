@@ -1,3 +1,3 @@
-APP_NAME = "Remote Controller Operator"
-APP_VERSION = "0.1"
+APP_NAME = "RemDesk"
+APP_VERSION = "0.5"
 DEBUG_LOG_CREDENTIALS = True

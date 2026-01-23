@@ -2,6 +2,7 @@ from typing import Dict
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from ..core.db import RemoteControllerRepository
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
@@ -18,11 +19,18 @@ class MainShell(QtWidgets.QWidget):
     page_changed = QtCore.pyqtSignal(str)
     logout_requested = QtCore.pyqtSignal()
 
-    def __init__(self, i18n: I18n, settings: SettingsStore, logger: EventLogger):
+    def __init__(
+        self,
+        i18n: I18n,
+        settings: SettingsStore,
+        logger: EventLogger,
+        repo: RemoteControllerRepository | None = None,
+    ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
         self.logger = logger
+        self.repo = repo
         self.current_role = self.settings.get("role", "operator")
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -89,8 +97,8 @@ class MainShell(QtWidgets.QWidget):
         content.addWidget(self.top_bar)
 
         self.stack = QtWidgets.QStackedWidget()
-        self.dashboard = DashboardPage(i18n, settings, logger)
-        self.teams_page = TeamsPage(i18n, settings)
+        self.dashboard = DashboardPage(i18n, settings, logger, repo=repo)
+        self.teams_page = TeamsPage(i18n, settings, repo=repo)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings)
         self.instructions_page = InstructionsPage(i18n)

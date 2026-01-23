@@ -3,6 +3,7 @@ import uuid
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.constants import APP_NAME, DEBUG_LOG_CREDENTIALS
+from ..core.db import RemoteControllerRepository
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
@@ -18,6 +19,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = SettingsStore(settings_path)
         self.i18n = I18n(self.settings)
         self.logger = EventLogger(self.settings, self.i18n)
+        self.repo = RemoteControllerRepository()
 
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 800)
@@ -28,7 +30,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.stack = QtWidgets.QStackedWidget()
         self.login_page = LoginPage(self.i18n, self.settings)
-        self.shell = MainShell(self.i18n, self.settings, self.logger)
+        self.shell = MainShell(self.i18n, self.settings, self.logger, repo=self.repo)
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.shell)
 

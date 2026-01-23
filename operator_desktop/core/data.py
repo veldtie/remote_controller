@@ -8,7 +8,8 @@ DEFAULT_CLIENTS = [
         "region": "region_eu",
         "ip": "192.168.32.10",
         "connected": False,
-        "server_connected": True,
+        "status": "connected",
+        "connected_time": 0,
         "assigned_operator_id": "OP-1002",
     },
     {
@@ -17,7 +18,8 @@ DEFAULT_CLIENTS = [
         "region": "region_na",
         "ip": "10.0.5.77",
         "connected": False,
-        "server_connected": True,
+        "status": "disconnected",
+        "connected_time": 0,
         "assigned_operator_id": "OP-1001",
     },
     {
@@ -26,7 +28,8 @@ DEFAULT_CLIENTS = [
         "region": "region_apac",
         "ip": "172.16.4.18",
         "connected": False,
-        "server_connected": False,
+        "status": "disconnected",
+        "connected_time": 0,
         "assigned_operator_id": "OP-2002",
     },
     {
@@ -35,7 +38,8 @@ DEFAULT_CLIENTS = [
         "region": "region_sa",
         "ip": "192.168.12.54",
         "connected": False,
-        "server_connected": True,
+        "status": "connected",
+        "connected_time": 0,
         "assigned_operator_id": "OP-2001",
     },
 ]
@@ -44,6 +48,7 @@ DEFAULT_TEAMS = [
     {
         "id": "TEAM-01",
         "name": "Northline Support",
+        "activity": True,
         "subscription_end": "2025-12-31",
         "members": [
             {
@@ -69,6 +74,7 @@ DEFAULT_TEAMS = [
     {
         "id": "TEAM-02",
         "name": "Atlas Helpdesk",
+        "activity": True,
         "subscription_end": "2025-10-15",
         "members": [
             {
@@ -87,6 +93,44 @@ DEFAULT_TEAMS = [
     },
 ]
 
+DEFAULT_OPERATORS = [
+    {
+        "id": "OP-1001",
+        "name": "Avery Grant",
+        "password": "Passw0rd!",
+        "role": "administrator",
+        "team": "TEAM-01",
+    },
+    {
+        "id": "OP-1002",
+        "name": "Leo Martinez",
+        "password": "Passw0rd!",
+        "role": "operator",
+        "team": "TEAM-01",
+    },
+    {
+        "id": "MOD-2001",
+        "name": "Mia Chen",
+        "password": "Passw0rd!",
+        "role": "moderator",
+        "team": "TEAM-01",
+    },
+    {
+        "id": "OP-2001",
+        "name": "Nora Patel",
+        "password": "Passw0rd!",
+        "role": "administrator",
+        "team": "TEAM-02",
+    },
+    {
+        "id": "OP-2002",
+        "name": "Ivan Volkov",
+        "password": "Passw0rd!",
+        "role": "operator",
+        "team": "TEAM-02",
+    },
+]
+
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "language": "en",
@@ -97,6 +141,7 @@ DEFAULT_SETTINGS = {
     "recent_account_ids": [],
     "session_logs": [],
     "teams": DEFAULT_TEAMS,
+    "operators": DEFAULT_OPERATORS,
     "clients": DEFAULT_CLIENTS,
     "builder": {
         "source_dir": "",

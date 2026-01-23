@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from ...core.data import DEFAULT_TEAMS, deep_copy
+from ...core.db import RemoteControllerRepository
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import Theme, THEMES
@@ -12,14 +12,21 @@ from ..dialogs import AddMemberDialog
 
 
 class TeamsPage(QtWidgets.QWidget):
-    def __init__(self, i18n: I18n, settings: SettingsStore):
+    def __init__(
+        self,
+        i18n: I18n,
+        settings: SettingsStore,
+        repo: RemoteControllerRepository | None = None,
+    ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
+        self.repo = repo
         self.teams = deep_copy(settings.get("teams", DEFAULT_TEAMS))
         self.current_role = settings.get("role", "operator")
         self.current_team_id = None
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
+        self._load_teams_from_db()
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -126,12 +133,15 @@ class TeamsPage(QtWidgets.QWidget):
         self.populate_team_list()
         self.update_role_controls()
 
-    @staticmethod
-    def parse_date(value: str) -> datetime:
-        try:
-            return datetime.strptime(value, "%Y-%m-%d")
-        except ValueError:
-            return datetime.now()
+    def _load_teams_from_db(self) -> None:
+        if not self.repo:
+            return
+        db_teams = self.repo.load_teams()
+        if not db_teams:
+            return
+        self.teams = db_teams
+        self.settings.set("teams", self.teams)
+        self.settings.save()
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("teams_title"))
@@ -141,8 +151,8 @@ class TeamsPage(QtWidgets.QWidget):
         self.team_name_label.setText(self.i18n.t("team_name"))
         self.team_name_input.setPlaceholderText(self.i18n.t("team_name_placeholder"))
         self.team_status_label.setText(self.i18n.t("team_status"))
-        self.team_subscription_label.setText(self.i18n.t("team_subscription"))
-        self.renew_button.setText(self.i18n.t("team_renew"))
+        self.team_subscription_label.setText(self.i18n.t("team_activity"))
+        self.renew_button.setText(self.i18n.t("team_toggle_activity"))
         self.members_label.setText(self.i18n.t("team_members"))
         self.add_member_button.setText(self.i18n.t("team_add_member"))
         self.remove_member_button.setText(self.i18n.t("team_remove_member"))
@@ -218,14 +228,13 @@ class TeamsPage(QtWidgets.QWidget):
         return None
 
     def update_subscription_display(self, team: Dict) -> None:
-        end_date = self.parse_date(team.get("subscription_end", "")).date()
-        today = datetime.now().date()
-        is_active = end_date >= today
-        status_key = "team_status_active" if is_active else "team_status_expired"
+        is_active = bool(team.get("activity", True))
+        status_key = "team_status_active" if is_active else "team_status_inactive"
         self.team_status_value.setText(self.i18n.t(status_key))
         color = self.theme.colors["accent"] if is_active else self.theme.colors["danger"]
         self.team_status_value.setStyleSheet(f"font-weight: 600; color: {color};")
-        self.team_subscription_value.setText(end_date.strftime("%Y-%m-%d"))
+        activity_key = "team_activity_on" if is_active else "team_activity_off"
+        self.team_subscription_value.setText(self.i18n.t(activity_key))
 
     def client_count_for_member(self, member: Dict) -> int:
         account_id = member.get("account_id")
@@ -271,6 +280,8 @@ class TeamsPage(QtWidgets.QWidget):
         if not name:
             return
         team["name"] = name
+        if self.repo:
+            self.repo.update_team_name(team["id"], name)
         self.save_teams()
         self.populate_team_list(team["id"])
 
@@ -280,12 +291,10 @@ class TeamsPage(QtWidgets.QWidget):
         team = self.selected_team()
         if team is None:
             return
-        end_date = self.parse_date(team.get("subscription_end", "")).date()
-        today = datetime.now().date()
-        base_date = end_date if end_date >= today else today
-        new_end = base_date + timedelta(days=30)
-        team["subscription_end"] = new_end.strftime("%Y-%m-%d")
+        team["activity"] = not team.get("activity", True)
         self.save_teams()
+        if self.repo:
+            self.repo.update_team_activity(team["id"], team["activity"])
         self.update_subscription_display(team)
 
     def add_member(self) -> None:
@@ -301,6 +310,14 @@ class TeamsPage(QtWidgets.QWidget):
         if not data["name"] or not data["account_id"] or not data["password"]:
             return
         team.setdefault("members", []).append(data)
+        if self.repo:
+            self.repo.upsert_operator(
+                data["account_id"],
+                data["name"],
+                data["password"],
+                data["tag"],
+                team["id"],
+            )
         self.save_teams()
         self.render_members(team)
         self.populate_team_list(team["id"])
@@ -314,7 +331,9 @@ class TeamsPage(QtWidgets.QWidget):
         row = self.members_table.currentRow()
         if row < 0 or row >= len(team.get("members", [])):
             return
-        team["members"].pop(row)
+        member = team["members"].pop(row)
+        if self.repo:
+            self.repo.delete_operator(member.get("account_id", ""))
         self.save_teams()
         self.render_members(team)
         self.populate_team_list(team["id"])

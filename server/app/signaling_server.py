@@ -22,7 +22,10 @@ SIGNALING_PORT = int(os.getenv("RC_SIGNALING_PORT", "8000"))
 SIGNALING_TOKEN_FILE = os.getenv("RC_SIGNALING_TOKEN_FILE")
 SESSION_IDLE_TIMEOUT = float(os.getenv("RC_SESSION_IDLE_TIMEOUT", "300"))
 SESSION_CLEANUP_INTERVAL = float(os.getenv("RC_SESSION_CLEANUP_INTERVAL", "30"))
-DATABASE_URL = os.getenv("RC_DATABASE_URL")
+DATABASE_URL = os.getenv(
+    "RC_DATABASE_URL",
+    "postgresql://postgres:Brazil@localhost:5432/remote_controller",
+)
 DB_POOL_MIN = int(os.getenv("RC_DB_POOL_MIN", "1"))
 DB_POOL_MAX = int(os.getenv("RC_DB_POOL_MAX", "5"))
 DB_CONNECT_RETRIES = int(os.getenv("RC_DB_CONNECT_RETRIES", "5"))
@@ -129,6 +132,35 @@ DEVICE_REGISTRY_SCHEMA = [
     "ALTER TABLE device_registry ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'inactive';",
 ]
 
+REMOTE_CONTROLLER_SCHEMA = [
+    """
+    CREATE TABLE IF NOT EXISTS teams (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        activity BOOLEAN NOT NULL DEFAULT TRUE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS operators (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL,
+        team TEXT REFERENCES teams(id) ON DELETE SET NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS remote_clients (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'disconnected',
+        connected_time INTEGER NOT NULL DEFAULT 0,
+        ip TEXT,
+        region TEXT
+    );
+    """,
+]
+
 
 def _extract_forwarded_ip(headers) -> str | None:
     forwarded_for = headers.get("x-forwarded-for")
@@ -165,7 +197,7 @@ async def _init_db() -> None:
                 statement_cache_size=DB_STATEMENT_CACHE_SIZE,
             )
             async with db_pool.acquire() as conn:
-                for statement in DEVICE_REGISTRY_SCHEMA:
+                for statement in DEVICE_REGISTRY_SCHEMA + REMOTE_CONTROLLER_SCHEMA:
                     await conn.execute(statement)
             logger.info("Database connection established.")
             return
