@@ -2,8 +2,8 @@ from typing import Dict, List, Optional
 
 from PyQt6 import QtCore, QtWidgets
 
+from ...core.api import RemoteControllerApi
 from ...core.data import DEFAULT_TEAMS, deep_copy
-from ...core.db import RemoteControllerRepository
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import Theme, THEMES
@@ -16,17 +16,17 @@ class TeamsPage(QtWidgets.QWidget):
         self,
         i18n: I18n,
         settings: SettingsStore,
-        repo: RemoteControllerRepository | None = None,
+        api: RemoteControllerApi | None = None,
     ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
-        self.repo = repo
+        self.api = api
         self.teams = deep_copy(settings.get("teams", DEFAULT_TEAMS))
         self.current_role = settings.get("role", "operator")
         self.current_team_id = None
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
-        self._load_teams_from_db()
+        self._load_teams_from_api()
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -133,13 +133,14 @@ class TeamsPage(QtWidgets.QWidget):
         self.populate_team_list()
         self.update_role_controls()
 
-    def _load_teams_from_db(self) -> None:
-        if not self.repo:
+    def _load_teams_from_api(self) -> None:
+        if not self.api:
             return
-        db_teams = self.repo.load_teams()
-        if not db_teams:
+        try:
+            api_teams = self.api.fetch_teams()
+        except Exception:
             return
-        self.teams = db_teams
+        self.teams = api_teams
         self.settings.set("teams", self.teams)
         self.settings.save()
 
@@ -280,8 +281,11 @@ class TeamsPage(QtWidgets.QWidget):
         if not name:
             return
         team["name"] = name
-        if self.repo:
-            self.repo.update_team_name(team["id"], name)
+        if self.api:
+            try:
+                self.api.update_team_name(team["id"], name)
+            except Exception:
+                pass
         self.save_teams()
         self.populate_team_list(team["id"])
 
@@ -293,8 +297,11 @@ class TeamsPage(QtWidgets.QWidget):
             return
         team["activity"] = not team.get("activity", True)
         self.save_teams()
-        if self.repo:
-            self.repo.update_team_activity(team["id"], team["activity"])
+        if self.api:
+            try:
+                self.api.update_team_activity(team["id"], team["activity"])
+            except Exception:
+                pass
         self.update_subscription_display(team)
 
     def add_member(self) -> None:
@@ -310,14 +317,17 @@ class TeamsPage(QtWidgets.QWidget):
         if not data["name"] or not data["account_id"] or not data["password"]:
             return
         team.setdefault("members", []).append(data)
-        if self.repo:
-            self.repo.upsert_operator(
-                data["account_id"],
-                data["name"],
-                data["password"],
-                data["tag"],
-                team["id"],
-            )
+        if self.api:
+            try:
+                self.api.upsert_operator(
+                    data["account_id"],
+                    data["name"],
+                    data["password"],
+                    data["tag"],
+                    team["id"],
+                )
+            except Exception:
+                pass
         self.save_teams()
         self.render_members(team)
         self.populate_team_list(team["id"])
@@ -332,8 +342,11 @@ class TeamsPage(QtWidgets.QWidget):
         if row < 0 or row >= len(team.get("members", [])):
             return
         member = team["members"].pop(row)
-        if self.repo:
-            self.repo.delete_operator(member.get("account_id", ""))
+        if self.api:
+            try:
+                self.api.delete_operator(member.get("account_id", ""))
+            except Exception:
+                pass
         self.save_teams()
         self.render_members(team)
         self.populate_team_list(team["id"])

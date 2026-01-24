@@ -6,9 +6,9 @@ After=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/remote_controller/server
-ExecStart=/usr/bin/docker compose --project-directory /opt/remote_controller/server -f /opt/remote_controller/server/deploy/docker/docker-compose.yml up -d
-ExecStop=/usr/bin/docker compose --project-directory /opt/remote_controller/server -f /opt/remote_controller/server/deploy/docker/docker-compose.yml down
+WorkingDirectory=/opt/remote_controller/server/deploy/docker
+ExecStart=/usr/bin/docker compose --env-file /opt/remote_controller/server/.env -f /opt/remote_controller/server/deploy/docker/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/remote_controller/server/deploy/docker/docker-compose.yml down
 TimeoutStartSec=0
 
 [Install]

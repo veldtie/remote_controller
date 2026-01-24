@@ -17,8 +17,10 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+sed -i '/download.docker.com/d' /etc/apt/sources.list || true
+rm -f /etc/apt/sources.list.d/docker.list || true
 apt-get update
-apt-get install -y docker.io docker-compose-v2
+apt-get install -y docker.io docker-compose-plugin
 systemctl enable --now docker
 
 install -m 644 "$APP_DIR/deploy/systemd/remote-controller.service" /etc/systemd/system/remote-controller.service
@@ -30,4 +32,4 @@ systemctl daemon-reload
 systemctl enable --now remote-controller.service remote-controller-healthcheck.timer
 
 cd "$APP_DIR"
-docker compose --project-directory "$APP_DIR" -f "$APP_DIR/deploy/docker/docker-compose.yml" up -d --build
+docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/deploy/docker/docker-compose.yml" up -d --build

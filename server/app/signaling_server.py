@@ -9,6 +9,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass, field
+from pydantic import BaseModel
 
 import asyncpg
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -31,6 +32,8 @@ DB_POOL_MAX = int(os.getenv("RC_DB_POOL_MAX", "5"))
 DB_CONNECT_RETRIES = int(os.getenv("RC_DB_CONNECT_RETRIES", "5"))
 DB_STATEMENT_CACHE_SIZE = int(os.getenv("RC_DB_STATEMENT_CACHE_SIZE", "0"))
 TRUST_PROXY = os.getenv("RC_TRUST_PROXY", "").lower() in {"1", "true", "yes", "on"}
+API_TOKEN = os.getenv("RC_API_TOKEN", "").strip()
+CONNECTED_TIME_INTERVAL = float(os.getenv("RC_CONNECTED_TIME_INTERVAL", "1"))
 
 logging.basicConfig(
     level=os.getenv("RC_LOG_LEVEL", "INFO"),
@@ -155,10 +158,12 @@ REMOTE_CONTROLLER_SCHEMA = [
         name TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'disconnected',
         connected_time INTEGER NOT NULL DEFAULT 0,
+        status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         ip TEXT,
         region TEXT
     );
     """,
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
 ]
 
 
@@ -264,6 +269,66 @@ async def _update_device_status(device_token: str, status: str) -> None:
             )
     except Exception:
         logger.exception("Failed to update status for token %s", device_token)
+
+
+async def _upsert_remote_client(
+    session_id: str,
+    status: str,
+    external_ip: str | None = None,
+) -> None:
+    """Insert or update a remote client record."""
+    if not db_pool or not session_id:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO remote_clients (id, name, status, connected_time, ip, status_changed_at)
+                VALUES ($1, $1, $2, 0, $3, NOW())
+                ON CONFLICT (id)
+                DO UPDATE SET
+                    status = EXCLUDED.status,
+                    ip = COALESCE(EXCLUDED.ip, remote_clients.ip),
+                    connected_time = CASE
+                        WHEN remote_clients.status IS DISTINCT FROM EXCLUDED.status THEN 0
+                        ELSE remote_clients.connected_time
+                    END,
+                    status_changed_at = CASE
+                        WHEN remote_clients.status IS DISTINCT FROM EXCLUDED.status THEN NOW()
+                        ELSE remote_clients.status_changed_at
+                    END;
+                """,
+                session_id,
+                status,
+                external_ip,
+            )
+    except Exception:
+        logger.exception("Failed to upsert remote client %s", session_id)
+
+
+async def _update_connected_time() -> None:
+    """Persist connected time for remote clients every tick."""
+    if CONNECTED_TIME_INTERVAL <= 0:
+        return
+    interval = max(1.0, CONNECTED_TIME_INTERVAL)
+    while True:
+        await asyncio.sleep(interval)
+        if not db_pool:
+            continue
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE remote_clients
+                    SET connected_time = GREATEST(
+                        0,
+                        EXTRACT(EPOCH FROM NOW() - status_changed_at)
+                    )::int
+                    WHERE status = 'connected';
+                    """
+                )
+        except Exception:
+            logger.exception("Failed to update connected time")
 
 # Allow browser clients opened from file:// or other origins
 app.add_middleware(
@@ -424,6 +489,7 @@ class SessionRegistry:
 
 registry = SessionRegistry()
 cleanup_task: asyncio.Task | None = None
+connected_time_task: asyncio.Task | None = None
 
 
 def _client_label(websocket: WebSocket) -> str:
@@ -452,6 +518,7 @@ async def _cleanup_inactive_sessions() -> None:
             logger.warning("Session %s idle timeout exceeded, closing connections", session_id)
             if session.client is not None and session.device_token:
                 await _update_device_status(session.device_token, DEVICE_STATUS_DISCONNECTED)
+            await _upsert_remote_client(session_id, "disconnected")
             for browser_ws in session.browsers.values():
                 await _close_websocket(browser_ws, code=1001, reason="Idle timeout")
             if session.client is not None:
@@ -461,19 +528,24 @@ async def _cleanup_inactive_sessions() -> None:
 @app.on_event("startup")
 async def _start_cleanup_task() -> None:
     """Start the idle session cleanup task."""
-    global cleanup_task
+    global cleanup_task, connected_time_task
     await _init_db()
     cleanup_task = asyncio.create_task(_cleanup_inactive_sessions())
+    connected_time_task = asyncio.create_task(_update_connected_time())
 
 
 @app.on_event("shutdown")
 async def _stop_cleanup_task() -> None:
     """Stop the idle session cleanup task."""
-    global cleanup_task
+    global cleanup_task, connected_time_task
     if cleanup_task:
         cleanup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
+    if connected_time_task:
+        connected_time_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await connected_time_task
     await _close_db()
 
 
@@ -485,6 +557,177 @@ async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
         if not provided_token or provided_token != SIGNALING_TOKEN:
             raise HTTPException(status_code=403, detail="Invalid token")
     return {"iceServers": ICE_SERVERS}
+
+
+def _require_api_token(request: Request) -> None:
+    if not API_TOKEN:
+        return
+    provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
+    if not provided_token or provided_token != API_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+
+class RemoteClientUpdate(BaseModel):
+    name: str | None = None
+
+
+class TeamUpdate(BaseModel):
+    name: str | None = None
+    activity: bool | None = None
+
+
+class OperatorUpsert(BaseModel):
+    name: str
+    password: str
+    role: str
+    team: str | None = None
+
+
+@app.get("/api/remote-clients")
+async def list_remote_clients(request: Request) -> dict[str, list[dict[str, object]]]:
+    _require_api_token(request)
+    if not db_pool:
+        return {"clients": []}
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, name, status, connected_time, ip, region
+            FROM remote_clients
+            ORDER BY id;
+            """
+        )
+    return {"clients": [dict(row) for row in rows]}
+
+
+@app.patch("/api/remote-clients/{client_id}")
+async def update_remote_client(
+    client_id: str, payload: RemoteClientUpdate, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    if payload.name is None:
+        return {"ok": True}
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE remote_clients SET name = $2 WHERE id = $1;",
+            client_id,
+            name,
+        )
+    return {"ok": True}
+
+
+@app.delete("/api/remote-clients/{client_id}")
+async def delete_remote_client(client_id: str, request: Request) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM remote_clients WHERE id = $1;", client_id)
+    return {"ok": True}
+
+
+@app.get("/api/teams")
+async def list_teams(request: Request) -> dict[str, list[dict[str, object]]]:
+    _require_api_token(request)
+    if not db_pool:
+        return {"teams": []}
+    async with db_pool.acquire() as conn:
+        team_rows = await conn.fetch(
+            "SELECT id, name, activity FROM teams ORDER BY id;"
+        )
+        operator_rows = await conn.fetch(
+            "SELECT id, name, role, team FROM operators ORDER BY id;"
+        )
+    team_map: dict[str, dict[str, object]] = {
+        row["id"]: {
+            "id": row["id"],
+            "name": row["name"],
+            "activity": row["activity"],
+            "members": [],
+        }
+        for row in team_rows
+    }
+    for row in operator_rows:
+        team_id = row["team"]
+        if team_id in team_map:
+            team_map[team_id]["members"].append(
+                {
+                    "name": row["name"],
+                    "tag": row["role"],
+                    "account_id": row["id"],
+                }
+            )
+    return {"teams": list(team_map.values())}
+
+
+@app.patch("/api/teams/{team_id}")
+async def update_team(
+    team_id: str, payload: TeamUpdate, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    name = payload.name.strip() if payload.name is not None else None
+    if payload.name is not None and not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE teams
+            SET name = COALESCE($2, name),
+                activity = COALESCE($3, activity)
+            WHERE id = $1;
+            """,
+            team_id,
+            name,
+            payload.activity,
+        )
+    return {"ok": True}
+
+
+@app.put("/api/operators/{operator_id}")
+async def upsert_operator(
+    operator_id: str, payload: OperatorUpsert, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    name = payload.name.strip()
+    if not name or not payload.password or not payload.role:
+        raise HTTPException(status_code=400, detail="Missing operator fields")
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO operators (id, name, password, role, team)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (id)
+            DO UPDATE SET
+                name = EXCLUDED.name,
+                password = EXCLUDED.password,
+                role = EXCLUDED.role,
+                team = EXCLUDED.team;
+            """,
+            operator_id,
+            name,
+            payload.password,
+            payload.role,
+            payload.team,
+        )
+    return {"ok": True}
+
+
+@app.delete("/api/operators/{operator_id}")
+async def delete_operator(operator_id: str, request: Request) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM operators WHERE id = $1;", operator_id)
+    return {"ok": True}
 
 
 @app.websocket("/ws")
@@ -542,9 +785,9 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                 if message_type == "register":
                     if role == "client":
                         device_token = payload.get("device_token")
+                        device_session_id = payload.get("session_id") or session_id
+                        client_ip = _resolve_client_ip(websocket.headers, websocket.client)
                         if device_token:
-                            device_session_id = payload.get("session_id") or session_id
-                            client_ip = _resolve_client_ip(websocket.headers, websocket.client)
                             has_browser, _ = await registry.set_device_token(
                                 session_id, device_token
                             )
@@ -559,6 +802,11 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                                 client_ip,
                                 status,
                             )
+                        await _upsert_remote_client(
+                            device_session_id,
+                            "connected",
+                            client_ip,
+                        )
                     elif role == "browser":
                         _, has_client, device_token = await registry.get_session_state(
                             session_id
@@ -582,6 +830,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             _, _, device_token = await registry.get_session_state(session_id)
             if device_token:
                 await _update_device_status(device_token, DEVICE_STATUS_DISCONNECTED)
+            await _upsert_remote_client(session_id, "disconnected")
         await registry.unregister(session_id, role, websocket)
         if role == "browser":
             has_browser, has_client, device_token = await registry.get_session_state(session_id)

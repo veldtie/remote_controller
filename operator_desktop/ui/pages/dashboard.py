@@ -1,17 +1,32 @@
-import random
-import time
 from datetime import datetime
 from typing import Dict, List
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from ...core.api import RemoteControllerApi
 from ...core.data import DEFAULT_CLIENTS, deep_copy
-from ...core.db import RemoteControllerRepository
 from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import load_icon, make_button
+
+
+class ClientFetchWorker(QtCore.QThread):
+    fetched = QtCore.pyqtSignal(list)
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, api: RemoteControllerApi):
+        super().__init__()
+        self.api = api
+
+    def run(self) -> None:
+        try:
+            clients = self.api.fetch_clients()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.fetched.emit(clients)
 
 
 class DashboardPage(QtWidgets.QWidget):
@@ -25,19 +40,19 @@ class DashboardPage(QtWidgets.QWidget):
         i18n: I18n,
         settings: SettingsStore,
         logger: EventLogger,
-        repo: RemoteControllerRepository | None = None,
+        api: RemoteControllerApi | None = None,
     ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
         self.logger = logger
-        self.repo = repo
+        self.api = api
         self.clients = deep_copy(settings.get("clients", DEFAULT_CLIENTS))
         self.last_sync = None
         self.theme = THEMES.get(settings.get("theme", "dark"), THEMES["dark"])
-        self._last_poll = time.monotonic()
+        self._fetch_in_progress = False
+        self._client_fetch_worker: ClientFetchWorker | None = None
         self._ensure_client_state()
-        self._load_clients_from_db()
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -136,32 +151,52 @@ class DashboardPage(QtWidgets.QWidget):
             self.settings.set("clients", self.clients)
             self.settings.save()
 
-    def _load_clients_from_db(self) -> None:
-        if not self.repo:
-            return
-        db_clients = self.repo.load_clients()
-        if not db_clients:
-            return
+    def _merge_clients(self, api_clients: List[Dict]) -> List[Dict]:
+        if not api_clients:
+            return []
         local_by_id = {client["id"]: client for client in self.clients}
         merged = []
-        for db_client in db_clients:
-            local = local_by_id.get(db_client.get("id"), {})
+        for api_client in api_clients:
+            client_id = api_client.get("id", "")
+            local = local_by_id.get(client_id, {})
             merged_client = {
-                "id": db_client.get("id", ""),
-                "name": db_client.get("name", ""),
-                "status": db_client.get("status", "disconnected"),
-                "connected_time": db_client.get("connected_time", 0),
-                "ip": db_client.get("ip", ""),
-                "region": db_client.get("region", ""),
+                "id": client_id,
+                "name": api_client.get("name", ""),
+                "status": api_client.get("status", "disconnected"),
+                "connected_time": api_client.get("connected_time", 0),
+                "ip": api_client.get("ip", ""),
+                "region": api_client.get("region", ""),
                 "connected": local.get("connected", False),
             }
             if "assigned_operator_id" in local:
                 merged_client["assigned_operator_id"] = local.get("assigned_operator_id", "")
             merged.append(merged_client)
-        if merged:
-            self.clients = merged
-            self.settings.set("clients", self.clients)
-            self.settings.save()
+        return merged
+
+    def _start_client_fetch(self) -> None:
+        if not self.api or self._fetch_in_progress:
+            return
+        self._fetch_in_progress = True
+        worker = ClientFetchWorker(self.api)
+        worker.fetched.connect(self._handle_client_fetch)
+        worker.failed.connect(self._handle_client_fetch_error)
+        worker.finished.connect(self._handle_client_fetch_finished)
+        self._client_fetch_worker = worker
+        worker.start()
+
+    def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
+        merged = self._merge_clients(api_clients)
+        self.clients = merged
+        self.settings.set("clients", self.clients)
+        self.settings.save()
+        self.render_clients(self.clients)
+
+    def _handle_client_fetch_error(self, message: str) -> None:
+        self.render_clients(self.clients)
+
+    def _handle_client_fetch_finished(self) -> None:
+        self._fetch_in_progress = False
+        self._client_fetch_worker = None
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:
@@ -224,8 +259,7 @@ class DashboardPage(QtWidgets.QWidget):
     def refresh_clients(self) -> None:
         self.last_sync = datetime.now()
         self.update_last_sync_label()
-        self._load_clients_from_db()
-        self.render_clients(self.clients)
+        self._start_client_fetch()
 
     def filter_clients(self, text: str) -> None:
         text = text.lower().strip()
@@ -261,7 +295,9 @@ class DashboardPage(QtWidgets.QWidget):
             id_item = QtWidgets.QTableWidgetItem(client["id"])
             connected = client.get("status") == "connected"
             status_key = "status_connected" if connected else "status_disconnected"
-            time_value = client.get("connected_time", 0)
+            time_value = int(client.get("connected_time") or 0)
+            if connected:
+                time_value = max(1, time_value)
             status_text = f"{self.i18n.t(status_key)} / {self._format_duration(time_value)}"
             status_item = QtWidgets.QTableWidgetItem(status_text)
             status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -324,8 +360,11 @@ class DashboardPage(QtWidgets.QWidget):
         for client in self.clients:
             if client["id"] == client_id:
                 client["name"] = item.text().strip() or client["name"]
-                if self.repo:
-                    self.repo.update_client_name(client_id, client["name"])
+                if self.api:
+                    try:
+                        self.api.update_client_name(client_id, client["name"])
+                    except Exception:
+                        pass
                 break
         self.settings.set("clients", self.clients)
         self.settings.save()
@@ -335,25 +374,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.render_clients(self.clients)
 
     def poll_server_status(self) -> None:
-        now = time.monotonic()
-        delta = max(0.0, now - self._last_poll)
-        self._last_poll = now
-        for client in self.clients:
-            previous_status = client.get("status", "disconnected")
-            if "status" not in client:
-                client["status"] = "connected"
-            elif random.random() < 0.15:
-                client["status"] = "disconnected" if previous_status == "connected" else "connected"
-            if client["status"] != previous_status:
-                client["connected_time"] = 0
-            client["connected_time"] = float(client.get("connected_time") or 0) + delta
-            if self.repo:
-                self.repo.update_client_status(
-                    client.get("id", ""),
-                    client.get("status", "disconnected"),
-                    int(client.get("connected_time") or 0),
-                )
-        self.render_clients(self.clients)
+        self._start_client_fetch()
 
     def apply_status_style(self, item: QtWidgets.QTableWidgetItem, connected: bool) -> None:
         if connected:
@@ -507,8 +528,11 @@ class DashboardPage(QtWidgets.QWidget):
         client["name"] = name
         self.settings.set("clients", self.clients)
         self.settings.save()
-        if self.repo:
-            self.repo.update_client_name(client_id, name)
+        if self.api:
+            try:
+                self.api.update_client_name(client_id, name)
+            except Exception:
+                pass
         search_text = self.search_input.text()
         if search_text.strip():
             self.filter_clients(search_text)
@@ -560,8 +584,11 @@ class DashboardPage(QtWidgets.QWidget):
         self.clients = [c for c in self.clients if c["id"] != client_id]
         self.settings.set("clients", self.clients)
         self.settings.save()
-        if self.repo:
-            self.repo.delete_client(client_id)
+        if self.api:
+            try:
+                self.api.delete_client(client_id)
+            except Exception:
+                pass
         self.delete_requested.emit(client_id)
         search_text = self.search_input.text()
         if search_text.strip():
