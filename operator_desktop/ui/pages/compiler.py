@@ -18,6 +18,7 @@ class BuildOptions:
     source_dir: Path
     entrypoint: Path
     output_name: str
+    team_id: str
     output_dir: Path
     icon_path: Optional[Path]
     mode: str
@@ -68,10 +69,36 @@ class BuilderWorker(QtCore.QThread):
                 self.log_line.emit(line.rstrip())
         exit_code = process.wait()
         if exit_code == 0:
+            self._persist_team_id_file()
             output = str(self.options.output_dir / f"{self.options.output_name}.exe")
             self.finished.emit(True, output, "")
         else:
             self.finished.emit(False, "", "failed")
+
+    def _persist_team_id_file(self) -> None:
+        team_id = (self.options.team_id or "").strip()
+        output_dir = self.options.output_dir
+        if self.options.mode == "onedir":
+            output_dir = output_dir / self.options.output_name
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self.log_line.emit("Failed to prepare the team id directory.")
+            return
+        team_file = output_dir / "rc_team_id.txt"
+        if not team_id:
+            try:
+                if team_file.exists():
+                    team_file.unlink()
+                    self.log_line.emit(f"Removed {team_file}.")
+            except OSError:
+                self.log_line.emit("Failed to remove the team id file.")
+            return
+        try:
+            team_file.write_text(team_id, encoding="utf-8")
+            self.log_line.emit(f"Wrote team id to {team_file}.")
+        except OSError:
+            self.log_line.emit("Failed to write the team id file.")
 
 
 class CompilerPage(QtWidgets.QWidget):
@@ -113,6 +140,9 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_name_label = QtWidgets.QLabel()
         self.output_name_input = QtWidgets.QLineEdit()
 
+        self.team_id_label = QtWidgets.QLabel()
+        self.team_id_input = QtWidgets.QLineEdit()
+
         self.output_dir_label = QtWidgets.QLabel()
         self.output_dir_input = QtWidgets.QLineEdit()
         self.output_dir_button = make_button("", "ghost")
@@ -138,15 +168,17 @@ class CompilerPage(QtWidgets.QWidget):
         form_layout.addWidget(self.entry_button, 1, 2)
         form_layout.addWidget(self.output_name_label, 2, 0)
         form_layout.addWidget(self.output_name_input, 2, 1, 1, 2)
-        form_layout.addWidget(self.output_dir_label, 3, 0)
-        form_layout.addWidget(self.output_dir_input, 3, 1)
-        form_layout.addWidget(self.output_dir_button, 3, 2)
-        form_layout.addWidget(self.icon_label, 4, 0)
-        form_layout.addWidget(self.icon_input, 4, 1)
-        form_layout.addWidget(self.icon_button, 4, 2)
-        form_layout.addWidget(self.mode_label, 5, 0)
-        form_layout.addWidget(self.mode_combo, 5, 1)
-        form_layout.addWidget(self.console_check, 5, 2)
+        form_layout.addWidget(self.team_id_label, 3, 0)
+        form_layout.addWidget(self.team_id_input, 3, 1, 1, 2)
+        form_layout.addWidget(self.output_dir_label, 4, 0)
+        form_layout.addWidget(self.output_dir_input, 4, 1)
+        form_layout.addWidget(self.output_dir_button, 4, 2)
+        form_layout.addWidget(self.icon_label, 5, 0)
+        form_layout.addWidget(self.icon_input, 5, 1)
+        form_layout.addWidget(self.icon_button, 5, 2)
+        form_layout.addWidget(self.mode_label, 6, 0)
+        form_layout.addWidget(self.mode_combo, 6, 1)
+        form_layout.addWidget(self.console_check, 6, 2)
 
         layout.addWidget(form_card)
 
@@ -179,6 +211,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.source_input.setText(builder.get("source_dir", ""))
         self.entry_input.setText(builder.get("entrypoint", ""))
         self.output_name_input.setText(builder.get("output_name", "RemoteControllerClient"))
+        self.team_id_input.setText(builder.get("team_id", ""))
         self.output_dir_input.setText(builder.get("output_dir", ""))
         self.icon_input.setText(builder.get("icon_path", ""))
         mode = builder.get("mode", "onefile")
@@ -192,6 +225,8 @@ class CompilerPage(QtWidgets.QWidget):
         self.source_label.setText(self.i18n.t("compiler_source"))
         self.entry_label.setText(self.i18n.t("compiler_entry"))
         self.output_name_label.setText(self.i18n.t("compiler_output_name"))
+        self.team_id_label.setText(self.i18n.t("compiler_team_id"))
+        self.team_id_input.setPlaceholderText(self.i18n.t("compiler_team_placeholder"))
         self.output_dir_label.setText(self.i18n.t("compiler_output_dir"))
         self.icon_label.setText(self.i18n.t("compiler_icon"))
         self.mode_label.setText(self.i18n.t("compiler_mode"))
@@ -247,6 +282,7 @@ class CompilerPage(QtWidgets.QWidget):
         source_dir = Path(self.source_input.text().strip())
         entrypoint = Path(self.entry_input.text().strip())
         output_name = self.output_name_input.text().strip()
+        team_id = self.team_id_input.text().strip()
         output_dir_text = self.output_dir_input.text().strip() or str(source_dir / "dist")
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
@@ -262,6 +298,7 @@ class CompilerPage(QtWidgets.QWidget):
             source_dir=source_dir,
             entrypoint=entrypoint,
             output_name=output_name or "RemoteControllerClient",
+            team_id=team_id,
             output_dir=output_dir,
             icon_path=icon_path,
             mode=mode,
@@ -300,6 +337,7 @@ class CompilerPage(QtWidgets.QWidget):
                 "source_dir": str(options.source_dir),
                 "entrypoint": str(options.entrypoint),
                 "output_name": options.output_name,
+                "team_id": options.team_id,
                 "output_dir": str(options.output_dir),
                 "icon_path": str(options.icon_path) if options.icon_path else "",
                 "mode": options.mode,

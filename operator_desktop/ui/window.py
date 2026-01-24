@@ -84,11 +84,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_operator_profile(self, operator: dict) -> None:
         role = operator.get("role", "operator")
         name = operator.get("name", "")
+        team_id = operator.get("team", "")
         self.settings.set("role", role)
         self.settings.set("operator_name", name)
+        self.settings.set("operator_team_id", team_id)
         self.shell.settings_page.set_role_value(role)
         self.shell.handle_role_change(role)
         self.shell.update_operator_label()
+
+    def _authenticate_operator(self, account_id: str, password: str) -> dict | None:
+        if not account_id or not password:
+            return None
+        try:
+            operator = self.api.authenticate_operator(account_id, password)
+        except Exception:
+            return None
+        if not operator or not operator.get("role"):
+            return None
+        return operator
 
     def restore_session(self) -> None:
         remember = self.settings.get("remember_me", False)
@@ -111,7 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not account_id or not password:
             self.login_page.status_label.setText(self.i18n.t("login_error_empty"))
             return
-        operator = self._fetch_operator_profile(account_id)
+        operator = self._authenticate_operator(account_id, password)
         if not operator:
             self.login_page.status_label.setText(self.i18n.t("login_error_failed"))
             return

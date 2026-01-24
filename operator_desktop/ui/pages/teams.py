@@ -24,6 +24,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.settings = settings
         self.api = api
         self.teams = []
+        self.clients = self.settings.get("clients", [])
         self.settings.set("teams", [])
         self.current_role = settings.get("role", "operator")
         self.current_team_id = None
@@ -109,6 +110,25 @@ class TeamsPage(QtWidgets.QWidget):
         self.renew_button.clicked.connect(self.renew_subscription)
         container_layout.addWidget(self.renew_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
 
+        self.unassigned_label = QtWidgets.QLabel()
+        self.unassigned_label.setStyleSheet("font-weight: 600;")
+        container_layout.addWidget(self.unassigned_label)
+
+        self.unassigned_table = QtWidgets.QTableWidget(0, 5)
+        self.unassigned_table.verticalHeader().setVisible(False)
+        self.unassigned_table.setAlternatingRowColors(True)
+        self.unassigned_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.unassigned_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.unassigned_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        unassigned_header = self.unassigned_table.horizontalHeader()
+        unassigned_header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        unassigned_header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        unassigned_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        unassigned_header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        unassigned_header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.unassigned_table.verticalHeader().setDefaultSectionSize(36)
+        container_layout.addWidget(self.unassigned_table, 1)
+
         self.members_label = QtWidgets.QLabel()
         self.members_label.setStyleSheet("font-weight: 600;")
         container_layout.addWidget(self.members_label)
@@ -156,8 +176,20 @@ class TeamsPage(QtWidgets.QWidget):
         self.settings.save()
         self.teams_updated.emit()
 
+    def _load_clients_from_api(self) -> None:
+        if not self.api:
+            return
+        try:
+            api_clients = self.api.fetch_clients()
+        except Exception:
+            return
+        self.clients = api_clients
+        self.settings.set("clients", self.clients)
+        self.settings.save()
+
     def refresh_from_api(self, select_team_id: Optional[str] = None) -> None:
         self._load_teams_from_api()
+        self._load_clients_from_api()
         if select_team_id:
             self.current_team_id = select_team_id
         self.populate_team_list(select_team_id or self.current_team_id)
@@ -175,6 +207,16 @@ class TeamsPage(QtWidgets.QWidget):
         self.team_status_label.setText(self.i18n.t("team_status"))
         self.team_subscription_label.setText(self.i18n.t("team_activity"))
         self.renew_button.setText(self.i18n.t("team_toggle_activity"))
+        self.unassigned_label.setText(self.i18n.t("unassigned_clients_title"))
+        self.unassigned_table.setHorizontalHeaderLabels(
+            [
+                self.i18n.t("table_name"),
+                self.i18n.t("table_id"),
+                self.i18n.t("table_ip"),
+                self.i18n.t("table_assign"),
+                self.i18n.t("table_delete"),
+            ]
+        )
         self.members_label.setText(self.i18n.t("team_members"))
         self.add_member_button.setText(self.i18n.t("team_add_member"))
         self.remove_member_button.setText(self.i18n.t("team_remove_member"))
@@ -196,14 +238,34 @@ class TeamsPage(QtWidgets.QWidget):
 
     def update_role_controls(self) -> None:
         is_moderator = self.current_role == "moderator"
-        allow_changes = is_moderator and self.api is not None
-        self.team_name_input.setReadOnly(not allow_changes)
-        self.renew_button.setEnabled(allow_changes)
-        self.add_member_button.setEnabled(allow_changes)
-        self.remove_member_button.setEnabled(allow_changes)
+        is_admin = self.current_role == "administrator"
+        allow_api = self.api is not None
+        can_manage_teams = is_moderator and allow_api
+        can_manage_members = (is_moderator or is_admin) and allow_api
+        can_toggle_activity = is_moderator and allow_api
+        show_unassigned = (is_moderator or is_admin)
+        show_team_info = self.current_role != "operator"
+
+        self.list_card.setVisible(is_moderator)
+        self.team_name_input.setReadOnly(not can_manage_teams)
+        self.team_name_label.setVisible(show_team_info)
+        self.team_name_input.setVisible(show_team_info)
+        self.team_status_label.setVisible(show_team_info)
+        self.team_status_value.setVisible(show_team_info)
+        self.team_subscription_label.setVisible(show_team_info)
+        self.team_subscription_value.setVisible(show_team_info)
+        self.renew_button.setVisible(is_moderator)
+        self.renew_button.setEnabled(can_toggle_activity)
+        self.add_member_button.setVisible(can_manage_members)
+        self.remove_member_button.setVisible(can_manage_members)
+        self.add_member_button.setEnabled(can_manage_members)
+        self.remove_member_button.setEnabled(can_manage_members)
         self.add_team_button.setVisible(is_moderator)
+        self.add_team_button.setEnabled(can_manage_teams)
         self.delete_team_button.setVisible(is_moderator)
-        self.delete_team_button.setEnabled(allow_changes and self.selected_team() is not None)
+        self.delete_team_button.setEnabled(can_manage_teams and self.selected_team() is not None)
+        self.unassigned_label.setVisible(show_unassigned)
+        self.unassigned_table.setVisible(show_unassigned)
 
     def visible_teams(self) -> List[Dict]:
         if self.current_role == "moderator":
@@ -213,7 +275,7 @@ class TeamsPage(QtWidgets.QWidget):
             for member in team.get("members", []):
                 if member.get("account_id") == account_id:
                     return [team]
-        return self.teams[:1] if self.teams else []
+        return []
 
     def populate_team_list(self, select_team_id: Optional[str] = None) -> None:
         self.team_list.clear()
@@ -232,8 +294,8 @@ class TeamsPage(QtWidgets.QWidget):
 
     def render_team_details(self) -> None:
         team = self.selected_team()
-        allow_changes = self.current_role == "moderator" and self.api is not None
-        self.delete_team_button.setEnabled(allow_changes and team is not None)
+        can_manage_teams = self.current_role == "moderator" and self.api is not None
+        self.delete_team_button.setEnabled(can_manage_teams and team is not None)
         if team is None:
             self.details_stack.setCurrentIndex(0)
             return
@@ -243,6 +305,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.team_name_input.setText(team.get("name", ""))
         self.team_name_input.blockSignals(False)
         self.update_subscription_display(team)
+        self.render_unassigned_clients(team)
         self.render_members(team)
 
     def selected_team(self) -> Optional[Dict]:
@@ -268,7 +331,7 @@ class TeamsPage(QtWidgets.QWidget):
         account_id = member.get("account_id")
         if not account_id:
             return 0
-        clients = self.settings.get("clients", [])
+        clients = self.clients or self.settings.get("clients", [])
         count = 0
         for client in clients:
             assigned = client.get("assigned_operator_id")
@@ -297,6 +360,104 @@ class TeamsPage(QtWidgets.QWidget):
             self.members_table.setItem(row, 0, name_item)
             self.members_table.setItem(row, 1, tag_item)
             self.members_table.setItem(row, 2, clients_item)
+
+    def render_unassigned_clients(self, team: Dict) -> None:
+        if self.current_role not in {"moderator", "administrator"}:
+            self.unassigned_table.setRowCount(0)
+            return
+        self.unassigned_table.setRowCount(0)
+        team_id = team.get("id", "")
+        clients = self.clients or self.settings.get("clients", [])
+        unassigned = [
+            client
+            for client in clients
+            if client.get("assigned_team_id") == team_id
+            and not client.get("assigned_operator_id")
+        ]
+        if not unassigned:
+            row = self.unassigned_table.rowCount()
+            self.unassigned_table.insertRow(row)
+            item = QtWidgets.QTableWidgetItem(self.i18n.t("unassigned_clients_empty"))
+            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+            self.unassigned_table.setItem(row, 0, item)
+            self.unassigned_table.setSpan(row, 0, 1, self.unassigned_table.columnCount())
+            return
+        for client in unassigned:
+            row = self.unassigned_table.rowCount()
+            self.unassigned_table.insertRow(row)
+            self.unassigned_table.setRowHeight(row, 36)
+            name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
+            id_item = QtWidgets.QTableWidgetItem(client.get("id", ""))
+            ip_item = QtWidgets.QTableWidgetItem(client.get("ip", ""))
+            for item in (name_item, id_item, ip_item):
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.unassigned_table.setItem(row, 0, name_item)
+            self.unassigned_table.setItem(row, 1, id_item)
+            self.unassigned_table.setItem(row, 2, ip_item)
+
+            assign_button = make_button(self.i18n.t("button_assign"), "ghost")
+            assign_button.setEnabled(bool(team.get("members")) and self.api is not None)
+            assign_button.clicked.connect(
+                lambda _, btn=assign_button, cid=client.get("id", ""), tid=team_id: self.show_assign_menu(
+                    btn,
+                    cid,
+                    tid,
+                )
+            )
+            self.unassigned_table.setCellWidget(row, 3, assign_button)
+
+            delete_button = make_button(self.i18n.t("button_delete"), "danger")
+            delete_button.setEnabled(self.api is not None)
+            delete_button.clicked.connect(
+                lambda _, cid=client.get("id", ""), tid=team_id: self.delete_unassigned_client(
+                    cid,
+                    tid,
+                )
+            )
+            self.unassigned_table.setCellWidget(row, 4, delete_button)
+
+    def show_assign_menu(self, button: QtWidgets.QWidget, client_id: str, team_id: str) -> None:
+        if not self.api or not client_id:
+            return
+        team = self.selected_team()
+        if not team or team.get("id") != team_id:
+            return
+        members = team.get("members", [])
+        if not members:
+            return
+        menu = QtWidgets.QMenu(button)
+        for member in members:
+            name = member.get("name") or member.get("account_id") or ""
+            if not name:
+                continue
+            action = menu.addAction(name)
+            action.triggered.connect(
+                lambda _, m=member: self.assign_client_to_member(client_id, team_id, m)
+            )
+        if not menu.actions():
+            return
+        menu.exec(button.mapToGlobal(QtCore.QPoint(0, button.height())))
+
+    def assign_client_to_member(self, client_id: str, team_id: str, member: Dict) -> None:
+        if not self.api or not client_id:
+            return
+        operator_id = member.get("account_id")
+        if not operator_id:
+            return
+        try:
+            self.api.assign_client(client_id, operator_id, team_id)
+        except Exception:
+            return
+        self.refresh_from_api(team_id)
+
+    def delete_unassigned_client(self, client_id: str, team_id: str) -> None:
+        if not self.api or not client_id:
+            return
+        try:
+            self.api.delete_client(client_id)
+        except Exception:
+            return
+        self.refresh_from_api(team_id)
 
     def resolve_operator_name(self, account_id: str) -> Optional[str]:
         if not account_id:
@@ -343,12 +504,13 @@ class TeamsPage(QtWidgets.QWidget):
         self.refresh_from_api(team["id"])
 
     def add_member(self) -> None:
-        if self.current_role != "moderator":
+        if self.current_role not in {"moderator", "administrator"}:
             return
         team = self.selected_team()
         if team is None:
             return
-        dialog = AddMemberDialog(self.i18n, self)
+        allowed_roles = ["operator"] if self.current_role == "administrator" else None
+        dialog = AddMemberDialog(self.i18n, self, allowed_roles=allowed_roles)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         data = dialog.member_data()
@@ -369,7 +531,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.refresh_from_api(team["id"])
 
     def remove_member(self) -> None:
-        if self.current_role != "moderator":
+        if self.current_role not in {"moderator", "administrator"}:
             return
         team = self.selected_team()
         if team is None:
@@ -394,7 +556,6 @@ class TeamsPage(QtWidgets.QWidget):
         if self.current_role != "moderator" or not self.api:
             return
         dialog = QtWidgets.QInputDialog(self)
-        dialog.setOption(QtWidgets.QInputDialog.Option.DontUseNativeDialog, True)
         dialog.setWindowTitle(self.i18n.t("team_add_title"))
         dialog.setLabelText(self.i18n.t("team_add_label"))
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:

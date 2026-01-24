@@ -188,6 +188,9 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         gridline-color: {c["border"]};
     }}
+    QTableWidget QAbstractScrollArea::viewport {{
+        background: {c["card"]};
+    }}
     QHeaderView::section {{
         background: {c["card_alt"]};
         border: none;
@@ -199,6 +202,7 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QTableWidget::item:selected {{
         background: {c["accent_soft"]};
+        color: {c["text"]};
     }}
     QMenu {{
         background: {c["card"]};
@@ -219,6 +223,16 @@ def build_stylesheet(theme: Theme) -> str:
     QListWidget {{
         background: transparent;
         border: none;
+    }}
+    QListWidget::item {{
+        color: {c["text"]};
+    }}
+    QListWidget::item:selected {{
+        background: {c["accent_soft"]};
+        color: {c["text"]};
+    }}
+    QAbstractItemView::item:focus {{
+        outline: none;
     }}
     QListWidget::item {{
         padding: 6px 4px;

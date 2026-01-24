@@ -178,11 +178,13 @@ class StorageDialog(QtWidgets.QDialog):
 
 
 class AddMemberDialog(QtWidgets.QDialog):
-    def __init__(self, i18n: I18n, parent=None):
+    def __init__(self, i18n: I18n, parent=None, allowed_roles: list[str] | None = None):
         super().__init__(parent)
         self.i18n = i18n
         self.setWindowTitle(self.i18n.t("team_add_dialog_title"))
         self.setMinimumWidth(360)
+        if allowed_roles is None:
+            allowed_roles = ["operator", "administrator", "moderator"]
 
         layout = QtWidgets.QVBoxLayout(self)
         form = QtWidgets.QFormLayout()
@@ -192,9 +194,12 @@ class AddMemberDialog(QtWidgets.QDialog):
         self.password_input = QtWidgets.QLineEdit()
         self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.tag_combo = QtWidgets.QComboBox()
-        self.tag_combo.addItem(self.i18n.t("tag_operator"), "operator")
-        self.tag_combo.addItem(self.i18n.t("tag_administrator"), "administrator")
-        self.tag_combo.addItem(self.i18n.t("tag_moderator"), "moderator")
+        if "operator" in allowed_roles:
+            self.tag_combo.addItem(self.i18n.t("tag_operator"), "operator")
+        if "administrator" in allowed_roles:
+            self.tag_combo.addItem(self.i18n.t("tag_administrator"), "administrator")
+        if "moderator" in allowed_roles:
+            self.tag_combo.addItem(self.i18n.t("tag_moderator"), "moderator")
 
         form.addRow(self.i18n.t("team_add_name"), self.name_input)
         form.addRow(self.i18n.t("team_add_account_id"), self.account_input)

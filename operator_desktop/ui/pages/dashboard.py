@@ -53,10 +53,13 @@ class DashboardPage(QtWidgets.QWidget):
         self.settings.set("clients", [])
         self.last_sync = None
         self.theme = THEMES.get(settings.get("theme", "dark"), THEMES["dark"])
+        self.current_role = settings.get("role", "operator")
+        self.account_id = settings.get("account_id", "")
         self._fetch_in_progress = False
         self._client_fetch_worker: ClientFetchWorker | None = None
         self._fetch_started_at: float | None = None
         self._server_online: bool | None = None
+        self.column_keys: list[str] = []
         self._ensure_client_state()
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -86,7 +89,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.table_card = QtWidgets.QFrame()
         self.table_card.setObjectName("Card")
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
-        self.table = QtWidgets.QTableWidget(0, 9)
+        self.table = QtWidgets.QTableWidget(0, 0)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -94,7 +97,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
-        self.configure_table_layout()
+        self._configure_columns()
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
@@ -156,6 +159,78 @@ class DashboardPage(QtWidgets.QWidget):
             self.settings.set("clients", self.clients)
             self.settings.save()
 
+    def set_role(self, role: str) -> None:
+        self.current_role = role
+        self.account_id = self.settings.get("account_id", "")
+        self._configure_columns()
+        self.render_clients(self._visible_clients(self.clients))
+
+    def _build_column_keys(self) -> list[str]:
+        keys = ["name", "id"]
+        if self.current_role == "moderator":
+            keys += ["team", "operator"]
+        elif self.current_role == "administrator":
+            keys += ["operator"]
+        keys += ["status", "region", "ip", "storage", "connect", "more"]
+        if self.current_role in {"moderator", "administrator"}:
+            keys.append("delete")
+        return keys
+
+    def _column_labels(self) -> dict[str, str]:
+        return {
+            "name": self.i18n.t("table_name"),
+            "id": self.i18n.t("table_id"),
+            "team": self.i18n.t("table_team"),
+            "operator": self.i18n.t("table_operator"),
+            "status": self.i18n.t("table_status"),
+            "region": self.i18n.t("table_region"),
+            "ip": self.i18n.t("table_ip"),
+            "storage": self.i18n.t("table_storage"),
+            "connect": self.i18n.t("table_connect"),
+            "more": self.i18n.t("table_more"),
+            "delete": self.i18n.t("table_delete"),
+        }
+
+    def _configure_columns(self) -> None:
+        self.column_keys = self._build_column_keys()
+        self.table.setColumnCount(len(self.column_keys))
+        labels = self._column_labels()
+        self.table.setHorizontalHeaderLabels([labels[key] for key in self.column_keys])
+        self.configure_table_layout()
+
+    def _column_index(self) -> dict[str, int]:
+        return {key: index for index, key in enumerate(self.column_keys)}
+
+    def _visible_clients(self, clients: list[Dict]) -> list[Dict]:
+        if self.current_role == "moderator":
+            return clients
+        if self.current_role == "administrator":
+            team_id = self.settings.get("operator_team_id", "")
+            if not team_id:
+                return []
+            return [client for client in clients if client.get("assigned_team_id") == team_id]
+        account_id = self.account_id or self.settings.get("account_id", "")
+        if not account_id:
+            return []
+        return [client for client in clients if client.get("assigned_operator_id") == account_id]
+
+    def _resolve_team_name(self, team_id: str | None) -> str:
+        if not team_id:
+            return self.i18n.t("unassigned_label")
+        for team in self.settings.get("teams", []):
+            if team.get("id") == team_id:
+                return team.get("name", team_id)
+        return team_id
+
+    def _resolve_operator_name(self, operator_id: str | None) -> str:
+        if not operator_id:
+            return self.i18n.t("unassigned_label")
+        for team in self.settings.get("teams", []):
+            for member in team.get("members", []):
+                if member.get("account_id") == operator_id:
+                    return member.get("name", operator_id)
+        return operator_id
+
     def _merge_clients(self, api_clients: List[Dict]) -> List[Dict]:
         if not api_clients:
             return []
@@ -164,6 +239,12 @@ class DashboardPage(QtWidgets.QWidget):
         for api_client in api_clients:
             client_id = api_client.get("id", "")
             local = local_by_id.get(client_id, {})
+            assigned_operator_id = api_client.get("assigned_operator_id")
+            if assigned_operator_id is None:
+                assigned_operator_id = local.get("assigned_operator_id", "")
+            assigned_team_id = api_client.get("assigned_team_id")
+            if assigned_team_id is None:
+                assigned_team_id = local.get("assigned_team_id", "")
             merged_client = {
                 "id": client_id,
                 "name": api_client.get("name", ""),
@@ -172,9 +253,9 @@ class DashboardPage(QtWidgets.QWidget):
                 "ip": api_client.get("ip", ""),
                 "region": api_client.get("region", ""),
                 "connected": local.get("connected", False),
+                "assigned_operator_id": assigned_operator_id or "",
+                "assigned_team_id": assigned_team_id or "",
             }
-            if "assigned_operator_id" in local:
-                merged_client["assigned_operator_id"] = local.get("assigned_operator_id", "")
             merged.append(merged_client)
         return merged
 
@@ -202,7 +283,7 @@ class DashboardPage(QtWidgets.QWidget):
         if latency_ms is not None:
             self.ping_updated.emit(latency_ms)
         self._set_server_online(True)
-        self.render_clients(self.clients)
+        self.render_clients(self._visible_clients(self.clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
         self.clients = []
@@ -210,7 +291,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.settings.save()
         self.ping_updated.emit(None)
         self._set_server_online(False)
-        self.render_clients(self.clients)
+        self.render_clients(self._visible_clients(self.clients))
 
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
@@ -240,24 +321,11 @@ class DashboardPage(QtWidgets.QWidget):
         self.subtitle_label.setText(self.i18n.t("main_subtitle"))
         self.search_input.setPlaceholderText(self.i18n.t("main_search_placeholder"))
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
-        self.table.setHorizontalHeaderLabels(
-            [
-                self.i18n.t("table_name"),
-                self.i18n.t("table_id"),
-                self.i18n.t("table_status"),
-                self.i18n.t("table_region"),
-                self.i18n.t("table_ip"),
-                self.i18n.t("table_storage"),
-                self.i18n.t("table_connect"),
-                self.i18n.t("table_more"),
-                self.i18n.t("table_delete"),
-            ]
-        )
-        self.configure_table_layout()
+        self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
         self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
-        self.render_clients(self.clients)
+        self.render_clients(self._visible_clients(self.clients))
 
     def refresh_logs(self) -> None:
         scrollbar = self.log_list.verticalScrollBar()
@@ -289,10 +357,10 @@ class DashboardPage(QtWidgets.QWidget):
     def filter_clients(self, text: str) -> None:
         text = text.lower().strip()
         if not text:
-            self.render_clients(self.clients)
+            self.render_clients(self._visible_clients(self.clients))
             return
         filtered = []
-        for client in self.clients:
+        for client in self._visible_clients(self.clients):
             connected = client.get("status") == "connected"
             status_key = "status_connected" if connected else "status_disconnected"
             values = [
@@ -301,6 +369,8 @@ class DashboardPage(QtWidgets.QWidget):
                 self.i18n.t(status_key),
                 self.i18n.t(client["region"]),
                 client["ip"],
+                self._resolve_team_name(client.get("assigned_team_id")),
+                self._resolve_operator_name(client.get("assigned_operator_id")),
             ]
             if any(text in str(value).lower() for value in values):
                 filtered.append(client)
@@ -309,6 +379,7 @@ class DashboardPage(QtWidgets.QWidget):
     def render_clients(self, clients: List[Dict]) -> None:
         self.table.blockSignals(True)
         self.table.setRowCount(0)
+        column_index = self._column_index()
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
@@ -331,51 +402,64 @@ class DashboardPage(QtWidgets.QWidget):
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
             for item in (id_item, status_item, region_item, ip_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 0, name_item)
-            self.table.setCellWidget(row, 0, self.build_name_cell(client))
-            self.table.setItem(row, 1, id_item)
-            self.table.setItem(row, 2, status_item)
-            self.table.setItem(row, 3, region_item)
-            self.table.setItem(row, 4, ip_item)
+            self.table.setItem(row, column_index["name"], name_item)
+            self.table.setCellWidget(row, column_index["name"], self.build_name_cell(client))
+            self.table.setItem(row, column_index["id"], id_item)
+            if "team" in column_index:
+                team_item = QtWidgets.QTableWidgetItem(
+                    self._resolve_team_name(client.get("assigned_team_id"))
+                )
+                team_item.setFlags(team_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, column_index["team"], team_item)
+            if "operator" in column_index:
+                operator_item = QtWidgets.QTableWidgetItem(
+                    self._resolve_operator_name(client.get("assigned_operator_id"))
+                )
+                operator_item.setFlags(operator_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, column_index["operator"], operator_item)
+            self.table.setItem(row, column_index["status"], status_item)
+            self.table.setItem(row, column_index["region"], region_item)
+            self.table.setItem(row, column_index["ip"], ip_item)
 
             storage_button = make_button(self.i18n.t("button_storage"), "ghost")
             storage_button.clicked.connect(lambda _, cid=client["id"]: self.storage_requested.emit(cid))
-            self.table.setCellWidget(row, 5, storage_button)
+            self.table.setCellWidget(row, column_index["storage"], storage_button)
 
             connect_text = self.i18n.t("button_connected") if client["connected"] else self.i18n.t("button_connect")
             connect_button = make_button(connect_text, "primary")
             connect_button.clicked.connect(
                 lambda _, cid=client["id"], state=client["connected"]: self.connect_requested.emit(cid, state)
             )
-            self.table.setCellWidget(row, 6, connect_button)
+            self.table.setCellWidget(row, column_index["connect"], connect_button)
 
             more_button = self.build_more_button(client["id"])
-            self.table.setCellWidget(row, 7, self.wrap_cell_widget(more_button))
+            self.table.setCellWidget(row, column_index["more"], self.wrap_cell_widget(more_button))
 
-            delete_button = QtWidgets.QToolButton()
-            delete_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-            delete_button.setToolTip(self.i18n.t("button_delete"))
-            delete_button.setAutoRaise(True)
-            delete_button.setFixedSize(40, 30)
-            delete_icon = load_icon("delete", self.theme.name)
-            if delete_icon.isNull():
-                delete_button.setText("X")
-            else:
-                delete_button.setIcon(delete_icon)
-                delete_button.setIconSize(QtCore.QSize(16, 16))
-            delete_button.setStyleSheet(
-                "QToolButton {"
-                f"background: {self.theme.colors['danger']};"
-                "border: none;"
-                "border-radius: 8px;"
-                "color: #ffffff;"
-                "}"
-                "QToolButton:hover {"
-                f"background: {self.theme.colors['danger']};"
-                "}"
-            )
-            delete_button.clicked.connect(lambda _, cid=client["id"]: self.confirm_delete_client(cid))
-            self.table.setCellWidget(row, 8, self.wrap_cell_widget(delete_button))
+            if "delete" in column_index:
+                delete_button = QtWidgets.QToolButton()
+                delete_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+                delete_button.setToolTip(self.i18n.t("button_delete"))
+                delete_button.setAutoRaise(True)
+                delete_button.setFixedSize(40, 30)
+                delete_icon = load_icon("delete", self.theme.name)
+                if delete_icon.isNull():
+                    delete_button.setText("X")
+                else:
+                    delete_button.setIcon(delete_icon)
+                    delete_button.setIconSize(QtCore.QSize(16, 16))
+                delete_button.setStyleSheet(
+                    "QToolButton {"
+                    f"background: {self.theme.colors['danger']};"
+                    "border: none;"
+                    "border-radius: 8px;"
+                    "color: #ffffff;"
+                    "}"
+                    "QToolButton:hover {"
+                    f"background: {self.theme.colors['danger']};"
+                    "}"
+                )
+                delete_button.clicked.connect(lambda _, cid=client["id"]: self.confirm_delete_client(cid))
+                self.table.setCellWidget(row, column_index["delete"], self.wrap_cell_widget(delete_button))
         self.table.blockSignals(False)
 
     def handle_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
@@ -396,7 +480,7 @@ class DashboardPage(QtWidgets.QWidget):
 
     def apply_theme(self, theme) -> None:
         self.theme = theme
-        self.render_clients(self.clients)
+        self.render_clients(self._visible_clients(self.clients))
 
     def poll_server_status(self) -> None:
         self._start_client_fetch()
@@ -426,16 +510,23 @@ class DashboardPage(QtWidgets.QWidget):
         if total == 0:
             return
 
+        base_config = {
+            "name": (3.2, 170),
+            "id": (1.2, 80),
+            "team": (1.6, 130),
+            "operator": (1.8, 150),
+            "status": (2.1, 160),
+            "region": (1.3, 100),
+            "ip": (1.3, 100),
+            "storage": (1.3, 110),
+            "connect": (1.6, 140),
+            "more": (0.8, 60),
+            "delete": (0.8, 60),
+        }
         config = {
-            0: (3.2, 170),  # name
-            1: (1.2, 80),   # id
-            2: (2.1, 160),  # status + time
-            3: (1.3, 100),  # region
-            4: (1.3, 100),  # ip
-            5: (1.3, 110),  # storage
-            6: (1.6, 140),  # connect
-            7: (0.8, 60),   # more
-            8: (0.8, 60),   # delete
+            index: base_config[key]
+            for index, key in enumerate(self.column_keys)
+            if key in base_config
         }
 
         min_total = sum(min_w for _, min_w in config.values())
@@ -540,7 +631,6 @@ class DashboardPage(QtWidgets.QWidget):
         if client is None:
             return
         dialog = QtWidgets.QInputDialog(self)
-        dialog.setOption(QtWidgets.QInputDialog.Option.DontUseNativeDialog, True)
         dialog.setWindowTitle(self.i18n.t("dialog_edit_name_title"))
         dialog.setLabelText(self.i18n.t("dialog_edit_name_label"))
         dialog.setTextValue(client.get("name", ""))
@@ -561,7 +651,7 @@ class DashboardPage(QtWidgets.QWidget):
         if search_text.strip():
             self.filter_clients(search_text)
         else:
-            self.render_clients(self.clients)
+            self.render_clients(self._visible_clients(self.clients))
 
     def confirm_delete_client(self, client_id: str) -> None:
         client = next((c for c in self.clients if c["id"] == client_id), None)
@@ -618,4 +708,4 @@ class DashboardPage(QtWidgets.QWidget):
         if search_text.strip():
             self.filter_clients(search_text)
         else:
-            self.render_clients(self.clients)
+            self.render_clients(self._visible_clients(self.clients))

@@ -44,7 +44,12 @@ def load_or_create_device_token() -> str | None:
     return device_token
 
 
-def build_client(session_id: str, token: str | None, device_token: str | None) -> WebRTCClient:
+def build_client(
+    session_id: str,
+    token: str | None,
+    device_token: str | None,
+    team_id: str | None = None,
+) -> WebRTCClient:
     signaling_url = os.getenv("RC_SIGNALING_URL")
     if signaling_url:
         if "://" in signaling_url:
@@ -70,5 +75,6 @@ def build_client(session_id: str, token: str | None, device_token: str | None) -
         session_factory=build_session_resources,
         file_service=file_service,
         device_token=device_token,
+        team_id=team_id,
         e2ee=e2ee_context,
     )

@@ -44,8 +44,23 @@ class RemoteControllerApi:
         payload = self._request("GET", "/api/remote-clients") or {}
         return list(payload.get("clients", []))
 
+    def authenticate_operator(self, account_id: str, password: str) -> dict[str, Any]:
+        payload = self._request(
+            "POST",
+            "/api/auth/login",
+            {"account_id": account_id, "password": password},
+        ) or {}
+        return dict(payload.get("operator") or {})
+
     def update_client_name(self, client_id: str, name: str) -> None:
         self._request("PATCH", f"/api/remote-clients/{client_id}", {"name": name})
+
+    def assign_client(self, client_id: str, operator_id: str, team_id: str) -> None:
+        self._request(
+            "PATCH",
+            f"/api/remote-clients/{client_id}",
+            {"assigned_operator_id": operator_id, "assigned_team_id": team_id},
+        )
 
     def delete_client(self, client_id: str) -> None:
         self._request("DELETE", f"/api/remote-clients/{client_id}")

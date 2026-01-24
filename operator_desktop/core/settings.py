@@ -41,6 +41,7 @@ class SettingsStore:
         self.data["remember_me"] = False
         self.data["account_id"] = ""
         self.data["operator_name"] = ""
+        self.data["operator_team_id"] = ""
         self.data["session_token"] = ""
         self.data["recent_account_ids"] = []
         self.data["session_logs"] = []

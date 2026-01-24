@@ -185,8 +185,6 @@ class MainShell(QtWidgets.QWidget):
         self.page_title.setText(titles[index])
 
     def switch_page(self, key: str) -> None:
-        if key == "teams" and self.current_role != "moderator":
-            key = "main"
         if key in self.nav_buttons:
             self.nav_buttons[key].setChecked(True)
         mapping = {
@@ -204,10 +202,7 @@ class MainShell(QtWidgets.QWidget):
         animate_widget(self.stack.currentWidget())
 
     def update_role_visibility(self) -> None:
-        is_moderator = self.current_role == "moderator"
-        self.nav_buttons["teams"].setVisible(is_moderator)
-        if not is_moderator and self.stack.currentIndex() == 1:
-            self.switch_page("main")
+        self.nav_buttons["teams"].setVisible(True)
 
     def open_storage(self, client_id: str) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -250,6 +245,7 @@ class MainShell(QtWidgets.QWidget):
     def handle_role_change(self, role: str) -> None:
         self.current_role = role
         self.teams_page.set_role(role)
+        self.dashboard.set_role(role)
         self.update_role_visibility()
 
     def update_ping(self, ping_ms: object) -> None:

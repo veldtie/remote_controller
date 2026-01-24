@@ -159,11 +159,15 @@ REMOTE_CONTROLLER_SCHEMA = [
         status TEXT NOT NULL DEFAULT 'disconnected',
         connected_time INTEGER NOT NULL DEFAULT 0,
         status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        assigned_operator_id TEXT,
+        assigned_team_id TEXT,
         ip TEXT,
         region TEXT
     );
     """,
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_operator_id TEXT;",
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_team_id TEXT;",
 ]
 
 
@@ -275,6 +279,8 @@ async def _upsert_remote_client(
     session_id: str,
     status: str,
     external_ip: str | None = None,
+    assigned_team_id: str | None = None,
+    assigned_operator_id: str | None = None,
 ) -> None:
     """Insert or update a remote client record."""
     if not db_pool or not session_id:
@@ -283,12 +289,23 @@ async def _upsert_remote_client(
         async with db_pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO remote_clients (id, name, status, connected_time, ip, status_changed_at)
-                VALUES ($1, $1, $2, 0, $3, NOW())
+                INSERT INTO remote_clients (
+                    id,
+                    name,
+                    status,
+                    connected_time,
+                    ip,
+                    assigned_team_id,
+                    assigned_operator_id,
+                    status_changed_at
+                )
+                VALUES ($1, $1, $2, 0, $3, $4, $5, NOW())
                 ON CONFLICT (id)
                 DO UPDATE SET
                     status = EXCLUDED.status,
                     ip = COALESCE(EXCLUDED.ip, remote_clients.ip),
+                    assigned_team_id = COALESCE(remote_clients.assigned_team_id, EXCLUDED.assigned_team_id),
+                    assigned_operator_id = COALESCE(remote_clients.assigned_operator_id, EXCLUDED.assigned_operator_id),
                     connected_time = CASE
                         WHEN remote_clients.status IS DISTINCT FROM EXCLUDED.status THEN 0
                         ELSE remote_clients.connected_time
@@ -301,6 +318,8 @@ async def _upsert_remote_client(
                 session_id,
                 status,
                 external_ip,
+                assigned_team_id,
+                assigned_operator_id,
             )
     except Exception:
         logger.exception("Failed to upsert remote client %s", session_id)
@@ -569,6 +588,8 @@ def _require_api_token(request: Request) -> None:
 
 class RemoteClientUpdate(BaseModel):
     name: str | None = None
+    assigned_operator_id: str | None = None
+    assigned_team_id: str | None = None
 
 
 class TeamUpdate(BaseModel):
@@ -588,6 +609,11 @@ class OperatorUpsert(BaseModel):
     team: str | None = None
 
 
+class AuthRequest(BaseModel):
+    account_id: str
+    password: str
+
+
 @app.get("/api/remote-clients")
 async def list_remote_clients(request: Request) -> dict[str, list[dict[str, object]]]:
     _require_api_token(request)
@@ -596,7 +622,14 @@ async def list_remote_clients(request: Request) -> dict[str, list[dict[str, obje
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, name, status, connected_time, ip, region
+            SELECT id,
+                   name,
+                   status,
+                   connected_time,
+                   ip,
+                   region,
+                   assigned_operator_id,
+                   assigned_team_id
             FROM remote_clients
             ORDER BY id;
             """
@@ -611,17 +644,31 @@ async def update_remote_client(
     _require_api_token(request)
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database unavailable")
-    if payload.name is None:
+    updates = []
+    values: list[object] = [client_id]
+    idx = 2
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name required")
+        updates.append(f"name = ${idx}")
+        values.append(name)
+        idx += 1
+    if payload.assigned_operator_id is not None:
+        operator_value = payload.assigned_operator_id.strip()
+        updates.append(f"assigned_operator_id = ${idx}")
+        values.append(operator_value or None)
+        idx += 1
+    if payload.assigned_team_id is not None:
+        team_value = payload.assigned_team_id.strip()
+        updates.append(f"assigned_team_id = ${idx}")
+        values.append(team_value or None)
+        idx += 1
+    if not updates:
         return {"ok": True}
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Name required")
+    query = f"UPDATE remote_clients SET {', '.join(updates)} WHERE id = $1;"
     async with db_pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE remote_clients SET name = $2 WHERE id = $1;",
-            client_id,
-            name,
-        )
+        await conn.execute(query, *values)
     return {"ok": True}
 
 
@@ -722,6 +769,31 @@ async def delete_team(team_id: str, request: Request) -> dict[str, bool]:
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM teams WHERE id = $1;", team_id)
     return {"ok": True}
+
+
+@app.post("/api/auth/login")
+async def login_operator(payload: AuthRequest, request: Request) -> dict[str, dict[str, object]]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    account_id = payload.account_id.strip()
+    if not account_id or not payload.password:
+        raise HTTPException(status_code=400, detail="Missing credentials")
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, name, password, role, team FROM operators WHERE id = $1;",
+            account_id,
+        )
+    if not row or row["password"] != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {
+        "operator": {
+            "id": row["id"],
+            "name": row["name"],
+            "role": row["role"],
+            "team": row["team"],
+        }
+    }
 
 
 @app.get("/api/operators/{operator_id}")
@@ -837,6 +909,8 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                         device_token = payload.get("device_token")
                         device_session_id = payload.get("session_id") or session_id
                         client_ip = _resolve_client_ip(websocket.headers, websocket.client)
+                        team_id = payload.get("team_id") or payload.get("team")
+                        assigned_operator_id = payload.get("assigned_operator_id")
                         if device_token:
                             has_browser, _ = await registry.set_device_token(
                                 session_id, device_token
@@ -856,6 +930,8 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                             device_session_id,
                             "connected",
                             client_ip,
+                            team_id,
+                            assigned_operator_id,
                         )
                     elif role == "browser":
                         _, has_client, device_token = await registry.get_session_state(
