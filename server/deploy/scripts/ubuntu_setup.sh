@@ -23,13 +23,13 @@ apt-get update
 apt-get install -y docker.io docker-compose-plugin
 systemctl enable --now docker
 
-install -m 644 "$APP_DIR/deploy/systemd/remote-controller.service" /etc/systemd/system/remote-controller.service
-install -m 644 "$APP_DIR/deploy/systemd/remote-controller-healthcheck.service" /etc/systemd/system/remote-controller-healthcheck.service
-install -m 644 "$APP_DIR/deploy/systemd/remote-controller-healthcheck.timer" /etc/systemd/system/remote-controller-healthcheck.timer
+install -m 644 "$APP_DIR/deploy/systemd/remdesk.service" /etc/systemd/system/remdesk.service
+install -m 644 "$APP_DIR/deploy/systemd/remdesk-healthcheck.service" /etc/systemd/system/remdesk-healthcheck.service
+install -m 644 "$APP_DIR/deploy/systemd/remdesk-healthcheck.timer" /etc/systemd/system/remdesk-healthcheck.timer
 chmod +x "$APP_DIR/deploy/scripts/healthcheck.sh"
 
 systemctl daemon-reload
-systemctl enable --now remote-controller.service remote-controller-healthcheck.timer
+systemctl enable --now remdesk.service remdesk-healthcheck.timer
 
 cd "$APP_DIR"
 docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/deploy/docker/docker-compose.yml" up -d --build

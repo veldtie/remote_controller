@@ -85,6 +85,14 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         border-radius: 14px;
     }}
+    QDialog {{
+        background: {c["card"]};
+    }}
+    QFrame#ConnectionBanner {{
+        background: {c["card_alt"]};
+        border: 1px solid {c["danger"]};
+        border-radius: 12px;
+    }}
     QFrame#Card {{
         background: {c["card"]};
         border: 1px solid {c["border"]};
@@ -92,6 +100,41 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QLabel#Muted {{
         color: {c["muted"]};
+    }}
+    QLabel#StatusBadge {{
+        padding: 4px 10px;
+        border-radius: 10px;
+        font-weight: 600;
+    }}
+    QLabel#StatusBadge[status="online"] {{
+        background: {c["accent_soft"]};
+        border: 1px solid {c["accent"]};
+        color: {c["accent"]};
+    }}
+    QLabel#StatusBadge[status="offline"] {{
+        background: {c["danger"]};
+        border: 1px solid {c["danger"]};
+        color: #ffffff;
+    }}
+    QLabel#StatusBadge[status="unknown"] {{
+        background: {c["card"]};
+        border: 1px solid {c["border"]};
+        color: {c["muted"]};
+    }}
+    QLabel#OperatorBadge {{
+        padding: 4px 10px;
+        border-radius: 10px;
+        font-weight: 600;
+        background: {c["card"]};
+        border: 1px solid {c["border"]};
+        color: {c["text"]};
+    }}
+    QLabel#ConnectionBannerText {{
+        color: {c["text"]};
+    }}
+    QLabel#ConnectionBannerIcon {{
+        color: {c["danger"]};
+        font-weight: 700;
     }}
     QLabel#BrandIcon {{
         background: {c["accent_soft"]};

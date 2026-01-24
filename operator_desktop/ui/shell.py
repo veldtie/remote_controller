@@ -32,6 +32,8 @@ class MainShell(QtWidgets.QWidget):
         self.logger = logger
         self.api = api
         self.current_role = self.settings.get("role", "operator")
+        self._ping_ms = None
+        self._server_online = None
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -71,7 +73,11 @@ class MainShell(QtWidgets.QWidget):
             button.clicked.connect(lambda _, page_key=key: self.switch_page(page_key))
 
         sidebar_layout.addStretch()
-        self.sidebar_footer = QtWidgets.QLabel("Windows 10/11")
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setObjectName("StatusBadge")
+        self.status_label.setProperty("status", "unknown")
+        sidebar_layout.addWidget(self.status_label)
+        self.sidebar_footer = QtWidgets.QLabel(self.i18n.t("ping_unavailable"))
         self.sidebar_footer.setObjectName("Muted")
         sidebar_layout.addWidget(self.sidebar_footer)
 
@@ -85,9 +91,9 @@ class MainShell(QtWidgets.QWidget):
         self.page_title.setStyleSheet("font-weight: 600; font-size: 16px;")
         top_layout.addWidget(self.page_title)
         top_layout.addStretch()
-        self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("Muted")
-        top_layout.addWidget(self.status_label)
+        self.operator_label = QtWidgets.QLabel()
+        self.operator_label.setObjectName("OperatorBadge")
+        top_layout.addWidget(self.operator_label)
         self.refresh_button = make_button("", "ghost")
         self.refresh_button.clicked.connect(lambda: self.page_changed.emit("refresh"))
         top_layout.addWidget(self.refresh_button)
@@ -95,6 +101,24 @@ class MainShell(QtWidgets.QWidget):
         self.logout_button.clicked.connect(self.logout_requested.emit)
         top_layout.addWidget(self.logout_button)
         content.addWidget(self.top_bar)
+
+        self.connection_banner = QtWidgets.QFrame()
+        self.connection_banner.setObjectName("ConnectionBanner")
+        banner_layout = QtWidgets.QHBoxLayout(self.connection_banner)
+        banner_layout.setContentsMargins(12, 8, 12, 8)
+        banner_layout.setSpacing(10)
+        self.banner_icon = QtWidgets.QLabel("!")
+        self.banner_icon.setObjectName("ConnectionBannerIcon")
+        self.banner_text = QtWidgets.QLabel()
+        self.banner_text.setObjectName("ConnectionBannerText")
+        self.banner_text.setWordWrap(True)
+        self.banner_retry = make_button("", "primary")
+        self.banner_retry.clicked.connect(self.trigger_reconnect)
+        banner_layout.addWidget(self.banner_icon)
+        banner_layout.addWidget(self.banner_text, 1)
+        banner_layout.addWidget(self.banner_retry)
+        self.connection_banner.setVisible(False)
+        content.addWidget(self.connection_banner)
 
         self.stack = QtWidgets.QStackedWidget()
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
@@ -114,10 +138,13 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.storage_requested.connect(self.open_storage)
         self.dashboard.connect_requested.connect(self.toggle_connection)
         self.dashboard.delete_requested.connect(self.handle_delete_request)
+        self.dashboard.ping_updated.connect(self.update_ping)
+        self.dashboard.server_status_changed.connect(self.handle_server_status)
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
         self.settings_page.theme_changed.connect(self.emit_theme_change)
         self.settings_page.language_changed.connect(self.emit_language_change)
         self.settings_page.role_changed.connect(self.handle_role_change)
+        self.teams_page.teams_updated.connect(self.update_operator_label)
 
         self.apply_translations()
         self.update_role_visibility()
@@ -134,12 +161,16 @@ class MainShell(QtWidgets.QWidget):
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
         self.refresh_button.setText(self.i18n.t("top_refresh"))
         self.logout_button.setText(self.i18n.t("top_logout"))
-        self.status_label.setText(f'{self.i18n.t("top_status_label")}: {self.i18n.t("top_status_mock")}')
+        self.banner_text.setText(self.i18n.t("server_connection_lost"))
+        self.banner_retry.setText(self.i18n.t("server_connection_retry"))
+        self._render_status_label()
+        self.update_operator_label()
         self.dashboard.apply_translations()
         self.teams_page.apply_translations()
         self.compiler.apply_translations()
         self.settings_page.apply_translations()
         self.instructions_page.apply_translations()
+        self._render_ping_label()
         self.update_page_title()
 
     def update_page_title(self) -> None:
@@ -168,6 +199,8 @@ class MainShell(QtWidgets.QWidget):
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
         self.update_page_title()
+        if key == "teams":
+            self.teams_page.refresh_from_api()
         animate_widget(self.stack.currentWidget())
 
     def update_role_visibility(self) -> None:
@@ -218,3 +251,49 @@ class MainShell(QtWidgets.QWidget):
         self.current_role = role
         self.teams_page.set_role(role)
         self.update_role_visibility()
+
+    def update_ping(self, ping_ms: object) -> None:
+        self._ping_ms = ping_ms if isinstance(ping_ms, int) else None
+        self._render_ping_label()
+
+    def update_operator_label(self) -> None:
+        account_id = self.settings.get("account_id", "")
+        display_name = self.settings.get("operator_name", "").strip()
+        if not display_name and account_id:
+            display_name = self.teams_page.resolve_operator_name(account_id) or ""
+        if display_name:
+            label = display_name
+        elif account_id:
+            label = account_id
+        else:
+            label = self.i18n.t("operator_unknown")
+        self.operator_label.setText(f'{self.i18n.t("operator_label")}: {label}')
+
+    def _render_ping_label(self) -> None:
+        if self._ping_ms is None:
+            self.sidebar_footer.setText(self.i18n.t("ping_unavailable"))
+        else:
+            self.sidebar_footer.setText(f'{self.i18n.t("ping_label")}: {self._ping_ms} ms')
+
+    def handle_server_status(self, online: bool) -> None:
+        if self._server_online is online:
+            return
+        self._server_online = online
+        self._render_status_label()
+        self.connection_banner.setVisible(not online)
+
+    def _render_status_label(self) -> None:
+        if self._server_online is None:
+            status_key = "top_status_unknown"
+            status_value = "unknown"
+        else:
+            status_key = "top_status_online" if self._server_online else "top_status_offline"
+            status_value = "online" if self._server_online else "offline"
+        self.status_label.setText(f'{self.i18n.t("top_status_label")}: {self.i18n.t(status_key)}')
+        self.status_label.setProperty("status", status_value)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+
+    def trigger_reconnect(self) -> None:
+        self.dashboard.refresh_clients()
+        self.teams_page.refresh_from_api()

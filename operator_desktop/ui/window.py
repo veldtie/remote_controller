@@ -20,6 +20,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.i18n = I18n(self.settings)
         self.logger = EventLogger(self.settings, self.i18n)
         self.api = RemoteControllerApi()
+        self._reset_server_cache()
 
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 800)
@@ -63,11 +64,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.login_page.apply_translations()
         self.shell.apply_translations()
 
+    def _reset_server_cache(self) -> None:
+        self.settings.set("clients", [])
+        self.settings.set("teams", [])
+        self.settings.set("operators", [])
+        self.settings.save()
+
+    def _fetch_operator_profile(self, account_id: str) -> dict | None:
+        if not account_id:
+            return None
+        try:
+            operator = self.api.fetch_operator(account_id)
+        except Exception:
+            return None
+        if not operator or not operator.get("role"):
+            return None
+        return operator
+
+    def _apply_operator_profile(self, operator: dict) -> None:
+        role = operator.get("role", "operator")
+        name = operator.get("name", "")
+        self.settings.set("role", role)
+        self.settings.set("operator_name", name)
+        self.shell.settings_page.set_role_value(role)
+        self.shell.handle_role_change(role)
+        self.shell.update_operator_label()
+
     def restore_session(self) -> None:
         remember = self.settings.get("remember_me", False)
         token = self.settings.get("session_token", "")
         account = self.settings.get("account_id", "")
         if remember and token and account:
+            operator = self._fetch_operator_profile(account)
+            if not operator:
+                self.stack.setCurrentWidget(self.login_page)
+                return
+            self._apply_operator_profile(operator)
+            self.settings.save()
             self.logger.log("log_login", account=account)
             self.stack.setCurrentWidget(self.shell)
             self.shell.dashboard.refresh_logs()
@@ -78,6 +111,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not account_id or not password:
             self.login_page.status_label.setText(self.i18n.t("login_error_empty"))
             return
+        operator = self._fetch_operator_profile(account_id)
+        if not operator:
+            self.login_page.status_label.setText(self.i18n.t("login_error_failed"))
+            return
         if DEBUG_LOG_CREDENTIALS:
             print(f"TEST LOGIN -> account_id: {account_id} password: {password}")
         token = f"session-{uuid.uuid4().hex[:10]}"
@@ -87,6 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
         recent = self.settings.get("recent_account_ids", [])
         recent.append(account_id)
         self.settings.set("recent_account_ids", list(dict.fromkeys(recent))[-10:])
+        self._apply_operator_profile(operator)
         self.settings.save()
         self.logger.log("log_login", account=account_id)
         self.stack.setCurrentWidget(self.shell)

@@ -1,0 +1,10 @@
+[Unit]
+Description=RemDesk healthcheck timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=remdesk-healthcheck.service
+
+[Install]
+WantedBy=timers.target

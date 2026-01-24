@@ -576,6 +576,11 @@ class TeamUpdate(BaseModel):
     activity: bool | None = None
 
 
+class TeamCreate(BaseModel):
+    name: str
+    activity: bool | None = None
+
+
 class OperatorUpsert(BaseModel):
     name: str
     password: str
@@ -687,6 +692,51 @@ async def update_team(
             payload.activity,
         )
     return {"ok": True}
+
+
+@app.post("/api/teams")
+async def create_team(payload: TeamCreate, request: Request) -> dict[str, dict[str, object]]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    activity = payload.activity if payload.activity is not None else True
+    team_id = f"team-{secrets.token_hex(4)}"
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO teams (id, name, activity) VALUES ($1, $2, $3);",
+            team_id,
+            name,
+            activity,
+        )
+    return {"team": {"id": team_id, "name": name, "activity": activity}}
+
+
+@app.delete("/api/teams/{team_id}")
+async def delete_team(team_id: str, request: Request) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM teams WHERE id = $1;", team_id)
+    return {"ok": True}
+
+
+@app.get("/api/operators/{operator_id}")
+async def get_operator(operator_id: str, request: Request) -> dict[str, dict[str, object]]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, name, role, team FROM operators WHERE id = $1;",
+            operator_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    return {"operator": dict(row)}
 
 
 @app.put("/api/operators/{operator_id}")

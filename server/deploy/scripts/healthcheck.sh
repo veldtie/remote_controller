@@ -3,7 +3,7 @@ set -euo pipefail
 
 project_dir="/opt/remote_controller/server"
 compose_file="$project_dir/deploy/docker/docker-compose.yml"
-compose_cmd=(/usr/bin/docker compose --project-directory "$project_dir" -f "$compose_file")
+compose_cmd=(/usr/bin/docker compose --env-file "$project_dir/.env" -f "$compose_file")
 cd "$project_dir"
 
 container_id=$("${compose_cmd[@]}" ps -q signaling 2>/dev/null || true)

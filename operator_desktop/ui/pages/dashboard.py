@@ -1,10 +1,10 @@
+import time
 from datetime import datetime
 from typing import Dict, List
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.api import RemoteControllerApi
-from ...core.data import DEFAULT_CLIENTS, deep_copy
 from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
@@ -34,6 +34,8 @@ class DashboardPage(QtWidgets.QWidget):
     connect_requested = QtCore.pyqtSignal(str, bool)
     extra_action_requested = QtCore.pyqtSignal(str, str)
     delete_requested = QtCore.pyqtSignal(str)
+    ping_updated = QtCore.pyqtSignal(object)
+    server_status_changed = QtCore.pyqtSignal(bool)
 
     def __init__(
         self,
@@ -47,11 +49,14 @@ class DashboardPage(QtWidgets.QWidget):
         self.settings = settings
         self.logger = logger
         self.api = api
-        self.clients = deep_copy(settings.get("clients", DEFAULT_CLIENTS))
+        self.clients = []
+        self.settings.set("clients", [])
         self.last_sync = None
         self.theme = THEMES.get(settings.get("theme", "dark"), THEMES["dark"])
         self._fetch_in_progress = False
         self._client_fetch_worker: ClientFetchWorker | None = None
+        self._fetch_started_at: float | None = None
+        self._server_online: bool | None = None
         self._ensure_client_state()
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -177,6 +182,7 @@ class DashboardPage(QtWidgets.QWidget):
         if not self.api or self._fetch_in_progress:
             return
         self._fetch_in_progress = True
+        self._fetch_started_at = time.monotonic()
         worker = ClientFetchWorker(self.api)
         worker.fetched.connect(self._handle_client_fetch)
         worker.failed.connect(self._handle_client_fetch_error)
@@ -189,14 +195,33 @@ class DashboardPage(QtWidgets.QWidget):
         self.clients = merged
         self.settings.set("clients", self.clients)
         self.settings.save()
+        if self._fetch_started_at is not None:
+            latency_ms = int((time.monotonic() - self._fetch_started_at) * 1000)
+        else:
+            latency_ms = None
+        if latency_ms is not None:
+            self.ping_updated.emit(latency_ms)
+        self._set_server_online(True)
         self.render_clients(self.clients)
 
     def _handle_client_fetch_error(self, message: str) -> None:
+        self.clients = []
+        self.settings.set("clients", self.clients)
+        self.settings.save()
+        self.ping_updated.emit(None)
+        self._set_server_online(False)
         self.render_clients(self.clients)
 
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
         self._client_fetch_worker = None
+        self._fetch_started_at = None
+
+    def _set_server_online(self, online: bool) -> None:
+        if self._server_online is online:
+            return
+        self._server_online = online
+        self.server_status_changed.emit(online)
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:
@@ -514,15 +539,14 @@ class DashboardPage(QtWidgets.QWidget):
         client = next((c for c in self.clients if c["id"] == client_id), None)
         if client is None:
             return
-        name, ok = QtWidgets.QInputDialog.getText(
-            self,
-            self.i18n.t("dialog_edit_name_title"),
-            self.i18n.t("dialog_edit_name_label"),
-            text=client.get("name", ""),
-        )
-        if not ok:
+        dialog = QtWidgets.QInputDialog(self)
+        dialog.setOption(QtWidgets.QInputDialog.Option.DontUseNativeDialog, True)
+        dialog.setWindowTitle(self.i18n.t("dialog_edit_name_title"))
+        dialog.setLabelText(self.i18n.t("dialog_edit_name_label"))
+        dialog.setTextValue(client.get("name", ""))
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
-        name = name.strip()
+        name = dialog.textValue().strip()
         if not name:
             return
         client["name"] = name

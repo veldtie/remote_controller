@@ -3,7 +3,6 @@ from typing import Dict, List, Optional
 from PyQt6 import QtCore, QtWidgets
 
 from ...core.api import RemoteControllerApi
-from ...core.data import DEFAULT_TEAMS, deep_copy
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import Theme, THEMES
@@ -12,6 +11,8 @@ from ..dialogs import AddMemberDialog
 
 
 class TeamsPage(QtWidgets.QWidget):
+    teams_updated = QtCore.pyqtSignal()
+
     def __init__(
         self,
         i18n: I18n,
@@ -22,7 +23,8 @@ class TeamsPage(QtWidgets.QWidget):
         self.i18n = i18n
         self.settings = settings
         self.api = api
-        self.teams = deep_copy(settings.get("teams", DEFAULT_TEAMS))
+        self.teams = []
+        self.settings.set("teams", [])
         self.current_role = settings.get("role", "operator")
         self.current_team_id = None
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
@@ -49,6 +51,15 @@ class TeamsPage(QtWidgets.QWidget):
         self.list_title = QtWidgets.QLabel()
         self.list_title.setStyleSheet("font-weight: 600;")
         list_layout.addWidget(self.list_title)
+        team_actions = QtWidgets.QHBoxLayout()
+        self.add_team_button = make_button("", "ghost")
+        self.add_team_button.clicked.connect(self.create_team)
+        self.delete_team_button = make_button("", "danger")
+        self.delete_team_button.clicked.connect(self.delete_team)
+        team_actions.addWidget(self.add_team_button)
+        team_actions.addWidget(self.delete_team_button)
+        team_actions.addStretch()
+        list_layout.addLayout(team_actions)
         self.team_list = QtWidgets.QListWidget()
         self.team_list.itemSelectionChanged.connect(self.on_team_selected)
         list_layout.addWidget(self.team_list, 1)
@@ -143,11 +154,21 @@ class TeamsPage(QtWidgets.QWidget):
         self.teams = api_teams
         self.settings.set("teams", self.teams)
         self.settings.save()
+        self.teams_updated.emit()
+
+    def refresh_from_api(self, select_team_id: Optional[str] = None) -> None:
+        self._load_teams_from_api()
+        if select_team_id:
+            self.current_team_id = select_team_id
+        self.populate_team_list(select_team_id or self.current_team_id)
+        self.render_team_details()
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("teams_title"))
         self.subtitle_label.setText(self.i18n.t("teams_subtitle"))
         self.list_title.setText(self.i18n.t("teams_list_title"))
+        self.add_team_button.setText(self.i18n.t("team_add"))
+        self.delete_team_button.setText(self.i18n.t("team_remove"))
         self.placeholder_label.setText(self.i18n.t("teams_select_hint"))
         self.team_name_label.setText(self.i18n.t("team_name"))
         self.team_name_input.setPlaceholderText(self.i18n.t("team_name_placeholder"))
@@ -175,10 +196,14 @@ class TeamsPage(QtWidgets.QWidget):
 
     def update_role_controls(self) -> None:
         is_moderator = self.current_role == "moderator"
-        self.team_name_input.setReadOnly(not is_moderator)
-        self.renew_button.setEnabled(is_moderator)
-        self.add_member_button.setEnabled(is_moderator)
-        self.remove_member_button.setEnabled(is_moderator)
+        allow_changes = is_moderator and self.api is not None
+        self.team_name_input.setReadOnly(not allow_changes)
+        self.renew_button.setEnabled(allow_changes)
+        self.add_member_button.setEnabled(allow_changes)
+        self.remove_member_button.setEnabled(allow_changes)
+        self.add_team_button.setVisible(is_moderator)
+        self.delete_team_button.setVisible(is_moderator)
+        self.delete_team_button.setEnabled(allow_changes and self.selected_team() is not None)
 
     def visible_teams(self) -> List[Dict]:
         if self.current_role == "moderator":
@@ -207,6 +232,8 @@ class TeamsPage(QtWidgets.QWidget):
 
     def render_team_details(self) -> None:
         team = self.selected_team()
+        allow_changes = self.current_role == "moderator" and self.api is not None
+        self.delete_team_button.setEnabled(allow_changes and team is not None)
         if team is None:
             self.details_stack.setCurrentIndex(0)
             return
@@ -271,6 +298,15 @@ class TeamsPage(QtWidgets.QWidget):
             self.members_table.setItem(row, 1, tag_item)
             self.members_table.setItem(row, 2, clients_item)
 
+    def resolve_operator_name(self, account_id: str) -> Optional[str]:
+        if not account_id:
+            return None
+        for team in self.teams:
+            for member in team.get("members", []):
+                if member.get("account_id") == account_id:
+                    return member.get("name")
+        return None
+
     def commit_team_name(self) -> None:
         if self.current_role != "moderator":
             return
@@ -280,14 +316,16 @@ class TeamsPage(QtWidgets.QWidget):
         name = self.team_name_input.text().strip()
         if not name:
             return
-        team["name"] = name
-        if self.api:
-            try:
-                self.api.update_team_name(team["id"], name)
-            except Exception:
-                pass
-        self.save_teams()
-        self.populate_team_list(team["id"])
+        if not self.api:
+            return
+        try:
+            self.api.update_team_name(team["id"], name)
+        except Exception:
+            self.team_name_input.blockSignals(True)
+            self.team_name_input.setText(team.get("name", ""))
+            self.team_name_input.blockSignals(False)
+            return
+        self.refresh_from_api(team["id"])
 
     def renew_subscription(self) -> None:
         if self.current_role != "moderator":
@@ -295,14 +333,14 @@ class TeamsPage(QtWidgets.QWidget):
         team = self.selected_team()
         if team is None:
             return
-        team["activity"] = not team.get("activity", True)
-        self.save_teams()
-        if self.api:
-            try:
-                self.api.update_team_activity(team["id"], team["activity"])
-            except Exception:
-                pass
-        self.update_subscription_display(team)
+        if not self.api:
+            return
+        new_activity = not team.get("activity", True)
+        try:
+            self.api.update_team_activity(team["id"], new_activity)
+        except Exception:
+            return
+        self.refresh_from_api(team["id"])
 
     def add_member(self) -> None:
         if self.current_role != "moderator":
@@ -316,21 +354,19 @@ class TeamsPage(QtWidgets.QWidget):
         data = dialog.member_data()
         if not data["name"] or not data["account_id"] or not data["password"]:
             return
-        team.setdefault("members", []).append(data)
-        if self.api:
-            try:
-                self.api.upsert_operator(
-                    data["account_id"],
-                    data["name"],
-                    data["password"],
-                    data["tag"],
-                    team["id"],
-                )
-            except Exception:
-                pass
-        self.save_teams()
-        self.render_members(team)
-        self.populate_team_list(team["id"])
+        if not self.api:
+            return
+        try:
+            self.api.upsert_operator(
+                data["account_id"],
+                data["name"],
+                data["password"],
+                data["tag"],
+                team["id"],
+            )
+        except Exception:
+            return
+        self.refresh_from_api(team["id"])
 
     def remove_member(self) -> None:
         if self.current_role != "moderator":
@@ -339,17 +375,87 @@ class TeamsPage(QtWidgets.QWidget):
         if team is None:
             return
         row = self.members_table.currentRow()
-        if row < 0 or row >= len(team.get("members", [])):
+        members = team.get("members", [])
+        if row < 0 or row >= len(members):
             return
-        member = team["members"].pop(row)
-        if self.api:
-            try:
-                self.api.delete_operator(member.get("account_id", ""))
-            except Exception:
-                pass
-        self.save_teams()
-        self.render_members(team)
-        self.populate_team_list(team["id"])
+        member = members[row]
+        account_id = member.get("account_id")
+        if not account_id:
+            return
+        if not self.api:
+            return
+        try:
+            self.api.delete_operator(account_id)
+        except Exception:
+            return
+        self.refresh_from_api(team["id"])
+
+    def create_team(self) -> None:
+        if self.current_role != "moderator" or not self.api:
+            return
+        dialog = QtWidgets.QInputDialog(self)
+        dialog.setOption(QtWidgets.QInputDialog.Option.DontUseNativeDialog, True)
+        dialog.setWindowTitle(self.i18n.t("team_add_title"))
+        dialog.setLabelText(self.i18n.t("team_add_label"))
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        name = dialog.textValue().strip()
+        if not name:
+            return
+        try:
+            team_id = self.api.create_team(name)
+        except Exception:
+            return
+        self.refresh_from_api(team_id or None)
+
+    def delete_team(self) -> None:
+        if self.current_role != "moderator" or not self.api:
+            return
+        team = self.selected_team()
+        if team is None:
+            return
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setOption(QtWidgets.QMessageBox.Option.DontUseNativeDialog, True)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(self.i18n.t("team_remove_title"))
+        dialog.setText(self.i18n.t("team_remove_body", name=team.get("name", "")))
+        dialog.setStyleSheet(
+            "QMessageBox {"
+            f"background: {self.theme.colors['card']};"
+            f"color: {self.theme.colors['text']};"
+            "}"
+            "QLabel {"
+            f"color: {self.theme.colors['text']};"
+            "}"
+            "QPushButton {"
+            f"background: {self.theme.colors['card_alt']};"
+            f"border: 1px solid {self.theme.colors['border']};"
+            "border-radius: 8px;"
+            "padding: 6px 12px;"
+            "}"
+            "QPushButton:hover {"
+            f"border-color: {self.theme.colors['accent']};"
+            "}"
+        )
+        confirm = dialog.addButton(
+            self.i18n.t("team_remove_confirm"),
+            QtWidgets.QMessageBox.ButtonRole.DestructiveRole,
+        )
+        dialog.addButton(
+            self.i18n.t("team_remove_cancel"),
+            QtWidgets.QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(confirm)
+        dialog.exec()
+        if dialog.clickedButton() != confirm:
+            return
+        try:
+            self.api.delete_team(team["id"])
+        except Exception:
+            return
+        if self.current_team_id == team["id"]:
+            self.current_team_id = None
+        self.refresh_from_api()
 
     def save_teams(self) -> None:
         self.settings.set("teams", self.teams)

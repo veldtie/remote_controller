@@ -40,6 +40,7 @@ class SettingsStore:
     def clear_user_data(self) -> None:
         self.data["remember_me"] = False
         self.data["account_id"] = ""
+        self.data["operator_name"] = ""
         self.data["session_token"] = ""
         self.data["recent_account_ids"] = []
         self.data["session_logs"] = []

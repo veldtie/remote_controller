@@ -4,8 +4,8 @@ from typing import Any
 import requests
 
 
-DEFAULT_API_URL = os.getenv("RC_API_URL", "http://localhost:8000").rstrip("/")
-DEFAULT_API_TOKEN = os.getenv("RC_API_TOKEN", "").strip()
+DEFAULT_API_URL = os.getenv("RC_API_URL", "http://79.137.194.213").rstrip("/")
+DEFAULT_API_TOKEN = os.getenv("RC_API_TOKEN", "Gar8tEadNew0l-DNgY36moO3o_3xRsmF7yhrgRSOMIA").strip()
 DEFAULT_TIMEOUT = float(os.getenv("RC_API_TIMEOUT", "3"))
 
 
@@ -54,11 +54,26 @@ class RemoteControllerApi:
         payload = self._request("GET", "/api/teams") or {}
         return list(payload.get("teams", []))
 
+    def fetch_operator(self, operator_id: str) -> dict[str, Any]:
+        payload = self._request("GET", f"/api/operators/{operator_id}") or {}
+        return dict(payload.get("operator") or {})
+
+    def create_team(self, name: str, activity: bool | None = None) -> str:
+        payload: dict[str, Any] = {"name": name}
+        if activity is not None:
+            payload["activity"] = activity
+        response = self._request("POST", "/api/teams", payload) or {}
+        team = response.get("team", {})
+        return team.get("id", "")
+
     def update_team_name(self, team_id: str, name: str) -> None:
         self._request("PATCH", f"/api/teams/{team_id}", {"name": name})
 
     def update_team_activity(self, team_id: str, activity: bool) -> None:
         self._request("PATCH", f"/api/teams/{team_id}", {"activity": activity})
+
+    def delete_team(self, team_id: str) -> None:
+        self._request("DELETE", f"/api/teams/{team_id}")
 
     def upsert_operator(
         self,

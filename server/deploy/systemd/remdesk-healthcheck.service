@@ -1,5 +1,5 @@
 [Unit]
-Description=Remote Controller healthcheck
+Description=RemDesk healthcheck
 
 [Service]
 Type=oneshot

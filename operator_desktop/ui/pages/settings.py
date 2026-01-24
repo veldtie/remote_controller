@@ -76,6 +76,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.role_combo.addItem(self.i18n.t("settings_role_operator"), "operator")
         self.role_combo.addItem(self.i18n.t("settings_role_administrator"), "administrator")
         self.role_combo.addItem(self.i18n.t("settings_role_moderator"), "moderator")
+        self.role_combo.setEnabled(False)
         account_layout.addWidget(self.role_label)
         account_layout.addWidget(self.role_combo)
         self.logout_button = make_button("", "danger")
@@ -127,6 +128,14 @@ class SettingsPage(QtWidgets.QWidget):
         role_index = self.role_combo.findData(role)
         if role_index >= 0:
             self.role_combo.setCurrentIndex(role_index)
+
+    def set_role_value(self, role: str) -> None:
+        role_index = self.role_combo.findData(role)
+        if role_index < 0:
+            return
+        self.role_combo.blockSignals(True)
+        self.role_combo.setCurrentIndex(role_index)
+        self.role_combo.blockSignals(False)
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("settings_title"))
