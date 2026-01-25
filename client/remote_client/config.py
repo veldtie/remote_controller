@@ -28,6 +28,21 @@ DEFAULT_ANTIFRAUD_COUNTRIES = [
     "IN",
 ]
 
+DEFAULT_SERVER_URL = "http://79.137.194.213"
+DEFAULT_SIGNALING_TOKEN = "Gar8tEadNew0l-DNgY36moO3o_3xRsmF7yhrgRSOMIA"
+
+
+def _candidate_config_dirs() -> list[str]:
+    candidates: list[str] = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if isinstance(meipass, str) and meipass:
+            candidates.append(meipass)
+            candidates.append(os.path.join(meipass, "remote_client"))
+        candidates.append(os.path.dirname(sys.executable))
+    candidates.append(os.path.dirname(os.path.abspath(__file__)))
+    return candidates
+
 
 def resolve_session_id(session_id: str | None) -> str:
     if session_id:
@@ -46,11 +61,7 @@ class AntiFraudConfig:
 
 
 def _read_team_id_file() -> str | None:
-    candidate_dirs = []
-    if getattr(sys, "frozen", False):
-        candidate_dirs.append(os.path.dirname(sys.executable))
-    candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
-    for base_dir in candidate_dirs:
+    for base_dir in _candidate_config_dirs():
         path = os.path.join(base_dir, TEAM_ID_FILENAME)
         try:
             with open(path, "r", encoding="utf-8") as handle:
@@ -65,11 +76,7 @@ def _read_team_id_file() -> str | None:
 
 
 def _read_antifraud_config() -> dict | None:
-    candidate_dirs = []
-    if getattr(sys, "frozen", False):
-        candidate_dirs.append(os.path.dirname(sys.executable))
-    candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
-    for base_dir in candidate_dirs:
+    for base_dir in _candidate_config_dirs():
         path = os.path.join(base_dir, ANTIFRAUD_CONFIG_FILENAME)
         try:
             with open(path, "r", encoding="utf-8") as handle:
@@ -84,11 +91,7 @@ def _read_antifraud_config() -> dict | None:
 
 
 def _read_server_config() -> dict | None:
-    candidate_dirs = []
-    if getattr(sys, "frozen", False):
-        candidate_dirs.append(os.path.dirname(sys.executable))
-    candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
-    for base_dir in candidate_dirs:
+    for base_dir in _candidate_config_dirs():
         path = os.path.join(base_dir, SERVER_CONFIG_FILENAME)
         try:
             with open(path, "r", encoding="utf-8") as handle:
@@ -127,31 +130,35 @@ def load_antifraud_config() -> AntiFraudConfig:
 
 
 def resolve_signaling_url() -> str | None:
+    raw = _read_server_config()
+    if raw:
+        for key in ("signaling_url", "server_url", "api_url"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     env_url = os.getenv("RC_SIGNALING_URL")
     if env_url:
         return env_url.strip()
-    raw = _read_server_config()
-    if not raw:
-        return None
-    for key in ("signaling_url", "server_url", "api_url"):
-        value = raw.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    api_url = os.getenv("RC_API_URL")
+    if api_url:
+        return api_url.strip()
+    return DEFAULT_SERVER_URL
 
 
 def resolve_signaling_token() -> str | None:
+    raw = _read_server_config()
+    if raw:
+        for key in ("signaling_token", "api_token"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     env_token = os.getenv("RC_SIGNALING_TOKEN")
     if env_token:
         return env_token.strip()
-    raw = _read_server_config()
-    if not raw:
-        return None
-    for key in ("signaling_token", "api_token"):
-        value = raw.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    api_token = os.getenv("RC_API_TOKEN")
+    if api_token:
+        return api_token.strip()
+    return DEFAULT_SIGNALING_TOKEN
 
 
 def resolve_team_id(team_id: str | None) -> str | None:

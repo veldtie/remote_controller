@@ -5,7 +5,7 @@ a = Analysis(
     ['client.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_assets_rvkccbfd\\remote_client\\rc_server.json', 'remote_client')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

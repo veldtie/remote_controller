@@ -11,7 +11,16 @@ class I18n:
     def set_language(self, lang: str) -> None:
         self.settings.set("language", lang)
 
-    def t(self, key: str, **kwargs) -> str:
+    def t(self, key: str | None, **kwargs) -> str:
+        if key is None:
+            return ""
         lang = self.language()
-        text = TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
-        return text.format(**kwargs)
+        text = TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key)
+        if text is None:
+            text = key
+        if not isinstance(text, str):
+            text = str(text)
+        try:
+            return text.format(**kwargs)
+        except Exception:
+            return text
