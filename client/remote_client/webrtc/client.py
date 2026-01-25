@@ -93,6 +93,7 @@ class WebRTCClient:
         file_service: FileService,
         device_token: str | None = None,
         team_id: str | None = None,
+        client_config: dict | None = None,
         e2ee: E2EEContext | None = None,
     ) -> None:
         self._session_id = session_id
@@ -101,6 +102,7 @@ class WebRTCClient:
         self._file_service = file_service
         self._device_token = device_token
         self._team_id = team_id
+        self._client_config = client_config
         self._e2ee = e2ee
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
 
@@ -171,6 +173,8 @@ class WebRTCClient:
                 register_payload["device_token"] = self._device_token
             if self._team_id:
                 register_payload["team_id"] = self._team_id
+            if self._client_config:
+                register_payload["client_config"] = self._client_config
             await self._signaling.send(register_payload)
             offer_payload = await self._await_offer()
             if offer_payload is None:

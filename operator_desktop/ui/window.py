@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -23,6 +24,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._reset_server_cache()
 
         self.setWindowTitle(APP_NAME)
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "icons" / "icon.ico"
+        if icon_path.exists():
+            icon = QtGui.QIcon(str(icon_path))
+            self.setWindowIcon(icon)
+            app = QtWidgets.QApplication.instance()
+            if app:
+                app.setWindowIcon(icon)
         self.resize(1280, 800)
 
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])

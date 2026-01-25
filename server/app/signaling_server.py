@@ -162,12 +162,14 @@ REMOTE_CONTROLLER_SCHEMA = [
         assigned_operator_id TEXT,
         assigned_team_id TEXT,
         ip TEXT,
-        region TEXT
+        region TEXT,
+        client_config JSONB
     );
     """,
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_operator_id TEXT;",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_team_id TEXT;",
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS client_config JSONB;",
 ]
 
 
@@ -281,10 +283,12 @@ async def _upsert_remote_client(
     external_ip: str | None = None,
     assigned_team_id: str | None = None,
     assigned_operator_id: str | None = None,
+    client_config: dict | None = None,
 ) -> None:
     """Insert or update a remote client record."""
     if not db_pool or not session_id:
         return
+    config_payload = json.dumps(client_config) if client_config is not None else None
     try:
         async with db_pool.acquire() as conn:
             await conn.execute(
@@ -297,15 +301,17 @@ async def _upsert_remote_client(
                     ip,
                     assigned_team_id,
                     assigned_operator_id,
-                    status_changed_at
+                    status_changed_at,
+                    client_config
                 )
-                VALUES ($1, $1, $2, 0, $3, $4, $5, NOW())
+                VALUES ($1, $1, $2, 0, $3, $4, $5, NOW(), $6::jsonb)
                 ON CONFLICT (id)
                 DO UPDATE SET
                     status = EXCLUDED.status,
                     ip = COALESCE(EXCLUDED.ip, remote_clients.ip),
                     assigned_team_id = COALESCE(remote_clients.assigned_team_id, EXCLUDED.assigned_team_id),
                     assigned_operator_id = COALESCE(remote_clients.assigned_operator_id, EXCLUDED.assigned_operator_id),
+                    client_config = COALESCE(EXCLUDED.client_config, remote_clients.client_config),
                     connected_time = CASE
                         WHEN remote_clients.status IS DISTINCT FROM EXCLUDED.status THEN 0
                         ELSE remote_clients.connected_time
@@ -320,6 +326,7 @@ async def _upsert_remote_client(
                 external_ip,
                 assigned_team_id,
                 assigned_operator_id,
+                config_payload,
             )
     except Exception:
         logger.exception("Failed to upsert remote client %s", session_id)
@@ -629,7 +636,8 @@ async def list_remote_clients(request: Request) -> dict[str, list[dict[str, obje
                    ip,
                    region,
                    assigned_operator_id,
-                   assigned_team_id
+                   assigned_team_id,
+                   client_config
             FROM remote_clients
             ORDER BY id;
             """
@@ -911,6 +919,9 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                         client_ip = _resolve_client_ip(websocket.headers, websocket.client)
                         team_id = payload.get("team_id") or payload.get("team")
                         assigned_operator_id = payload.get("assigned_operator_id")
+                        client_config = payload.get("client_config")
+                        if client_config is not None and not isinstance(client_config, dict):
+                            client_config = None
                         if device_token:
                             has_browser, _ = await registry.set_device_token(
                                 session_id, device_token
@@ -932,6 +943,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                             client_ip,
                             team_id,
                             assigned_operator_id,
+                            client_config,
                         )
                     elif role == "browser":
                         _, has_client, device_token = await registry.get_session_state(

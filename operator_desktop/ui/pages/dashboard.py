@@ -245,6 +245,9 @@ class DashboardPage(QtWidgets.QWidget):
             assigned_team_id = api_client.get("assigned_team_id")
             if assigned_team_id is None:
                 assigned_team_id = local.get("assigned_team_id", "")
+            client_config = api_client.get("client_config")
+            if client_config is None:
+                client_config = local.get("client_config")
             merged_client = {
                 "id": client_id,
                 "name": api_client.get("name", ""),
@@ -255,6 +258,7 @@ class DashboardPage(QtWidgets.QWidget):
                 "connected": local.get("connected", False),
                 "assigned_operator_id": assigned_operator_id or "",
                 "assigned_team_id": assigned_team_id or "",
+                "client_config": client_config,
             }
             merged.append(merged_client)
         return merged

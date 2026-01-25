@@ -6,7 +6,7 @@ from ..core.api import RemoteControllerApi
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
-from .common import animate_widget, make_button
+from .common import ICON_DIR, animate_widget, make_button
 from .dialogs import StorageDialog
 from .pages.compiler import CompilerPage
 from .pages.dashboard import DashboardPage
@@ -49,7 +49,7 @@ class MainShell(QtWidgets.QWidget):
         brand_layout = QtWidgets.QVBoxLayout(brand)
         self.brand_icon = QtWidgets.QLabel("RC")
         self.brand_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.brand_icon.setFixedSize(56, 56)
+        self.brand_icon.setFixedSize(72, 72)
         self.brand_icon.setObjectName("BrandIcon")
         self.brand_title = QtWidgets.QLabel()
         self.brand_title.setStyleSheet("font-weight: 700; font-size: 16px;")
@@ -59,6 +59,7 @@ class MainShell(QtWidgets.QWidget):
         brand_layout.addWidget(self.brand_title)
         brand_layout.addWidget(self.brand_subtitle)
         sidebar_layout.addWidget(brand)
+        self._apply_brand_icon()
 
         self.nav_buttons = {}
         self.nav_group = QtWidgets.QButtonGroup(self)
@@ -152,8 +153,6 @@ class MainShell(QtWidgets.QWidget):
         self.switch_page("main")
 
     def apply_translations(self) -> None:
-        self.brand_title.setText(self.i18n.t("app_title"))
-        self.brand_subtitle.setText(self.i18n.t("app_subtitle"))
         self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
         self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
         self.nav_buttons["compiler"].setText(self.i18n.t("nav_compiler"))
@@ -164,6 +163,7 @@ class MainShell(QtWidgets.QWidget):
         self.banner_text.setText(self.i18n.t("server_connection_lost"))
         self.banner_retry.setText(self.i18n.t("server_connection_retry"))
         self._render_status_label()
+        self.update_brand_header()
         self.update_operator_label()
         self.dashboard.apply_translations()
         self.teams_page.apply_translations()
@@ -173,7 +173,31 @@ class MainShell(QtWidgets.QWidget):
         self._render_ping_label()
         self.update_page_title()
 
+    def _apply_brand_icon(self) -> None:
+        icon_path = ICON_DIR / "logo.svg"
+        if not icon_path.exists():
+            return
+        pixmap = QtGui.QPixmap(str(icon_path))
+        if pixmap.isNull():
+            return
+        size = int(self.brand_icon.width() * 0.9) or 32
+        pixmap = pixmap.scaled(
+            size,
+            size,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        self.brand_icon.setPixmap(pixmap)
+        self.brand_icon.setText("")
+
+    def update_brand_header(self) -> None:
+        self.brand_title.setText("RemDesk")
+        self.brand_subtitle.setText(self._current_page_label())
+
     def update_page_title(self) -> None:
+        self.page_title.setText(self._resolve_team_label())
+
+    def _current_page_label(self) -> str:
         index = self.stack.currentIndex()
         titles = [
             self.i18n.t("nav_main"),
@@ -182,7 +206,18 @@ class MainShell(QtWidgets.QWidget):
             self.i18n.t("nav_settings"),
             self.i18n.t("nav_instructions"),
         ]
-        self.page_title.setText(titles[index])
+        if 0 <= index < len(titles):
+            return titles[index]
+        return ""
+
+    def _resolve_team_label(self) -> str:
+        team_id = self.settings.get("operator_team_id", "")
+        if not team_id:
+            return self.i18n.t("unassigned_label")
+        for team in self.settings.get("teams", []):
+            if team.get("id") == team_id:
+                return team.get("name") or team_id
+        return team_id
 
     def switch_page(self, key: str) -> None:
         if key in self.nav_buttons:
@@ -196,6 +231,7 @@ class MainShell(QtWidgets.QWidget):
         }
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
+        self.update_brand_header()
         self.update_page_title()
         if key == "teams":
             self.teams_page.refresh_from_api()
@@ -263,7 +299,14 @@ class MainShell(QtWidgets.QWidget):
             label = account_id
         else:
             label = self.i18n.t("operator_unknown")
-        self.operator_label.setText(f'{self.i18n.t("operator_label")}: {label}')
+        role = self.settings.get("role", "operator")
+        role_key = f"settings_role_{role}"
+        role_label = self.i18n.t(role_key)
+        if role_label == role_key:
+            role_label = role
+        team_label = self._resolve_team_label()
+        self.operator_label.setText(f"{label} | {team_label} | {role_label}")
+        self.update_page_title()
 
     def _render_ping_label(self) -> None:
         if self._ping_ms is None:

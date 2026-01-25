@@ -2,6 +2,7 @@ import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,9 @@ class BuildOptions:
     entrypoint: Path
     output_name: str
     team_id: str
+    antifraud_vm: bool
+    antifraud_region: bool
+    antifraud_countries: list[str]
     output_dir: Path
     icon_path: Optional[Path]
     mode: str
@@ -69,22 +73,32 @@ class BuilderWorker(QtCore.QThread):
                 self.log_line.emit(line.rstrip())
         exit_code = process.wait()
         if exit_code == 0:
-            self._persist_team_id_file()
+            self._persist_build_metadata()
             output = str(self.options.output_dir / f"{self.options.output_name}.exe")
             self.finished.emit(True, output, "")
         else:
             self.finished.emit(False, "", "failed")
 
-    def _persist_team_id_file(self) -> None:
-        team_id = (self.options.team_id or "").strip()
+    def _resolve_output_dir(self) -> Path | None:
         output_dir = self.options.output_dir
         if self.options.mode == "onedir":
             output_dir = output_dir / self.options.output_name
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
-            self.log_line.emit("Failed to prepare the team id directory.")
+            self.log_line.emit("Failed to prepare the build directory.")
+            return None
+        return output_dir
+
+    def _persist_build_metadata(self) -> None:
+        output_dir = self._resolve_output_dir()
+        if not output_dir:
             return
+        self._persist_team_id_file(output_dir)
+        self._persist_antifraud_config(output_dir)
+
+    def _persist_team_id_file(self, output_dir: Path) -> None:
+        team_id = (self.options.team_id or "").strip()
         team_file = output_dir / "rc_team_id.txt"
         if not team_id:
             try:
@@ -100,6 +114,19 @@ class BuilderWorker(QtCore.QThread):
         except OSError:
             self.log_line.emit("Failed to write the team id file.")
 
+    def _persist_antifraud_config(self, output_dir: Path) -> None:
+        payload = {
+            "vm_enabled": bool(self.options.antifraud_vm),
+            "region_enabled": bool(self.options.antifraud_region),
+            "countries": list(self.options.antifraud_countries),
+        }
+        config_file = output_dir / "rc_antifraud.json"
+        try:
+            config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self.log_line.emit(f"Wrote anti-fraud config to {config_file}.")
+        except OSError:
+            self.log_line.emit("Failed to write the anti-fraud config file.")
+
 
 class CompilerPage(QtWidgets.QWidget):
     def __init__(self, i18n: I18n, settings: SettingsStore, logger: EventLogger):
@@ -108,6 +135,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.settings = settings
         self.logger = logger
         self.worker: Optional[BuilderWorker] = None
+        self.region_actions: dict[str, QtGui.QAction] = {}
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -140,8 +168,13 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_name_label = QtWidgets.QLabel()
         self.output_name_input = QtWidgets.QLineEdit()
 
-        self.team_id_label = QtWidgets.QLabel()
-        self.team_id_input = QtWidgets.QLineEdit()
+        self.antifraud_label = QtWidgets.QLabel()
+        self.vm_check = QtWidgets.QCheckBox()
+        self.region_check = QtWidgets.QCheckBox()
+        self.region_button = make_button("", "ghost")
+        self.region_menu = QtWidgets.QMenu(self.region_button)
+        self.region_button.setMenu(self.region_menu)
+        self.region_check.toggled.connect(self._update_region_visibility)
 
         self.output_dir_label = QtWidgets.QLabel()
         self.output_dir_input = QtWidgets.QLineEdit()
@@ -168,17 +201,23 @@ class CompilerPage(QtWidgets.QWidget):
         form_layout.addWidget(self.entry_button, 1, 2)
         form_layout.addWidget(self.output_name_label, 2, 0)
         form_layout.addWidget(self.output_name_input, 2, 1, 1, 2)
-        form_layout.addWidget(self.team_id_label, 3, 0)
-        form_layout.addWidget(self.team_id_input, 3, 1, 1, 2)
-        form_layout.addWidget(self.output_dir_label, 4, 0)
-        form_layout.addWidget(self.output_dir_input, 4, 1)
-        form_layout.addWidget(self.output_dir_button, 4, 2)
-        form_layout.addWidget(self.icon_label, 5, 0)
-        form_layout.addWidget(self.icon_input, 5, 1)
-        form_layout.addWidget(self.icon_button, 5, 2)
-        form_layout.addWidget(self.mode_label, 6, 0)
-        form_layout.addWidget(self.mode_combo, 6, 1)
-        form_layout.addWidget(self.console_check, 6, 2)
+        form_layout.addWidget(self.antifraud_label, 3, 0)
+        antifraud_row = QtWidgets.QHBoxLayout()
+        antifraud_row.setSpacing(10)
+        antifraud_row.addWidget(self.vm_check)
+        antifraud_row.addWidget(self.region_check)
+        antifraud_row.addWidget(self.region_button)
+        antifraud_row.addStretch()
+        form_layout.addLayout(antifraud_row, 3, 1, 1, 2)
+        form_layout.addWidget(self.console_check, 4, 1, 1, 2)
+        form_layout.addWidget(self.output_dir_label, 5, 0)
+        form_layout.addWidget(self.output_dir_input, 5, 1)
+        form_layout.addWidget(self.output_dir_button, 5, 2)
+        form_layout.addWidget(self.icon_label, 6, 0)
+        form_layout.addWidget(self.icon_input, 6, 1)
+        form_layout.addWidget(self.icon_button, 6, 2)
+        form_layout.addWidget(self.mode_label, 7, 0)
+        form_layout.addWidget(self.mode_combo, 7, 1)
 
         layout.addWidget(form_card)
 
@@ -205,13 +244,25 @@ class CompilerPage(QtWidgets.QWidget):
 
         self.load_state()
         self.apply_translations()
+        self._update_region_visibility(self.region_check.isChecked())
 
     def load_state(self) -> None:
         builder = self.settings.get("builder", {})
         self.source_input.setText(builder.get("source_dir", ""))
         self.entry_input.setText(builder.get("entrypoint", ""))
         self.output_name_input.setText(builder.get("output_name", "RemoteControllerClient"))
-        self.team_id_input.setText(builder.get("team_id", ""))
+        antifraud = builder.get("antifraud", {})
+        if not isinstance(antifraud, dict):
+            antifraud = {}
+        vm_enabled = antifraud.get("vm", True)
+        region_enabled = antifraud.get("region", True)
+        countries = antifraud.get("countries")
+        if not isinstance(countries, list) or not countries:
+            countries = self._default_antifraud_countries()
+        self.vm_check.setChecked(bool(vm_enabled))
+        self.region_check.setChecked(bool(region_enabled))
+        self._build_region_menu()
+        self._set_selected_countries(countries)
         self.output_dir_input.setText(builder.get("output_dir", ""))
         self.icon_input.setText(builder.get("icon_path", ""))
         mode = builder.get("mode", "onefile")
@@ -225,8 +276,10 @@ class CompilerPage(QtWidgets.QWidget):
         self.source_label.setText(self.i18n.t("compiler_source"))
         self.entry_label.setText(self.i18n.t("compiler_entry"))
         self.output_name_label.setText(self.i18n.t("compiler_output_name"))
-        self.team_id_label.setText(self.i18n.t("compiler_team_id"))
-        self.team_id_input.setPlaceholderText(self.i18n.t("compiler_team_placeholder"))
+        self.antifraud_label.setText(self.i18n.t("compiler_antifraud_title"))
+        self.vm_check.setText(self.i18n.t("compiler_antifraud_vm"))
+        self.region_check.setText(self.i18n.t("compiler_antifraud_region"))
+        self.region_button.setText(self.i18n.t("compiler_regions"))
         self.output_dir_label.setText(self.i18n.t("compiler_output_dir"))
         self.icon_label.setText(self.i18n.t("compiler_icon"))
         self.mode_label.setText(self.i18n.t("compiler_mode"))
@@ -242,6 +295,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_combo.setItemText(1, self.i18n.t("compiler_mode_onedir"))
         if self.log_output.toPlainText().strip() == "":
             self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
+        self._build_region_menu()
 
     def pick_source_dir(self) -> None:
         path = QtWidgets.QFileDialog.getExistingDirectory(self, self.i18n.t("compiler_source"))
@@ -282,7 +336,10 @@ class CompilerPage(QtWidgets.QWidget):
         source_dir = Path(self.source_input.text().strip())
         entrypoint = Path(self.entry_input.text().strip())
         output_name = self.output_name_input.text().strip()
-        team_id = self.team_id_input.text().strip()
+        team_id = str(self.settings.get("operator_team_id", "") or "").strip()
+        antifraud_vm = self.vm_check.isChecked()
+        antifraud_region = self.region_check.isChecked()
+        antifraud_countries = self._selected_countries()
         output_dir_text = self.output_dir_input.text().strip() or str(source_dir / "dist")
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
@@ -299,6 +356,9 @@ class CompilerPage(QtWidgets.QWidget):
             entrypoint=entrypoint,
             output_name=output_name or "RemoteControllerClient",
             team_id=team_id,
+            antifraud_vm=antifraud_vm,
+            antifraud_region=antifraud_region,
+            antifraud_countries=antifraud_countries,
             output_dir=output_dir,
             icon_path=icon_path,
             mode=mode,
@@ -330,6 +390,82 @@ class CompilerPage(QtWidgets.QWidget):
         self.log_output.clear()
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
 
+    def _update_region_visibility(self, enabled: bool) -> None:
+        self.region_button.setVisible(enabled)
+
+    def _default_antifraud_countries(self) -> list[str]:
+        return [
+            "AM",
+            "AZ",
+            "BY",
+            "GE",
+            "KZ",
+            "KG",
+            "MD",
+            "RU",
+            "TJ",
+            "TM",
+            "UA",
+            "UZ",
+            "CN",
+            "IN",
+        ]
+
+    def _country_groups(self) -> list[tuple[str, list[tuple[str, str]]]]:
+        return [
+            (
+                "compiler_regions_cis",
+                [
+                    ("AM", "country_am"),
+                    ("AZ", "country_az"),
+                    ("BY", "country_by"),
+                    ("GE", "country_ge"),
+                    ("KZ", "country_kz"),
+                    ("KG", "country_kg"),
+                    ("MD", "country_md"),
+                    ("RU", "country_ru"),
+                    ("TJ", "country_tj"),
+                    ("TM", "country_tm"),
+                    ("UA", "country_ua"),
+                    ("UZ", "country_uz"),
+                ],
+            ),
+            ("compiler_regions_china", [("CN", "country_cn")]),
+            ("compiler_regions_india", [("IN", "country_in")]),
+        ]
+
+    def _build_region_menu(self) -> None:
+        selected = self._selected_countries()
+        self.region_menu.clear()
+        self.region_actions = {}
+        for section_key, entries in self._country_groups():
+            self.region_menu.addSection(self.i18n.t(section_key))
+            for code, label_key in entries:
+                action = QtGui.QAction(self.i18n.t(label_key), self.region_menu)
+                action.setCheckable(True)
+                action.setChecked(code in selected)
+                action.toggled.connect(self._update_regions_state)
+                self.region_menu.addAction(action)
+                self.region_actions[code] = action
+
+    def _set_selected_countries(self, countries: list[str]) -> None:
+        selected = {code.upper() for code in countries if code}
+        if not self.region_actions:
+            self._build_region_menu()
+        for code, action in self.region_actions.items():
+            action.setChecked(code in selected)
+
+    def _selected_countries(self) -> list[str]:
+        if not self.region_actions:
+            return self._default_antifraud_countries()
+        return [code for code, action in self.region_actions.items() if action.isChecked()]
+
+    def _update_regions_state(self) -> None:
+        if not self.region_check.isChecked():
+            return
+        if not self._selected_countries():
+            self._set_selected_countries(self._default_antifraud_countries())
+
     def persist_builder_state(self, options: BuildOptions) -> None:
         self.settings.set(
             "builder",
@@ -337,7 +473,11 @@ class CompilerPage(QtWidgets.QWidget):
                 "source_dir": str(options.source_dir),
                 "entrypoint": str(options.entrypoint),
                 "output_name": options.output_name,
-                "team_id": options.team_id,
+                "antifraud": {
+                    "vm": options.antifraud_vm,
+                    "region": options.antifraud_region,
+                    "countries": list(options.antifraud_countries),
+                },
                 "output_dir": str(options.output_dir),
                 "icon_path": str(options.icon_path) if options.icon_path else "",
                 "mode": options.mode,

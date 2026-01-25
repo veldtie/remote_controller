@@ -49,6 +49,7 @@ def build_client(
     token: str | None,
     device_token: str | None,
     team_id: str | None = None,
+    client_config: dict | None = None,
 ) -> WebRTCClient:
     signaling_url = os.getenv("RC_SIGNALING_URL")
     if signaling_url:
@@ -76,5 +77,6 @@ def build_client(
         file_service=file_service,
         device_token=device_token,
         team_id=team_id,
+        client_config=client_config,
         e2ee=e2ee_context,
     )

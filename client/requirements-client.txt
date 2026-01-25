@@ -6,3 +6,4 @@ sounddevice
 pyautogui
 numpy
 cryptography
+geoip2

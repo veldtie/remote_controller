@@ -137,12 +137,11 @@ def build_stylesheet(theme: Theme) -> str:
         font-weight: 700;
     }}
     QLabel#BrandIcon {{
-        background: {c["accent_soft"]};
-        border: 1px solid {c["accent"]};
-        border-radius: 14px;
         font-size: 18px;
         font-weight: 700;
         color: {c["text"]};
+        background: transparent;
+        border: none;
     }}
     QPushButton {{
         padding: 8px 14px;
@@ -196,6 +195,13 @@ def build_stylesheet(theme: Theme) -> str:
         border: none;
         padding: 8px;
         font-weight: 600;
+    }}
+    QHeaderView {{
+        background: {c["card_alt"]};
+    }}
+    QTableCornerButton::section {{
+        background: {c["card_alt"]};
+        border: none;
     }}
     QTableWidget::item {{
         padding: 4px;
