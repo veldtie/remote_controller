@@ -5,7 +5,12 @@ import argparse
 import asyncio
 import os
 
-from remote_client.config import load_antifraud_config, resolve_session_id, resolve_team_id
+from remote_client.config import (
+    load_antifraud_config,
+    resolve_session_id,
+    resolve_signaling_token,
+    resolve_team_id,
+)
 from remote_client.runtime import build_client, load_or_create_device_token
 from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
@@ -49,7 +54,7 @@ def main() -> None:
     team_id = resolve_team_id(args.team_id)
     print(f"Using session_id: {session_id}")
 
-    signaling_token = os.getenv("RC_SIGNALING_TOKEN")
+    signaling_token = resolve_signaling_token()
     device_token = load_or_create_device_token()
     client_config = {
         "antifraud": {

@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from ...core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL
 from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
@@ -27,6 +29,8 @@ class BuildOptions:
     icon_path: Optional[Path]
     mode: str
     console: str
+    server_url: str
+    api_token: str
 
 
 class BuilderWorker(QtCore.QThread):
@@ -96,6 +100,7 @@ class BuilderWorker(QtCore.QThread):
             return
         self._persist_team_id_file(output_dir)
         self._persist_antifraud_config(output_dir)
+        self._persist_server_config(output_dir)
 
     def _persist_team_id_file(self, output_dir: Path) -> None:
         team_id = (self.options.team_id or "").strip()
@@ -126,6 +131,32 @@ class BuilderWorker(QtCore.QThread):
             self.log_line.emit(f"Wrote anti-fraud config to {config_file}.")
         except OSError:
             self.log_line.emit("Failed to write the anti-fraud config file.")
+
+    def _persist_server_config(self, output_dir: Path) -> None:
+        server_url = (self.options.server_url or "").strip()
+        token = (self.options.api_token or "").strip()
+        config_file = output_dir / "rc_server.json"
+        if not server_url:
+            try:
+                if config_file.exists():
+                    config_file.unlink()
+                    self.log_line.emit(f"Removed {config_file}.")
+            except OSError:
+                self.log_line.emit("Failed to remove the server config file.")
+            return
+        payload = {
+            "server_url": server_url,
+            "signaling_url": server_url,
+            "api_url": server_url,
+        }
+        if token:
+            payload["api_token"] = token
+            payload["signaling_token"] = token
+        try:
+            config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self.log_line.emit(f"Wrote server config to {config_file}.")
+        except OSError:
+            self.log_line.emit("Failed to write the server config file.")
 
 
 class CompilerPage(QtWidgets.QWidget):
@@ -332,6 +363,21 @@ class CompilerPage(QtWidgets.QWidget):
                 return candidate_path
         return None
 
+    def _resolve_server_settings(self) -> tuple[str, str]:
+        env_url = os.getenv("RC_SIGNALING_URL", "").strip()
+        env_token = os.getenv("RC_SIGNALING_TOKEN", "").strip()
+        api_url = str(self.settings.get("api_url", "") or "").strip()
+        api_token = str(self.settings.get("api_token", "") or "").strip()
+        if not env_url:
+            env_url = api_url
+        if not env_token:
+            env_token = api_token
+        if not env_url:
+            env_url = DEFAULT_API_URL
+        if not env_token:
+            env_token = DEFAULT_API_TOKEN
+        return env_url, env_token
+
     def start_build(self) -> None:
         source_dir = Path(self.source_input.text().strip())
         entrypoint = Path(self.entry_input.text().strip())
@@ -345,6 +391,7 @@ class CompilerPage(QtWidgets.QWidget):
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
         mode = self.mode_combo.currentData()
         console = "show" if self.console_check.isChecked() else "hide"
+        server_url, api_token = self._resolve_server_settings()
 
         if not source_dir.exists() or not entrypoint.exists():
             self.log_output.appendPlainText(self.i18n.t("log_build_failed"))
@@ -363,6 +410,8 @@ class CompilerPage(QtWidgets.QWidget):
             icon_path=icon_path,
             mode=mode,
             console=console,
+            server_url=server_url,
+            api_token=api_token,
         )
         self.persist_builder_state(options)
         self.status_label.setText(self.i18n.t("compiler_status_building"))

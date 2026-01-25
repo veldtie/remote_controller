@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import uuid
 
+from remote_client.config import resolve_signaling_url
 from remote_client.files.file_service import FileService
 from remote_client.security.e2ee import load_e2ee_context
 from remote_client.session_factory import build_session_resources
@@ -51,7 +52,7 @@ def build_client(
     team_id: str | None = None,
     client_config: dict | None = None,
 ) -> WebRTCClient:
-    signaling_url = os.getenv("RC_SIGNALING_URL")
+    signaling_url = resolve_signaling_url()
     if signaling_url:
         if "://" in signaling_url:
             signaling = create_signaling_from_url(signaling_url, session_id, token)

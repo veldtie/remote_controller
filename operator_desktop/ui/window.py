@@ -4,7 +4,7 @@ from pathlib import Path
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.constants import APP_NAME, DEBUG_LOG_CREDENTIALS
-from ..core.api import RemoteControllerApi
+from ..core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL, RemoteControllerApi
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
@@ -20,7 +20,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = SettingsStore(settings_path)
         self.i18n = I18n(self.settings)
         self.logger = EventLogger(self.settings, self.i18n)
-        self.api = RemoteControllerApi()
+        api_url, api_token = self._ensure_api_settings()
+        self.api = RemoteControllerApi(base_url=api_url, token=api_token)
         self._reset_server_cache()
 
         self.setWindowTitle(APP_NAME)
@@ -77,6 +78,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.set("teams", [])
         self.settings.set("operators", [])
         self.settings.save()
+
+    def _ensure_api_settings(self) -> tuple[str, str]:
+        api_url = str(self.settings.get("api_url", "") or "").strip()
+        api_token = str(self.settings.get("api_token", "") or "").strip()
+        updated = False
+        if not api_url:
+            api_url = DEFAULT_API_URL
+            self.settings.set("api_url", api_url)
+            updated = True
+        if not api_token and DEFAULT_API_TOKEN:
+            api_token = DEFAULT_API_TOKEN
+            self.settings.set("api_token", api_token)
+            updated = True
+        if updated:
+            self.settings.save()
+        return api_url, api_token
 
     def _fetch_operator_profile(self, account_id: str) -> dict | None:
         if not account_id:

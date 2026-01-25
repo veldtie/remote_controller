@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 TEAM_ID_FILENAME = "rc_team_id.txt"
 ANTIFRAUD_CONFIG_FILENAME = "rc_antifraud.json"
+SERVER_CONFIG_FILENAME = "rc_server.json"
 
 DEFAULT_ANTIFRAUD_COUNTRIES = [
     "AM",
@@ -82,6 +83,25 @@ def _read_antifraud_config() -> dict | None:
     return None
 
 
+def _read_server_config() -> dict | None:
+    candidate_dirs = []
+    if getattr(sys, "frozen", False):
+        candidate_dirs.append(os.path.dirname(sys.executable))
+    candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    for base_dir in candidate_dirs:
+        path = os.path.join(base_dir, SERVER_CONFIG_FILENAME)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                raw = json.load(handle)
+        except FileNotFoundError:
+            continue
+        except (OSError, json.JSONDecodeError):
+            return None
+        if isinstance(raw, dict):
+            return raw
+    return None
+
+
 def load_antifraud_config() -> AntiFraudConfig:
     defaults = AntiFraudConfig(
         vm_enabled=True,
@@ -104,6 +124,34 @@ def load_antifraud_config() -> AntiFraudConfig:
         region_enabled=bool(region_enabled),
         countries=countries,
     )
+
+
+def resolve_signaling_url() -> str | None:
+    env_url = os.getenv("RC_SIGNALING_URL")
+    if env_url:
+        return env_url.strip()
+    raw = _read_server_config()
+    if not raw:
+        return None
+    for key in ("signaling_url", "server_url", "api_url"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def resolve_signaling_token() -> str | None:
+    env_token = os.getenv("RC_SIGNALING_TOKEN")
+    if env_token:
+        return env_token.strip()
+    raw = _read_server_config()
+    if not raw:
+        return None
+    for key in ("signaling_token", "api_token"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def resolve_team_id(team_id: str | None) -> str | None:

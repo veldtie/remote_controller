@@ -10,6 +10,8 @@ DEFAULT_OPERATORS = []
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "language": "en",
+    "api_url": "",
+    "api_token": "",
     "role": "operator",
     "remember_me": False,
     "account_id": "",
