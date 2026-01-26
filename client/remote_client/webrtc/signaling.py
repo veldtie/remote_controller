@@ -5,10 +5,11 @@ import inspect
 import json
 from dataclasses import dataclass
 from typing import Any
+
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import websockets
-from websockets import WebSocketClientProtocol
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 
 @dataclass
@@ -16,37 +17,62 @@ class WebSocketSignaling:
     """Thin wrapper around a WebSocket signaling channel."""
     url: str
     headers: dict[str, str] | None = None
-    _websocket: WebSocketClientProtocol | None = None
+    _websocket: Any = None  # тип Any, чтобы избежать warning'ов; можно позже import ClientConnection
 
     async def connect(self) -> None:
-        """Open the websocket connection."""
-        connect_kwargs: dict[str, object] = {}
+        """Open the websocket connection with keep-alive."""
+        connect_kwargs: dict[str, object] = {
+            "ping_interval": 20,   # Отправляем ping каждые 20 секунд
+            "ping_timeout": 60,    # Ждём pong до 60 секунд
+            "close_timeout": 10,   # Таймаут на graceful close
+        }
+
         if self.headers:
             connect_params = inspect.signature(websockets.connect).parameters
             if "additional_headers" in connect_params:
                 connect_kwargs["additional_headers"] = self.headers
             elif "extra_headers" in connect_params:
                 connect_kwargs["extra_headers"] = self.headers
+
+        print(f"[Signaling] Connecting to {self.url}")
         self._websocket = await websockets.connect(self.url, **connect_kwargs)
+        print("[Signaling] Connected successfully")
 
     async def receive(self) -> dict[str, Any] | None:
-        """Receive a JSON message from signaling."""
+        """Receive a JSON message from signaling with graceful handling of closure."""
         if not self._websocket:
             return None
-        incoming_message = await self._websocket.recv()
-        if incoming_message is None:
+
+        try:
+            incoming_message = await self._websocket.recv()
+            if incoming_message is None:
+                return None
+            return json.loads(incoming_message)
+        except ConnectionClosedOK as e:
+            print(f"[Signaling] Connection closed normally: code={e.code} reason='{e.reason}'")
+            # Idle timeout (1001) или going away — не ошибка, просто возвращаем None
             return None
-        return json.loads(incoming_message)
+        except ConnectionClosedError as e:
+            print(f"[Signaling] Connection closed unexpectedly: code={e.code} reason='{e.reason}'")
+            # Можно добавить reconnect логику выше по стеку
+            return None
+        except Exception as e:
+            print(f"[Signaling] Unexpected error during recv: {e}")
+            return None
 
     async def send(self, payload: dict[str, Any]) -> None:
         """Send a JSON message over signaling."""
         if not self._websocket:
             return
-        await self._websocket.send(json.dumps(payload))
+        try:
+            await self._websocket.send(json.dumps(payload))
+        except Exception as e:
+            print(f"[Signaling] Failed to send payload: {e}")
 
     async def close(self) -> None:
         """Close the websocket connection."""
         if self._websocket:
+            print("[Signaling] Closing connection...")
             await self._websocket.close()
             self._websocket = None
 
