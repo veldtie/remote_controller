@@ -6,7 +6,7 @@ import requests
 
 DEFAULT_API_URL = os.getenv("RC_API_URL", "http://79.137.194.213").rstrip("/")
 DEFAULT_API_TOKEN = os.getenv("RC_API_TOKEN", "Gar8tEadNew0l-DNgY36moO3o_3xRsmF7yhrgRSOMIA").strip()
-DEFAULT_TIMEOUT = float(os.getenv("RC_API_TIMEOUT", "3"))
+DEFAULT_TIMEOUT = float(os.getenv("RC_API_TIMEOUT", "5"))
 
 
 class RemoteControllerApi:
@@ -43,6 +43,9 @@ class RemoteControllerApi:
     def fetch_clients(self) -> list[dict[str, Any]]:
         payload = self._request("GET", "/api/remote-clients") or {}
         return list(payload.get("clients", []))
+
+    def ping(self) -> None:
+        self._request("GET", "/api/health")
 
     def authenticate_operator(self, account_id: str, password: str) -> dict[str, Any]:
         payload = self._request(

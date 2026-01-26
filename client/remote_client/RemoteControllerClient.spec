@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['C:\\Users\\USER\\remote_controller\\client\\remote_client\\main.py'],
+    ['C:\\Users\\ChalkBro\\Documents\\GitHub\\remote_controller\\client\\remote_client\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_8qrhtaaq\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_8qrhtaaq\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_8qrhtaaq\\remote_client\\rc_server.json', 'remote_client')],
+    datas=[('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_server.json', 'remote_client')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

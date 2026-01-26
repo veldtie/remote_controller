@@ -593,6 +593,19 @@ def _require_api_token(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
+@app.get("/api/health")
+async def api_health(request: Request) -> dict[str, object]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1;")
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"ok": True}
+
+
 class RemoteClientUpdate(BaseModel):
     name: str | None = None
     assigned_operator_id: str | None = None
