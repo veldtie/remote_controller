@@ -372,10 +372,12 @@ class SessionPair:
     browsers: dict[str, WebSocket] = field(default_factory=dict)
     client: WebSocket | None = None
     device_token: str | None = None
+    pending_to_client: list[str] = field(default_factory=list)
 
 
 class SessionRegistry:
     """Tracks active sessions and forwards signaling messages."""
+    _pending_limit = 64
     def __init__(self) -> None:
         self._sessions: dict[str, SessionPair] = {}
         self._client_by_session: dict[str, WebSocket] = {}
@@ -439,12 +441,12 @@ class SessionRegistry:
         role: str,
         message: str,
         operator_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Forward signaling payloads to the opposite role in a session."""
         async with self._lock:
             session_pair = self._sessions.get(session_id)
             if not session_pair:
-                return
+                return False
             if role == "browser":
                 peer = session_pair.client
             else:
@@ -456,6 +458,30 @@ class SessionRegistry:
                     peer = None
         if peer is not None:
             await peer.send_text(message)
+            return True
+        return False
+
+    async def queue_for_client(self, session_id: str, message: str, message_type: str | None) -> None:
+        """Queue browser signaling messages until the client connects."""
+        async with self._lock:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair:
+                return
+            if message_type == "offer":
+                session_pair.pending_to_client.clear()
+            session_pair.pending_to_client.append(message)
+            if len(session_pair.pending_to_client) > self._pending_limit:
+                session_pair.pending_to_client = session_pair.pending_to_client[-self._pending_limit :]
+
+    async def pop_pending_for_client(self, session_id: str) -> list[str]:
+        """Pop queued browser messages for a client that just connected."""
+        async with self._lock:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair or not session_pair.pending_to_client:
+                return []
+            pending = list(session_pair.pending_to_client)
+            session_pair.pending_to_client.clear()
+            return pending
 
     async def touch(self, session_id: str) -> None:
         """Update last activity time for a session."""
@@ -908,6 +934,17 @@ async def websocket_signaling(websocket: WebSocket) -> None:
         )
     else:
         logger.info("Connected %s for session %s from %s", role, session_id, _client_label(websocket))
+    if role == "client":
+        pending_messages = await registry.pop_pending_for_client(session_id)
+        for queued in pending_messages:
+            try:
+                await websocket.send_text(queued)
+            except Exception:
+                logger.exception(
+                    "Failed to flush pending signaling messages to client for session %s",
+                    session_id,
+                )
+                break
     try:
         while True:
             message = await websocket.receive_text()
@@ -917,6 +954,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             except json.JSONDecodeError:
                 payload = None
             operator_id = None
+            message_type = None
             if isinstance(payload, dict):
                 message_type = payload.get("type")
                 operator_id = payload.get("operator_id")
@@ -971,7 +1009,15 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             await registry.touch(session_id)
             if target_session_id != session_id:
                 await registry.touch(target_session_id)
-            await registry.forward(target_session_id, role, message, operator_id=operator_id)
+            forwarded = await registry.forward(
+                target_session_id, role, message, operator_id=operator_id
+            )
+            if (
+                not forwarded
+                and role == "browser"
+                and message_type in {"offer", "ice"}
+            ):
+                await registry.queue_for_client(target_session_id, message, message_type)
     except WebSocketDisconnect:
         logger.info("Disconnected %s for session %s from %s", role, session_id, _client_label(websocket))
     except Exception:

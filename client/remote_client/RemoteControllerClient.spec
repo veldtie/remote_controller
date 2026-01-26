@@ -2,14 +2,10 @@
 
 
 a = Analysis(
-    ['C:\\Users\\ChalkBro\\Documents\\GitHub\\remote_controller\\client\\remote_client\\main.py'],
+    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
     pathex=[],
     binaries=[],
-<<<<<<< HEAD
-    datas=[('C:\\Temp\\rc_build_1x_apflw\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_1x_apflw\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_1x_apflw\\remote_client\\rc_server.json', 'remote_client')],
-=======
-    datas=[('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_ie6yv4yv\\remote_client\\rc_server.json', 'remote_client')],
->>>>>>> 7f01b70b8325008751faa908a2cbeb8d4bd2b078
+    datas=[('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_server.json', 'remote_client')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
