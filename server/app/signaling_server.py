@@ -118,7 +118,13 @@ def _load_ice_servers() -> list[dict[str, object]]:
     return _normalize_ice_servers(parsed)
 
 
-ICE_SERVERS = _load_ice_servers()
+DEFAULT_ICE_SERVERS = [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+    {"urls": ["stun:stun1.l.google.com:19302"]},
+    {"urls": ["stun:stun.cloudflare.com:3478"]},
+]
+
+ICE_SERVERS = _load_ice_servers() or DEFAULT_ICE_SERVERS
 SIGNALING_TOKEN = _load_signaling_token()
 
 DEVICE_REGISTRY_SCHEMA = [

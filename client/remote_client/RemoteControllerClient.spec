@@ -5,7 +5,7 @@ a = Analysis(
     ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_8eve55v6\\remote_client\\rc_server.json', 'remote_client')],
+    datas=[('C:\\Temp\\rc_build_fzdv6jk3\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_fzdv6jk3\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_fzdv6jk3\\remote_client\\rc_server.json', 'remote_client')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

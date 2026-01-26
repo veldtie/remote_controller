@@ -61,11 +61,19 @@ def _load_ice_servers() -> list[RTCIceServer]:
     """Load ICE server config from the RC_ICE_SERVERS env var."""
     raw = os.getenv("RC_ICE_SERVERS")
     if not raw:
-        return []
+        return [
+            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
+        ]
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return []
+        return [
+            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+            RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
+        ]
     servers = _normalize_ice_servers(parsed)
     return [RTCIceServer(**server) for server in servers]
 
