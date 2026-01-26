@@ -79,6 +79,60 @@
     }
   }
 
+  function applyUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    const serverUrl =
+      params.get("server") ||
+      params.get("server_url") ||
+      params.get("api_url") ||
+      params.get("url");
+    if (serverUrl) {
+      dom.serverUrlInput.value = serverUrl;
+    }
+
+    const sessionId =
+      params.get("session_id") ||
+      params.get("session") ||
+      params.get("id");
+    if (sessionId) {
+      dom.sessionIdInput.value = sessionId;
+    }
+
+    const token =
+      params.get("token") ||
+      params.get("auth_token") ||
+      params.get("api_token");
+    if (token) {
+      dom.authTokenInput.value = token;
+    }
+
+    const e2eeKey =
+      params.get("e2ee") ||
+      params.get("e2ee_key") ||
+      params.get("key");
+    if (e2eeKey && dom.e2eeKeyInput) {
+      dom.e2eeKeyInput.value = e2eeKey;
+      sessionStorage.setItem(E2EE_STORAGE_KEY, e2eeKey);
+    }
+
+    const mode = (params.get("mode") || "").toLowerCase();
+    if (mode === "view") {
+      dom.interactionToggle.checked = false;
+    } else if (mode === "manage") {
+      dom.interactionToggle.checked = true;
+    }
+
+    const autoConnect =
+      params.get("autoconnect") ||
+      params.get("connect") ||
+      params.get("auto");
+    if (!autoConnect) {
+      return false;
+    }
+    const normalized = autoConnect.toLowerCase();
+    return normalized !== "0" && normalized !== "false" && normalized !== "no";
+  }
+
   function setStatus(message, stateKey = "") {
     dom.statusEl.textContent = message;
     dom.statusEl.dataset.state = stateKey;
@@ -1076,7 +1130,11 @@
   }
 
   initDefaults();
+  const shouldConnect = applyUrlParams();
   updateInteractionMode();
   updateDrawerOffset();
   bindEvents();
+  if (shouldConnect) {
+    void connect();
+  }
 })();

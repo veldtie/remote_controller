@@ -1,13 +1,15 @@
 from typing import Dict
+from urllib.parse import urlsplit, urlunsplit
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from ..core.api import RemoteControllerApi
+from ..core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL, RemoteControllerApi
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from .common import ICON_DIR, animate_widget, make_button
 from .dialogs import StorageDialog
+from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
 from .pages.dashboard import DashboardPage
 from .pages.instructions import InstructionsPage
@@ -34,6 +36,7 @@ class MainShell(QtWidgets.QWidget):
         self.current_role = self.settings.get("role", "operator")
         self._ping_ms = None
         self._server_online = None
+        self._session_windows: Dict[str, RemoteSessionDialog] = {}
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -252,12 +255,14 @@ class MainShell(QtWidgets.QWidget):
         if not client:
             return
         if currently_connected:
+            self._close_session(client_id)
             client["connected"] = False
             self.logger.log("log_disconnect", client=client["name"])
         else:
             self.logger.log("log_connect", client=client["name"])
-            client["connected"] = True
-            self.logger.log("log_connected", client=client["name"])
+            if self._open_session(client_id):
+                client["connected"] = True
+                self.logger.log("log_connected", client=client["name"])
         self.dashboard.render_clients(self.dashboard.clients)
         self.settings.set("clients", self.dashboard.clients)
         self.settings.save()
@@ -307,6 +312,60 @@ class MainShell(QtWidgets.QWidget):
         team_label = self._resolve_team_label()
         self.operator_label.setText(f"{label} | {team_label} | {role_label}")
         self.update_page_title()
+
+    def _resolve_server_url(self) -> str:
+        url = str(self.settings.get("api_url", "") or "").strip()
+        if not url:
+            url = DEFAULT_API_URL
+        parsed = urlsplit(url)
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "", "", ""))
+
+    def _resolve_api_token(self) -> str:
+        token = str(self.settings.get("api_token", "") or "").strip()
+        if not token:
+            token = DEFAULT_API_TOKEN
+        return token
+
+    def _open_session(self, client_id: str) -> bool:
+        if client_id in self._session_windows:
+            window = self._session_windows[client_id]
+            window.raise_()
+            window.activateWindow()
+            return True
+
+        base_url = self._resolve_server_url()
+        token = self._resolve_api_token()
+        session_url = build_session_url(base_url, client_id, token)
+
+        if not webengine_available():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "PyQt6-WebEngine is required to open remote sessions in a window.",
+            )
+            return False
+
+        dialog = RemoteSessionDialog(client_id, session_url, self)
+        dialog.closed.connect(self._handle_session_closed)
+        self._session_windows[client_id] = dialog
+        dialog.show()
+        return True
+
+    def _close_session(self, client_id: str) -> None:
+        dialog = self._session_windows.pop(client_id, None)
+        if dialog:
+            dialog.close()
+
+    def _handle_session_closed(self, client_id: str) -> None:
+        self._session_windows.pop(client_id, None)
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        if not client or not client.get("connected"):
+            return
+        client["connected"] = False
+        self.logger.log("log_disconnect", client=client.get("name", client_id))
+        self.dashboard.render_clients(self.dashboard.clients)
+        self.settings.set("clients", self.dashboard.clients)
+        self.settings.save()
 
     def _render_ping_label(self) -> None:
         if self._ping_ms is None:

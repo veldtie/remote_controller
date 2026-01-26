@@ -13,6 +13,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ...core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL
 from ...core.i18n import I18n
 from ...core.logging import EventLogger
+from ...core.theme import THEMES
 from ...core.settings import SettingsStore
 from ..common import make_button
 
@@ -179,6 +180,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.logger = logger
         self.worker: Optional[BuilderWorker] = None
         self.region_actions: dict[str, QtGui.QAction] = {}
+        self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -218,6 +220,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.region_menu = QtWidgets.QMenu(self.region_button)
         self.region_button.setMenu(self.region_menu)
         self.region_check.toggled.connect(self._update_region_visibility)
+        self._apply_region_menu_theme()
 
         self.output_dir_label = QtWidgets.QLabel()
         self.output_dir_input = QtWidgets.QLineEdit()
@@ -448,6 +451,27 @@ class CompilerPage(QtWidgets.QWidget):
     def clear_log(self) -> None:
         self.log_output.clear()
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
+
+    def _apply_region_menu_theme(self) -> None:
+        colors = self.theme.colors
+        self.region_menu.setStyleSheet(
+            "QMenu {"
+            f"background: {colors['card']};"
+            f"border: 1px solid {colors['border']};"
+            "padding: 6px;"
+            "}"
+            "QMenu::item {"
+            f"color: {colors['text']};"
+            "padding: 6px 10px;"
+            "border-radius: 6px;"
+            "}"
+            "QMenu::item:selected {"
+            f"background: {colors['accent_soft']};"
+            "}"
+            "QMenu::item:disabled {"
+            f"color: {colors['muted']};"
+            "}"
+        )
 
     def _update_region_visibility(self, enabled: bool) -> None:
         self.region_button.setVisible(enabled)

