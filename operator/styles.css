@@ -1,26 +1,29 @@
 :root {
-  --ink: #0b1118;
-  --ink-2: #111826;
-  --ink-3: #172233;
-  --panel: rgba(26, 32, 44, 0.9);
-  --panel-strong: rgba(16, 20, 30, 0.96);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #e6edf6;
+  --ink: #0a0f14;
+  --ink-2: #0f1620;
+  --panel: rgba(18, 24, 34, 0.86);
+  --panel-strong: rgba(12, 18, 26, 0.96);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f5f2ea;
   --muted: #9aa6b2;
-  --accent: #30d0a8;
-  --accent-2: #2fd6c0;
-  --accent-3: #f3c969;
-  --good: #2bd17f;
-  --warn: #f2b04b;
-  --bad: #e05d5d;
-  --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  --accent: #2dd4a7;
+  --accent-2: #f1c56b;
+  --accent-3: #59b1ff;
+  --good: #29d391;
+  --warn: #f0b858;
+  --bad: #e06b6b;
+  --shadow: 0 22px 60px rgba(4, 8, 14, 0.6);
   --edge-gap: 16px;
-  --panel-width: 280px;
-  --panel-gap: 12px;
-  --manage-panel-height: 320px;
-  --view-panel-height: 112px;
+  --panel-width: 320px;
+  --panel-gap: 14px;
+  --manage-panel-height: 380px;
+  --view-panel-height: 200px;
   --workspace-left: calc(var(--edge-gap) + var(--panel-width) + var(--panel-gap));
   --workspace-bottom: 0px;
+  --radius-xl: 22px;
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --radius-sm: 10px;
 }
 
 * {
@@ -30,34 +33,40 @@
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-family: "Space Grotesk", "IBM Plex Mono", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(1100px 620px at 10% 8%, rgba(48, 208, 168, 0.22), transparent 60%),
-    radial-gradient(900px 520px at 88% 18%, rgba(64, 120, 255, 0.16), transparent 60%),
-    linear-gradient(180deg, #0c111a 0%, #121a26 100%);
+    radial-gradient(1200px 700px at 5% -10%, rgba(45, 212, 167, 0.22), transparent 55%),
+    radial-gradient(900px 540px at 95% 0%, rgba(82, 160, 255, 0.18), transparent 60%),
+    radial-gradient(900px 600px at 60% 100%, rgba(241, 197, 107, 0.12), transparent 60%),
+    linear-gradient(180deg, #0a0e13 0%, #0d141c 48%, #0a0f15 100%);
   overflow: hidden;
 }
 
-body::after {
+body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 28px 28px;
-  opacity: 0.22;
+  background:
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 28px 28px, 12px 12px;
+  background-position: 0 0, 6px 6px;
+  opacity: 0.18;
   pointer-events: none;
   z-index: 0;
 }
 
 #screen {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: var(--workspace-bottom);
+  top: var(--edge-gap);
+  right: var(--edge-gap);
+  bottom: calc(var(--workspace-bottom) + var(--edge-gap));
   left: var(--workspace-left);
   object-fit: contain;
   background: #050608;
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 40px rgba(0, 0, 0, 0.45);
   cursor: crosshair;
   z-index: 1;
 }
@@ -78,40 +87,83 @@ body.view-mode #screen {
   width: var(--panel-width);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   z-index: 9;
   overflow: auto;
+  padding-right: 2px;
 }
 
-#interactionMenu {
-  width: 100%;
-  padding: 12px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  backdrop-filter: blur(18px);
-  box-shadow: var(--shadow);
-  animation: dropIn 0.6s ease;
-}
-
-#hud {
-  position: relative;
-  width: 100%;
-  display: grid;
-  grid-template-columns: 1fr;
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  background: var(--panel);
+  background: rgba(14, 20, 28, 0.78);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
-  animation: dropIn 0.6s ease;
+  animation: panelIn 0.6s ease;
 }
 
-@keyframes dropIn {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #071018;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+}
+
+.brand-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.brand-subtitle {
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.brand-chip {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--accent-2);
+  background: rgba(14, 18, 26, 0.7);
+}
+
+.panel-card,
+#interactionMenu,
+#hud {
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+  animation: panelIn 0.6s ease;
+}
+
+@keyframes panelIn {
   from {
-    transform: translateY(-10px);
+    transform: translateY(-12px);
     opacity: 0;
   }
   to {
@@ -123,15 +175,16 @@ body.view-mode #screen {
 .hud-section,
 .hud-actions {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   align-content: start;
 }
 
 .section-title {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.18em;
   color: var(--muted);
+  font-family: "IBM Plex Mono", "Space Grotesk", monospace;
 }
 
 .fields {
@@ -141,9 +194,9 @@ body.view-mode #screen {
 }
 
 .field label {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--muted);
   display: block;
   margin-bottom: 4px;
@@ -151,43 +204,45 @@ body.view-mode #screen {
 
 input {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(11, 13, 20, 0.7);
-  border: 1px solid var(--border);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(10, 13, 19, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text);
-  font-family: inherit;
+  font-family: "IBM Plex Mono", "Space Grotesk", monospace;
+  font-size: 0.9rem;
 }
 
 input:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(48, 208, 168, 0.2);
+  border-color: rgba(45, 212, 167, 0.7);
+  box-shadow: 0 0 0 2px rgba(45, 212, 167, 0.2);
 }
 
 input::placeholder {
-  color: rgba(245, 241, 232, 0.5);
+  color: rgba(245, 241, 232, 0.45);
 }
 
 button {
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  background: var(--accent);
-  color: #0b121a;
+  background: linear-gradient(135deg, var(--accent), #1ebc92);
+  color: #08131b;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
   font-family: inherit;
 }
 
 button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(48, 208, 168, 0.24);
+  box-shadow: 0 12px 20px rgba(45, 212, 167, 0.25);
+  filter: brightness(1.02);
 }
 
 button.secondary {
-  background: rgba(17, 20, 30, 0.85);
+  background: rgba(12, 18, 26, 0.9);
   border: 1px solid var(--border);
   color: var(--text);
 }
@@ -225,8 +280,8 @@ button:disabled {
   position: relative;
   display: inline-flex;
   align-items: center;
-  width: 54px;
-  height: 28px;
+  width: 56px;
+  height: 30px;
 }
 
 .switch input {
@@ -245,18 +300,18 @@ button:disabled {
 .slider::before {
   content: "";
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   left: 3px;
   top: 2px;
-  background: #fdf1d1;
+  background: #f7f0dc;
   border-radius: 50%;
   transition: transform 0.2s ease, background 0.2s ease;
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
 }
 
 .switch input:checked + .slider {
-  background: rgba(48, 208, 168, 0.35);
+  background: rgba(45, 212, 167, 0.35);
 }
 
 .switch input:checked + .slider::before {
@@ -271,6 +326,36 @@ button:disabled {
 
 .hud-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+}
+
+#status {
+  grid-column: 1 / -1;
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 12, 18, 0.6);
+  font-family: "IBM Plex Mono", "Space Grotesk", monospace;
+}
+
+#status[data-state="ok"] {
+  color: var(--good);
+  border-color: rgba(41, 211, 145, 0.4);
+  background: rgba(12, 30, 24, 0.7);
+}
+
+#status[data-state="warn"] {
+  color: var(--warn);
+  border-color: rgba(240, 184, 88, 0.4);
+  background: rgba(34, 24, 12, 0.7);
+}
+
+#status[data-state="bad"] {
+  color: var(--bad);
+  border-color: rgba(224, 107, 107, 0.4);
+  background: rgba(36, 16, 16, 0.7);
 }
 
 #appLauncher {
@@ -300,24 +385,6 @@ button:disabled {
   color: var(--bad);
 }
 
-#status {
-  font-size: 0.9rem;
-  color: var(--muted);
-  grid-column: 1 / -1;
-}
-
-#status[data-state="ok"] {
-  color: var(--good);
-}
-
-#status[data-state="warn"] {
-  color: var(--warn);
-}
-
-#status[data-state="bad"] {
-  color: var(--bad);
-}
-
 #storageDrawer {
   position: fixed;
   top: var(--edge-gap);
@@ -326,7 +393,7 @@ button:disabled {
   width: 560px;
   background: var(--panel-strong);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
@@ -345,7 +412,7 @@ button:disabled {
   align-items: center;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(120deg, rgba(48, 208, 168, 0.15), rgba(64, 120, 255, 0.08));
+  background: linear-gradient(120deg, rgba(45, 212, 167, 0.18), rgba(82, 160, 255, 0.1));
 }
 
 .drawer-title {
@@ -370,7 +437,7 @@ button:disabled {
 .pane {
   background: rgba(10, 12, 18, 0.6);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -396,7 +463,7 @@ button:disabled {
 
 .table-wrap {
   overflow: auto;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
 }
 
@@ -410,7 +477,7 @@ thead th {
   text-align: left;
   font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   color: var(--muted);
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -437,7 +504,7 @@ tbody tr:hover {
 }
 
 .entry-link:hover {
-  color: var(--accent-2);
+  color: var(--accent-3);
 }
 
 .entry-file {
@@ -478,7 +545,7 @@ tbody tr:hover {
 .download-list li {
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -487,26 +554,33 @@ tbody tr:hover {
   margin-top: auto;
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(15, 18, 28, 0.7);
+  background: rgba(12, 18, 26, 0.7);
   border: 1px solid var(--border);
   text-transform: uppercase;
-  font-size: 0.75rem;
-  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
   color: var(--muted);
 }
 
 body.manage-mode .mode-badge {
   color: var(--good);
+  border-color: rgba(41, 211, 145, 0.4);
 }
 
 body.view-mode .mode-badge {
   color: var(--warn);
+  border-color: rgba(240, 184, 88, 0.4);
+}
+
+body.view-mode .view-hide,
+body.view-mode .manage-only {
+  display: none;
 }
 
 @media (max-width: 1000px) {
   :root {
     --workspace-left: 0px;
-    --manage-panel-height: 45vh;
+    --manage-panel-height: 48vh;
     --workspace-bottom: calc(var(--manage-panel-height) + var(--edge-gap));
   }
 
@@ -520,7 +594,7 @@ body.view-mode .mode-badge {
   }
 
   #screen {
-    left: 0;
+    left: var(--edge-gap);
   }
 
   #storageDrawer {
@@ -540,7 +614,7 @@ body.view-mode .mode-badge {
 }
 
 body.view-mode {
-  --workspace-left: 0px;
+  --workspace-left: var(--edge-gap);
   --workspace-bottom: calc(var(--view-panel-height) + var(--edge-gap));
 }
 
@@ -551,13 +625,4 @@ body.view-mode #managePanel {
   right: var(--edge-gap);
   width: auto;
   max-height: var(--view-panel-height);
-}
-
-body.view-mode #hud,
-body.view-mode #modeBadge {
-  display: none;
-}
-
-body.view-mode #interactionMenu {
-  width: 100%;
 }

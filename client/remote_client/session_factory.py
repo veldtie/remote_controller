@@ -26,7 +26,7 @@ def _normalize_mode(mode: str | None) -> str:
 
 
 def _hidden_desktop_enabled() -> bool:
-    value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "1")
+    value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "0")
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
