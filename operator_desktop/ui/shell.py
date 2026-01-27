@@ -316,6 +316,8 @@ class MainShell(QtWidgets.QWidget):
         url = str(self.settings.get("api_url", "") or "").strip()
         if not url:
             url = DEFAULT_API_URL
+        if "://" not in url:
+            url = f"http://{url}"
         parsed = urlsplit(url)
         return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "", "", ""))
 
@@ -326,6 +328,13 @@ class MainShell(QtWidgets.QWidget):
         return token
 
     def _open_session(self, client_id: str, open_storage: bool = False) -> bool:
+        if not client_id:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "Unable to open session: missing client id.",
+            )
+            return False
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
         if client_id in self._session_windows:

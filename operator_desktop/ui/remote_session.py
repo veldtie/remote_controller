@@ -10,6 +10,10 @@ try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 except Exception:  # pragma: no cover - optional dependency
     QWebEngineView = None
+try:
+    from PyQt6.QtWebEngineCore import QWebEngineSettings
+except Exception:  # pragma: no cover - optional dependency
+    QWebEngineSettings = None
 
 
 def webengine_available() -> bool:
@@ -22,12 +26,15 @@ def build_session_url(
     token: str | None,
     open_storage: bool = False,
 ) -> QtCore.QUrl:
+    if "://" not in base_url:
+        base_url = f"http://{base_url}"
     parsed = urlsplit(base_url)
     query = {
         "session_id": session_id,
-        "autoconnect": "0",
+        "autoconnect": "1",
         "mode": "manage",
         "desktop": "1",
+        "server": base_url,
     }
     if open_storage:
         query["storage"] = "1"
@@ -72,6 +79,10 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.view = QWebEngineView()
+        if QWebEngineSettings is not None:
+            settings = self.view.settings()
+            settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         self.view.page().profile().downloadRequested.connect(self._handle_download_request)
         self.view.loadFinished.connect(self._handle_load_finished)
         self.view.setUrl(url)
@@ -139,6 +150,37 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         script = f"""
 (() => {{
   const data = {payload};
+  const applyInputs = () => {{
+    const setValue = (id, value) => {{
+      const el = document.getElementById(id);
+      if (!el || value === undefined || value === null) return;
+      el.value = value;
+      el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+      el.dispatchEvent(new Event("change", {{ bubbles: true }}));
+    }};
+    setValue("serverUrl", data.serverUrl || "");
+    setValue("sessionId", data.sessionId || "");
+    setValue("authToken", data.token || "");
+    if (data.manage) {{
+      const toggle = document.getElementById("interactionToggle");
+      if (toggle && !toggle.checked) {{
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event("change", {{ bubbles: true }}));
+      }}
+    }}
+    if (data.openStorage) {{
+      const storageButton = document.getElementById("storageToggle");
+      if (storageButton) {{
+        storageButton.click();
+      }}
+    }}
+    if (data.autoConnect) {{
+      const connectButton = document.getElementById("connectButton");
+      if (connectButton) {{
+        connectButton.click();
+      }}
+    }}
+  }};
   window.__remdeskBootstrapPayload = data;
   if (window.remdeskBootstrap) {{
     window.remdeskBootstrap(data);
@@ -150,8 +192,12 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     if (window.remdeskBootstrap) {{
       clearInterval(timer);
       window.remdeskBootstrap(data);
+    }} else if (window.__remdeskReady) {{
+      clearInterval(timer);
+      applyInputs();
     }} else if (tries > 40) {{
       clearInterval(timer);
+      applyInputs();
     }}
   }}, 100);
 }})();

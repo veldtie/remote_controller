@@ -23,8 +23,47 @@
   const RTT_UPGRADE = 150;
   const PROFILE_HEIGHT_DOWN_SCALE = 0.85;
   const PROFILE_HEIGHT_UP_SCALE = 1.1;
-  const textEncoder = new TextEncoder();
-  const textDecoder = new TextDecoder();
+  const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+  const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+
+  function utf8Encode(value) {
+    if (textEncoder) {
+      return textEncoder.encode(value);
+    }
+    const encoded = unescape(encodeURIComponent(value));
+    const bytes = new Uint8Array(encoded.length);
+    for (let i = 0; i < encoded.length; i += 1) {
+      bytes[i] = encoded.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  function utf8Decode(value) {
+    if (textDecoder) {
+      return textDecoder.decode(value);
+    }
+    let bytes = null;
+    if (value instanceof ArrayBuffer) {
+      bytes = new Uint8Array(value);
+    } else if (ArrayBuffer.isView(value)) {
+      bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    } else if (typeof value === "string") {
+      return value;
+    } else if (value === null || value === undefined) {
+      return "";
+    } else {
+      return String(value);
+    }
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    try {
+      return decodeURIComponent(escape(binary));
+    } catch (error) {
+      return binary;
+    }
+  }
 
   const STREAM_PROFILES = {
     speed: { minHeight: 360, maxHeight: 480, minFps: 60, maxFps: 60 },
@@ -227,6 +266,29 @@
     dom.statusEl.textContent = message;
     dom.statusEl.dataset.state = stateKey;
   }
+
+  function reportScriptError(message) {
+    if (dom.statusEl) {
+      setStatus(message, "bad");
+    }
+    console.error(message);
+  }
+
+  window.addEventListener("error", (event) => {
+    if (!event) {
+      return;
+    }
+    const message = event.message || "Unexpected script error";
+    reportScriptError(`Script error: ${message}`);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    if (!event) {
+      return;
+    }
+    const reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+    reportScriptError(`Script error: ${reason || "Unhandled rejection"}`);
+  });
 
   function setRemoteStatus(message, stateKey = "") {
     dom.remoteStatus.textContent = message;
@@ -766,12 +828,12 @@
   async function deriveE2eeKey(passphrase, sessionId) {
     const keyMaterial = await crypto.subtle.importKey(
       "raw",
-      textEncoder.encode(passphrase),
+      utf8Encode(passphrase),
       { name: "PBKDF2" },
       false,
       ["deriveKey"]
     );
-    const salt = textEncoder.encode(`${E2EE_SALT_PREFIX}${sessionId}`);
+    const salt = utf8Encode(`${E2EE_SALT_PREFIX}${sessionId}`);
     return crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
@@ -791,7 +853,7 @@
     const ciphertext = await crypto.subtle.encrypt(
       { name: "AES-GCM", iv },
       state.e2eeContext.key,
-      textEncoder.encode(plaintext)
+      utf8Encode(plaintext)
     );
     return JSON.stringify({
       e2ee: 1,
@@ -811,7 +873,7 @@
       state.e2eeContext.key,
       ciphertext
     );
-    return textDecoder.decode(plaintext);
+      return utf8Decode(plaintext);
   }
 
   async function prepareE2ee(sessionId) {
@@ -844,11 +906,11 @@
       return data;
     }
     if (data instanceof ArrayBuffer) {
-      return textDecoder.decode(data);
+      return utf8Decode(data);
     }
     if (ArrayBuffer.isView(data)) {
       const view = data;
-      return textDecoder.decode(
+      return utf8Decode(
         view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
       );
     }
