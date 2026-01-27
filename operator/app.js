@@ -21,6 +21,7 @@
     peerConnection: null,
     controlChannel: null,
     signalingWebSocket: null,
+    connecting: false,
     rtcConfig: { iceServers: [] },
     controlEnabled: true,
     modeLocked: false,
@@ -489,8 +490,12 @@
 
   async function loadIceConfig(apiBase, authToken) {
     const headers = authToken ? { "x-rc-token": authToken } : {};
+    const iceUrl = new URL("/ice-config", apiBase);
+    if (authToken) {
+      iceUrl.searchParams.set("token", authToken);
+    }
     try {
-      const response = await fetch(`${apiBase}/ice-config`, { headers });
+      const response = await fetch(iceUrl.toString(), { headers });
       if (!response.ok) {
         throw new Error("Failed to load ICE config");
       }
@@ -537,6 +542,10 @@
   }
 
   async function connect() {
+    if (state.connecting) {
+      return;
+    }
+    state.connecting = true;
     setStatus("Connecting...", "warn");
     setConnected(false);
     setModeLocked(true);
@@ -553,6 +562,7 @@
       const reason = error && error.message ? error.message : "E2EE unavailable";
       setStatus(reason, "bad");
       setModeLocked(false);
+      state.connecting = false;
       return;
     }
 
@@ -564,18 +574,30 @@
       sessionId
     )}&role=browser&operator_id=${encodeURIComponent(state.operatorId)}${tokenParam}`;
 
-    state.signalingWebSocket = new WebSocket(wsUrl);
-    state.signalingWebSocket.onclose = () => {
+    const signalingSocket = new WebSocket(wsUrl);
+    state.signalingWebSocket = signalingSocket;
+    signalingSocket.onclose = () => {
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
+      state.connecting = false;
     };
-    state.signalingWebSocket.onerror = () => {
+    signalingSocket.onerror = () => {
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
+      state.connecting = false;
     };
-    state.signalingWebSocket.onmessage = async (event) => {
+    signalingSocket.onmessage = async (event) => {
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
       const payload = JSON.parse(event.data);
       if (payload.type === "answer") {
         await state.peerConnection.setRemoteDescription(payload);
@@ -589,9 +611,14 @@
       }
     };
 
-    state.signalingWebSocket.onopen = async () => {
+    signalingSocket.onopen = async () => {
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      state.connecting = false;
       state.peerConnection = new RTCPeerConnection(state.rtcConfig);
-      state.signalingWebSocket.send(
+      if (signalingSocket.readyState === WebSocket.OPEN) {
+        signalingSocket.send(
         JSON.stringify({
           type: "register",
           session_id: sessionId,
@@ -600,14 +627,15 @@
           mode: sessionMode,
           token: authToken || undefined
         })
-      );
+        );
+      }
 
       state.peerConnection.ontrack = (event) => {
         dom.screenEl.srcObject = event.streams[0];
       };
       state.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          state.signalingWebSocket.send(
+        if (event.candidate && signalingSocket.readyState === WebSocket.OPEN) {
+          signalingSocket.send(
             JSON.stringify({
               type: "ice",
               session_id: sessionId,
@@ -645,7 +673,8 @@
       const offer = await state.peerConnection.createOffer();
       await state.peerConnection.setLocalDescription(offer);
 
-      state.signalingWebSocket.send(
+      if (signalingSocket.readyState === WebSocket.OPEN) {
+        signalingSocket.send(
         JSON.stringify({
           type: state.peerConnection.localDescription.type,
           sdp: state.peerConnection.localDescription.sdp,
@@ -653,7 +682,8 @@
           operator_id: state.operatorId,
           mode: sessionMode
         })
-      );
+        );
+      }
     };
   }
 
