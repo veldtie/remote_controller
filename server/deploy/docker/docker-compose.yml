@@ -21,7 +21,7 @@ services:
       RC_DB_POOL_MAX: ${RC_DB_POOL_MAX:-5}
       RC_DB_CONNECT_RETRIES: ${RC_DB_CONNECT_RETRIES:-5}
       RC_DB_STATEMENT_CACHE_SIZE: ${RC_DB_STATEMENT_CACHE_SIZE:-0}
-      RC_ICE_SERVERS: ${RC_ICE_SERVERS}
+      RC_ICE_SERVERS: ${RC_ICE_SERVERS:-}
       RC_TURN_HOST: ${RC_TURN_HOST:-79.137.194.213}
       RC_TURN_PORT: ${RC_TURN_PORT:-3478}
       RC_TURN_USER: ${RC_TURN_USER:-remdesk}
@@ -91,10 +91,10 @@ services:
       - "--log-file=stdout"
       - "--lt-cred-mech"
       - "--fingerprint"
-      - "--realm=${RC_TURN_REALM}"
-      - "--user=${RC_TURN_USER}:${RC_TURN_PASSWORD}"
-      - "--external-ip=${RC_TURN_HOST}"
-      - "--listening-port=${RC_TURN_PORT}"
+      - "--realm=${RC_TURN_REALM:-remdesk}"
+      - "--user=${RC_TURN_USER:-remdesk}:${RC_TURN_PASSWORD:-remdesk-turn}"
+      - "--external-ip=${RC_TURN_HOST:-79.137.194.213}"
+      - "--listening-port=${RC_TURN_PORT:-3478}"
       - "--min-port=49160"
       - "--max-port=49200"
       - "--no-multicast-peers"
