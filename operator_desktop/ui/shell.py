@@ -8,7 +8,6 @@ from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from .common import ICON_DIR, animate_widget, make_button
-from .dialogs import StorageDialog
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
 from .pages.dashboard import DashboardPage
@@ -247,8 +246,8 @@ class MainShell(QtWidgets.QWidget):
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         client_name = client["name"] if client else client_id
         self.logger.log("log_storage_open", client=client_name)
-        dialog = StorageDialog(self.i18n, self.logger, client_name, self)
-        dialog.exec()
+        if not self._open_session(client_id, open_storage=True):
+            return
 
     def toggle_connection(self, client_id: str, currently_connected: bool) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -326,16 +325,23 @@ class MainShell(QtWidgets.QWidget):
             token = DEFAULT_API_TOKEN
         return token
 
-    def _open_session(self, client_id: str) -> bool:
+    def _open_session(self, client_id: str, open_storage: bool = False) -> bool:
+        base_url = self._resolve_server_url()
+        token = self._resolve_api_token()
         if client_id in self._session_windows:
             window = self._session_windows[client_id]
+            window.apply_context(
+                server_url=base_url,
+                token=token,
+                session_id=client_id,
+                auto_connect=True,
+                open_storage=open_storage,
+            )
             window.raise_()
             window.activateWindow()
             return True
 
-        base_url = self._resolve_server_url()
-        token = self._resolve_api_token()
-        session_url = build_session_url(base_url, client_id, token)
+        session_url = build_session_url(base_url, client_id, token, open_storage=open_storage)
 
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
@@ -345,7 +351,7 @@ class MainShell(QtWidgets.QWidget):
             )
             return False
 
-        dialog = RemoteSessionDialog(client_id, session_url, self)
+        dialog = RemoteSessionDialog(client_id, session_url, base_url, token, open_storage, self)
         dialog.closed.connect(self._handle_session_closed)
         self._session_windows[client_id] = dialog
         dialog.show()

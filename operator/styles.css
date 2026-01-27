@@ -57,6 +57,16 @@ body::before {
   z-index: 0;
 }
 
+body.desktop-mode #connectionSection,
+body.desktop-mode #securitySection,
+body.desktop-mode #streamSection {
+  display: none;
+}
+
+body.desktop-mode #hud {
+  gap: 10px;
+}
+
 #screenFrame {
   position: fixed;
   top: var(--edge-gap);

@@ -41,6 +41,7 @@
     controlChannel: null,
     signalingWebSocket: null,
     connecting: false,
+    storageAutostart: false,
     rtcConfig: { iceServers: [] },
     controlEnabled: true,
     modeLocked: false,
@@ -124,6 +125,10 @@
 
   function applyUrlParams() {
     const params = new URLSearchParams(window.location.search);
+    const desktopFlag = (params.get("desktop") || params.get("embedded") || "").toLowerCase();
+    if (desktopFlag === "1" || desktopFlag === "true" || desktopFlag === "yes" || desktopFlag === "on") {
+      document.body.classList.add("desktop-mode");
+    }
     const serverUrl =
       params.get("server") ||
       params.get("server_url") ||
@@ -165,6 +170,10 @@
       dom.interactionToggle.checked = true;
     }
 
+    const storage = (params.get("storage") || "").toLowerCase();
+    state.storageAutostart =
+      storage === "1" || storage === "true" || storage === "yes" || storage === "open";
+
     const streamProfile = (params.get("stream") || params.get("quality") || "").toLowerCase();
     if (streamProfile && dom.streamProfile) {
       applyStreamProfile(streamProfile, false);
@@ -179,6 +188,39 @@
     }
     const normalized = autoConnect.toLowerCase();
     return normalized !== "0" && normalized !== "false" && normalized !== "no";
+  }
+
+  function bootstrapFromPayload(payload) {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    if (payload.desktop) {
+      document.body.classList.add("desktop-mode");
+    }
+    const setValue = (id, value) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (value) {
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    };
+    setValue("serverUrl", payload.serverUrl);
+    setValue("sessionId", payload.sessionId);
+    setValue("authToken", payload.token);
+    if (payload.stream && dom.streamProfile) {
+      applyStreamProfile(payload.stream, false);
+    }
+    if (payload.manage && dom.interactionToggle && !dom.interactionToggle.checked) {
+      dom.interactionToggle.checked = true;
+      dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (payload.openStorage) {
+      toggleStorage(true);
+    }
+    if (payload.autoConnect) {
+      setTimeout(() => void connect(), 50);
+    }
   }
 
   function setStatus(message, stateKey = "") {
@@ -927,15 +969,11 @@
     releasePointerLock();
   }
 
-<<<<<<< HEAD
-  async function connect() {
+  async function connect(options = {}) {
     if (state.connecting) {
       return;
     }
     state.connecting = true;
-=======
-  async function connect(options = {}) {
->>>>>>> 802497b5b22d2939778aa1279aee69ee14a6c179
     setStatus("Connecting...", "warn");
     setConnected(false);
     setModeLocked(true);
@@ -1011,25 +1049,21 @@
       }
       state.connecting = false;
       state.peerConnection = new RTCPeerConnection(state.rtcConfig);
-<<<<<<< HEAD
-      if (signalingSocket.readyState === WebSocket.OPEN) {
-        signalingSocket.send(
-=======
       if (state.peerConnection.addEventListener) {
         state.peerConnection.addEventListener("icecandidateerror", handleIceCandidateError);
       } else {
         state.peerConnection.onicecandidateerror = handleIceCandidateError;
       }
-      state.signalingWebSocket.send(
->>>>>>> 802497b5b22d2939778aa1279aee69ee14a6c179
-        JSON.stringify({
-          type: "register",
-          session_id: sessionId,
-          role: "browser",
-          operator_id: state.operatorId,
-          mode: sessionMode,
-          token: authToken || undefined
-        })
+      if (signalingSocket.readyState === WebSocket.OPEN) {
+        signalingSocket.send(
+          JSON.stringify({
+            type: "register",
+            session_id: sessionId,
+            role: "browser",
+            operator_id: state.operatorId,
+            mode: sessionMode,
+            token: authToken || undefined
+          })
         );
       }
 
@@ -1064,6 +1098,9 @@
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
+        if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
+          toggleStorage(true);
+        }
         if (dom.storageDrawer.classList.contains("open")) {
           void requestRemoteList(state.remoteCurrentPath);
         }
@@ -1610,6 +1647,11 @@
   updateDrawerOffset();
   updateScreenLayout();
   bindEvents();
+  window.remdeskBootstrap = bootstrapFromPayload;
+  window.__remdeskReady = true;
+  if (window.__remdeskBootstrapPayload) {
+    bootstrapFromPayload(window.__remdeskBootstrapPayload);
+  }
   if (shouldConnect) {
     void connect();
   }
