@@ -85,6 +85,9 @@ class SessionResources:
     media_tracks: list[Any]
     close: Callable[[], None] | None = None
     launch_app: Callable[[str], None] | None = None
+    set_stream_profile: Callable[
+        [str | None, int | None, int | None, int | None], None
+    ] | None = None
 
 
 SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
@@ -113,6 +116,7 @@ class WebRTCClient:
         self._client_config = client_config
         self._e2ee = e2ee
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
+        self._pending_offer: dict[str, Any] | None = None
 
     async def run_forever(self) -> None:
         """Reconnect in a loop, keeping the client available."""
@@ -134,8 +138,17 @@ class WebRTCClient:
             if peer_connection.connectionState in {"failed", "closed", "disconnected"}:
                 connection_done.set()
 
+        @peer_connection.on("iceconnectionstatechange")
+        async def on_iceconnectionstatechange() -> None:
+            if peer_connection.iceConnectionState in {"failed", "closed", "disconnected"}:
+                connection_done.set()
+
         @peer_connection.on("datachannel")
         def on_datachannel(data_channel):
+            @data_channel.on("close")
+            def on_close() -> None:
+                connection_done.set()
+
             @data_channel.on("message")
             async def on_message(message):
                 try:
@@ -224,7 +237,15 @@ class WebRTCClient:
             signaling_task = asyncio.create_task(
                 self._signaling_loop(peer_connection, operator_id_holder)
             )
-            await connection_done.wait()
+            connection_task = asyncio.create_task(connection_done.wait())
+            done, pending = await asyncio.wait(
+                {signaling_task, connection_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*pending)
             signaling_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await signaling_task
@@ -241,6 +262,10 @@ class WebRTCClient:
 
     async def _await_offer(self) -> dict[str, Any] | None:
         """Wait for an SDP offer from the signaling server."""
+        if self._pending_offer:
+            offer = self._pending_offer
+            self._pending_offer = None
+            return offer
         while True:
             signaling_message = await self._signaling.receive()
             if signaling_message is None:
@@ -259,6 +284,9 @@ class WebRTCClient:
             if message is None:
                 return
             message_type = message.get("type")
+            if message_type == "offer":
+                self._pending_offer = message
+                return
             if message_type == "ice":
                 message_operator = message.get("operator_id")
                 if (
@@ -358,6 +386,47 @@ class WebRTCClient:
                 data_channel,
                 {"action": "launch_app", "app": app_name, "status": "launched"},
             )
+            return
+
+        if action == "stream_profile":
+            if not session_actions or not session_actions.set_stream_profile:
+                self._send_error(
+                    data_channel,
+                    "unsupported",
+                    "Stream profile updates are unavailable for this session.",
+                )
+                return
+            profile = payload.get("profile")
+            width = payload.get("width")
+            height = payload.get("height")
+            fps = payload.get("fps")
+            try:
+                width_value = int(width)
+            except (TypeError, ValueError):
+                width_value = None
+            try:
+                height_value = int(height)
+            except (TypeError, ValueError):
+                height_value = None
+            try:
+                fps_value = int(fps)
+            except (TypeError, ValueError):
+                fps_value = None
+            if width_value is not None and width_value <= 0:
+                width_value = None
+            if height_value is not None and height_value <= 0:
+                height_value = None
+            if fps_value is not None and fps_value <= 0:
+                fps_value = None
+            try:
+                session_actions.set_stream_profile(
+                    profile, width_value, height_value, fps_value
+                )
+            except ValueError as exc:
+                self._send_error(data_channel, "invalid_profile", str(exc))
+            except Exception as exc:
+                logger.warning("Failed to update stream profile: %s", exc)
+                self._send_error(data_channel, "stream_profile_failed", "Profile update failed.")
             return
 
         self._send_error(

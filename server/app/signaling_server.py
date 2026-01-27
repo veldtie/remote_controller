@@ -34,6 +34,11 @@ DB_STATEMENT_CACHE_SIZE = int(os.getenv("RC_DB_STATEMENT_CACHE_SIZE", "0"))
 TRUST_PROXY = os.getenv("RC_TRUST_PROXY", "").lower() in {"1", "true", "yes", "on"}
 API_TOKEN = os.getenv("RC_API_TOKEN", "").strip()
 CONNECTED_TIME_INTERVAL = float(os.getenv("RC_CONNECTED_TIME_INTERVAL", "1"))
+TURN_HOST = os.getenv("RC_TURN_HOST", "").strip()
+TURN_PORT = int(os.getenv("RC_TURN_PORT", "3478"))
+TURN_USER = os.getenv("RC_TURN_USER", "").strip()
+TURN_PASSWORD = os.getenv("RC_TURN_PASSWORD", "").strip()
+INCLUDE_PUBLIC_STUN = os.getenv("RC_INCLUDE_PUBLIC_STUN", "1").lower() in {"1", "true", "yes", "on"}
 
 logging.basicConfig(
     level=os.getenv("RC_LOG_LEVEL", "INFO"),
@@ -118,13 +123,35 @@ def _load_ice_servers() -> list[dict[str, object]]:
     return _normalize_ice_servers(parsed)
 
 
-DEFAULT_ICE_SERVERS = [
+PUBLIC_STUN_SERVERS = [
     {"urls": ["stun:stun.l.google.com:19302"]},
     {"urls": ["stun:stun1.l.google.com:19302"]},
     {"urls": ["stun:stun.cloudflare.com:3478"]},
 ]
 
-ICE_SERVERS = _load_ice_servers() or DEFAULT_ICE_SERVERS
+
+def _build_default_ice_servers() -> list[dict[str, object]]:
+    servers: list[dict[str, object]] = []
+    if TURN_HOST:
+        stun_url = f"stun:{TURN_HOST}:{TURN_PORT}"
+        servers.append({"urls": [stun_url]})
+        if TURN_USER and TURN_PASSWORD:
+            servers.append(
+                {
+                    "urls": [
+                        f"turn:{TURN_HOST}:{TURN_PORT}?transport=udp",
+                        f"turn:{TURN_HOST}:{TURN_PORT}?transport=tcp",
+                    ],
+                    "username": TURN_USER,
+                    "credential": TURN_PASSWORD,
+                }
+            )
+    if INCLUDE_PUBLIC_STUN or not servers:
+        servers.extend(PUBLIC_STUN_SERVERS)
+    return servers
+
+
+ICE_SERVERS = _load_ice_servers() or _build_default_ice_servers()
 SIGNALING_TOKEN = _load_signaling_token()
 
 DEVICE_REGISTRY_SCHEMA = [

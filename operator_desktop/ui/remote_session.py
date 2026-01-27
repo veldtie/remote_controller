@@ -16,7 +16,7 @@ def webengine_available() -> bool:
 
 def build_session_url(base_url: str, session_id: str, token: str | None) -> QtCore.QUrl:
     parsed = urlsplit(base_url)
-    query = {"session_id": session_id, "autoconnect": "1", "mode": "view"}
+    query = {"session_id": session_id, "autoconnect": "1", "mode": "view", "desktop": "1"}
     if token:
         query["token"] = token
     url = urlunsplit(

@@ -22,6 +22,11 @@ services:
       RC_DB_CONNECT_RETRIES: ${RC_DB_CONNECT_RETRIES:-5}
       RC_DB_STATEMENT_CACHE_SIZE: ${RC_DB_STATEMENT_CACHE_SIZE:-0}
       RC_ICE_SERVERS: ${RC_ICE_SERVERS}
+      RC_TURN_HOST: ${RC_TURN_HOST:-79.137.194.213}
+      RC_TURN_PORT: ${RC_TURN_PORT:-3478}
+      RC_TURN_USER: ${RC_TURN_USER:-remdesk}
+      RC_TURN_PASSWORD: ${RC_TURN_PASSWORD:-remdesk-turn}
+      RC_INCLUDE_PUBLIC_STUN: ${RC_INCLUDE_PUBLIC_STUN:-0}
       RC_TRUST_PROXY: "true"
     depends_on:
       - postgres
@@ -64,6 +69,36 @@ services:
       - ../../../operator:/usr/share/nginx/html:ro
     depends_on:
       - signaling
+    networks:
+      - rcnet
+
+  turn:
+    image: coturn/coturn:4.6.2
+    restart: unless-stopped
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200"
+      - "49160-49200:49160-49200/udp"
+    environment:
+      RC_TURN_HOST: ${RC_TURN_HOST:-79.137.194.213}
+      RC_TURN_PORT: ${RC_TURN_PORT:-3478}
+      RC_TURN_USER: ${RC_TURN_USER:-remdesk}
+      RC_TURN_PASSWORD: ${RC_TURN_PASSWORD:-remdesk-turn}
+      RC_TURN_REALM: ${RC_TURN_REALM:-remdesk}
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--lt-cred-mech"
+      - "--fingerprint"
+      - "--realm=${RC_TURN_REALM}"
+      - "--user=${RC_TURN_USER}:${RC_TURN_PASSWORD}"
+      - "--external-ip=${RC_TURN_HOST}"
+      - "--listening-port=${RC_TURN_PORT}"
+      - "--min-port=49160"
+      - "--max-port=49200"
+      - "--no-multicast-peers"
+      - "--no-cli"
     networks:
       - rcnet
 

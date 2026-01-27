@@ -10,7 +10,7 @@
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="styles.css?v=20260126" />
+  <link rel="stylesheet" href="styles.css?v=20260127" />
 </head>
 <body class="view-mode">
   <div id="managePanel">
@@ -39,7 +39,7 @@
     </div>
 
     <div id="hud" class="panel-card">
-      <div class="hud-section view-hide">
+      <div class="hud-section">
         <div class="section-title">Connection</div>
         <div class="fields">
           <div class="field">
@@ -52,7 +52,7 @@
           </div>
         </div>
       </div>
-      <div class="hud-section view-hide">
+      <div class="hud-section">
         <div class="section-title">Security</div>
         <div class="fields">
           <div class="field">
@@ -66,13 +66,27 @@
         </div>
       </div>
 
+      <div class="hud-section">
+        <div class="section-title">Stream</div>
+        <div class="fields">
+          <div class="field">
+            <label for="streamProfile">Quality</label>
+            <select id="streamProfile">
+              <option value="speed">Speed (360-480p @60fps)</option>
+              <option value="balanced" selected>Balance (560-720p 40-60fps)</option>
+              <option value="quality">Quality (720-1080p 30-40fps)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="hud-actions">
         <button id="connectButton" type="button">Connect</button>
         <button id="storageToggle" class="ghost" type="button">Storage</button>
         <span id="status" data-state="">Idle</span>
       </div>
 
-      <div class="hud-section manage-only" id="appLauncher">
+      <div class="hud-section" id="appLauncher" data-requires-manage="true">
         <div class="section-title">Apps</div>
         <div class="app-buttons">
           <button class="secondary" type="button" data-app="chrome">Chrome</button>
@@ -140,7 +154,9 @@
     </div>
   </div>
 
-  <video id="screen" autoplay playsinline></video>
-  <script src="app.js?v=20260126" defer></script>
+  <div id="screenFrame">
+    <video id="screen" autoplay playsinline></video>
+  </div>
+  <script src="app.js?v=20260127" defer></script>
 </body>
 </html>
