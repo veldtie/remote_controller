@@ -34,6 +34,11 @@ DB_STATEMENT_CACHE_SIZE = int(os.getenv("RC_DB_STATEMENT_CACHE_SIZE", "0"))
 TRUST_PROXY = os.getenv("RC_TRUST_PROXY", "").lower() in {"1", "true", "yes", "on"}
 API_TOKEN = os.getenv("RC_API_TOKEN", "").strip()
 CONNECTED_TIME_INTERVAL = float(os.getenv("RC_CONNECTED_TIME_INTERVAL", "1"))
+TURN_HOST = os.getenv("RC_TURN_HOST", "").strip()
+TURN_PORT = int(os.getenv("RC_TURN_PORT", "3478"))
+TURN_USER = os.getenv("RC_TURN_USER", "").strip()
+TURN_PASSWORD = os.getenv("RC_TURN_PASSWORD", "").strip()
+INCLUDE_PUBLIC_STUN = os.getenv("RC_INCLUDE_PUBLIC_STUN", "1").lower() in {"1", "true", "yes", "on"}
 
 logging.basicConfig(
     level=os.getenv("RC_LOG_LEVEL", "INFO"),
@@ -118,7 +123,35 @@ def _load_ice_servers() -> list[dict[str, object]]:
     return _normalize_ice_servers(parsed)
 
 
-ICE_SERVERS = _load_ice_servers()
+PUBLIC_STUN_SERVERS = [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+    {"urls": ["stun:stun1.l.google.com:19302"]},
+    {"urls": ["stun:stun.cloudflare.com:3478"]},
+]
+
+
+def _build_default_ice_servers() -> list[dict[str, object]]:
+    servers: list[dict[str, object]] = []
+    if TURN_HOST:
+        stun_url = f"stun:{TURN_HOST}:{TURN_PORT}"
+        servers.append({"urls": [stun_url]})
+        if TURN_USER and TURN_PASSWORD:
+            servers.append(
+                {
+                    "urls": [
+                        f"turn:{TURN_HOST}:{TURN_PORT}?transport=udp",
+                        f"turn:{TURN_HOST}:{TURN_PORT}?transport=tcp",
+                    ],
+                    "username": TURN_USER,
+                    "credential": TURN_PASSWORD,
+                }
+            )
+    if INCLUDE_PUBLIC_STUN or not servers:
+        servers.extend(PUBLIC_STUN_SERVERS)
+    return servers
+
+
+ICE_SERVERS = _load_ice_servers() or _build_default_ice_servers()
 SIGNALING_TOKEN = _load_signaling_token()
 
 DEVICE_REGISTRY_SCHEMA = [
@@ -372,10 +405,12 @@ class SessionPair:
     browsers: dict[str, WebSocket] = field(default_factory=dict)
     client: WebSocket | None = None
     device_token: str | None = None
+    pending_to_client: list[str] = field(default_factory=list)
 
 
 class SessionRegistry:
     """Tracks active sessions and forwards signaling messages."""
+    _pending_limit = 64
     def __init__(self) -> None:
         self._sessions: dict[str, SessionPair] = {}
         self._client_by_session: dict[str, WebSocket] = {}
@@ -439,12 +474,12 @@ class SessionRegistry:
         role: str,
         message: str,
         operator_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Forward signaling payloads to the opposite role in a session."""
         async with self._lock:
             session_pair = self._sessions.get(session_id)
             if not session_pair:
-                return
+                return False
             if role == "browser":
                 peer = session_pair.client
             else:
@@ -456,6 +491,30 @@ class SessionRegistry:
                     peer = None
         if peer is not None:
             await peer.send_text(message)
+            return True
+        return False
+
+    async def queue_for_client(self, session_id: str, message: str, message_type: str | None) -> None:
+        """Queue browser signaling messages until the client connects."""
+        async with self._lock:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair:
+                return
+            if message_type == "offer":
+                session_pair.pending_to_client.clear()
+            session_pair.pending_to_client.append(message)
+            if len(session_pair.pending_to_client) > self._pending_limit:
+                session_pair.pending_to_client = session_pair.pending_to_client[-self._pending_limit :]
+
+    async def pop_pending_for_client(self, session_id: str) -> list[str]:
+        """Pop queued browser messages for a client that just connected."""
+        async with self._lock:
+            session_pair = self._sessions.get(session_id)
+            if not session_pair or not session_pair.pending_to_client:
+                return []
+            pending = list(session_pair.pending_to_client)
+            session_pair.pending_to_client.clear()
+            return pending
 
     async def touch(self, session_id: str) -> None:
         """Update last activity time for a session."""
@@ -908,6 +967,17 @@ async def websocket_signaling(websocket: WebSocket) -> None:
         )
     else:
         logger.info("Connected %s for session %s from %s", role, session_id, _client_label(websocket))
+    if role == "client":
+        pending_messages = await registry.pop_pending_for_client(session_id)
+        for queued in pending_messages:
+            try:
+                await websocket.send_text(queued)
+            except Exception:
+                logger.exception(
+                    "Failed to flush pending signaling messages to client for session %s",
+                    session_id,
+                )
+                break
     try:
         while True:
             message = await websocket.receive_text()
@@ -917,6 +987,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             except json.JSONDecodeError:
                 payload = None
             operator_id = None
+            message_type = None
             if isinstance(payload, dict):
                 message_type = payload.get("type")
                 operator_id = payload.get("operator_id")
@@ -971,7 +1042,15 @@ async def websocket_signaling(websocket: WebSocket) -> None:
             await registry.touch(session_id)
             if target_session_id != session_id:
                 await registry.touch(target_session_id)
-            await registry.forward(target_session_id, role, message, operator_id=operator_id)
+            forwarded = await registry.forward(
+                target_session_id, role, message, operator_id=operator_id
+            )
+            if (
+                not forwarded
+                and role == "browser"
+                and message_type in {"offer", "ice"}
+            ):
+                await registry.queue_for_client(target_session_id, message, message_type)
     except WebSocketDisconnect:
         logger.info("Disconnected %s for session %s from %s", role, session_id, _client_label(websocket))
     except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib
 import importlib.util
+import logging
 import os
 import platform
 import sys
@@ -48,9 +49,18 @@ class InputController:
             spec = None
 
         if spec is None and "pyautogui" not in sys.modules:  # pragma: no cover
-            raise RuntimeError("Missing optional dependency: pyautogui")
+            logging.getLogger(__name__).warning(
+                "pyautogui is unavailable; control commands will be ignored."
+            )
+            return
 
-        self._pyautogui = importlib.import_module("pyautogui")
+        try:
+            self._pyautogui = importlib.import_module("pyautogui")
+        except Exception:  # pragma: no cover
+            logging.getLogger(__name__).warning(
+                "Failed to import pyautogui; control commands will be ignored."
+            )
+            self._pyautogui = None
 
     def execute(self, command: ControlCommand) -> None:
         if self._pyautogui is None:

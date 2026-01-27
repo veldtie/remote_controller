@@ -51,6 +51,7 @@ class BuilderWorker(QtCore.QThread):
 
         self._cleanup_output_dir()
         add_data_args, temp_dir = self._build_add_data_args()
+        collect_args = self._build_collect_args()
         cmd = [
             sys.executable,
             "-m",
@@ -66,6 +67,7 @@ class BuilderWorker(QtCore.QThread):
         if self.options.icon_path:
             cmd.extend(["--icon", str(self.options.icon_path)])
         cmd.extend(["--distpath", str(self.options.output_dir)])
+        cmd.extend(collect_args)
         cmd.extend(add_data_args)
         cmd.append(str(self.options.entrypoint))
 
@@ -90,6 +92,20 @@ class BuilderWorker(QtCore.QThread):
         finally:
             if temp_dir is not None:
                 temp_dir.cleanup()
+
+    def _build_collect_args(self) -> list[str]:
+        args: list[str] = []
+        optional_modules = [
+            "pyautogui",
+        ]
+        for module in optional_modules:
+            if importlib.util.find_spec(module) is None:
+                self.log_line.emit(
+                    f"Optional module '{module}' not installed; manage control will be disabled."
+                )
+                continue
+            args.extend(["--collect-all", module])
+        return args
 
     def _cleanup_output_dir(self) -> None:
         output_dir = self.options.output_dir

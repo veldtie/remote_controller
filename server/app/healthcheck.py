@@ -6,6 +6,8 @@ import urllib.request
 def _load_token() -> str:
     token = os.getenv("RC_SIGNALING_TOKEN", "").strip()
     token_path = os.getenv("RC_SIGNALING_TOKEN_FILE", "/data/signaling_token")
+    if token:
+        return token
     if token_path:
         try:
             with open(token_path, "r", encoding="utf-8") as handle:

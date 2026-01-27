@@ -10,8 +10,27 @@
   const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
   const E2EE_PBKDF2_ITERS = 150000;
   const E2EE_SALT_PREFIX = "remote-controller:";
+  const CONTROL_MOVE_INTERVAL_MS = 33;
+  const STORAGE_TIMEOUT_MS = 10000;
+  const STREAM_HINT_DEBOUNCE_MS = 250;
+  const STREAM_HINT_THRESHOLD = 40;
+  const NETWORK_STATS_INTERVAL_MS = 2000;
+  const NETWORK_ADAPT_COOLDOWN_MS = 4000;
+  const NETWORK_BPP = 0.08;
+  const LOSS_DEGRADE = 0.08;
+  const LOSS_UPGRADE = 0.02;
+  const RTT_DEGRADE = 300;
+  const RTT_UPGRADE = 150;
+  const PROFILE_HEIGHT_DOWN_SCALE = 0.85;
+  const PROFILE_HEIGHT_UP_SCALE = 1.1;
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
+
+  const STREAM_PROFILES = {
+    speed: { minHeight: 360, maxHeight: 480, minFps: 60, maxFps: 60 },
+    balanced: { minHeight: 560, maxHeight: 720, minFps: 40, maxFps: 60 },
+    quality: { minHeight: 720, maxHeight: 1080, minFps: 30, maxFps: 40 }
+  };
 
   const state = {
     operatorId:
@@ -35,7 +54,24 @@
     cursorY: 0,
     cursorLocked: false,
     cursorInitialized: false,
-    cursorBounds: { width: 0, height: 0 }
+    cursorBounds: { width: 0, height: 0 },
+    pendingMove: null,
+    pendingDelta: null,
+    lastMoveSentAt: 0,
+    moveTimer: null,
+    lastSentPosition: null,
+    storageTimer: null,
+    streamProfile: "balanced",
+    streamHintTimer: null,
+    lastStreamHint: null,
+    statsTimer: null,
+    netStats: null,
+    netTargetHeight: null,
+    netTargetFps: null,
+    netLastAdaptAt: 0,
+    networkHint: { height: null, fps: null },
+    iceErrorCount: 0,
+    iceFallbackTried: false
   };
 
   const dom = {
@@ -57,11 +93,14 @@
     remoteStatus: document.getElementById("remoteStatus"),
     downloadStatus: document.getElementById("downloadStatus"),
     downloadList: document.getElementById("downloadList"),
+    screenFrame: document.getElementById("screenFrame"),
     screenEl: document.getElementById("screen"),
     connectButton: document.getElementById("connectButton"),
     remoteGo: document.getElementById("remoteGo"),
     remoteUp: document.getElementById("remoteUp"),
-    remoteRefresh: document.getElementById("remoteRefresh")
+    remoteRefresh: document.getElementById("remoteRefresh"),
+    manageOnly: Array.from(document.querySelectorAll("[data-requires-manage]")),
+    streamProfile: document.getElementById("streamProfile")
   };
 
   function initDefaults() {
@@ -77,6 +116,9 @@
       if (!dom.e2eeKeyInput.value && storedPassphrase) {
         dom.e2eeKeyInput.value = storedPassphrase;
       }
+    }
+    if (dom.streamProfile) {
+      applyStreamProfile(dom.streamProfile.value, false);
     }
   }
 
@@ -123,6 +165,11 @@
       dom.interactionToggle.checked = true;
     }
 
+    const streamProfile = (params.get("stream") || params.get("quality") || "").toLowerCase();
+    if (streamProfile && dom.streamProfile) {
+      applyStreamProfile(streamProfile, false);
+    }
+
     const autoConnect =
       params.get("autoconnect") ||
       params.get("connect") ||
@@ -142,6 +189,13 @@
   function setRemoteStatus(message, stateKey = "") {
     dom.remoteStatus.textContent = message;
     dom.remoteStatus.dataset.state = stateKey;
+  }
+
+  function clearStorageTimeout() {
+    if (state.storageTimer) {
+      clearTimeout(state.storageTimer);
+      state.storageTimer = null;
+    }
   }
 
   function setDownloadStatus(message, stateKey = "") {
@@ -183,8 +237,34 @@
     state.isConnected = connected;
     if (!connected) {
       setRemoteStatus("Not connected", "warn");
+      clearStorageTimeout();
+      if (state.streamHintTimer) {
+        clearTimeout(state.streamHintTimer);
+        state.streamHintTimer = null;
+      }
+      state.lastStreamHint = null;
+      stopStatsMonitor();
     }
     updateAppLaunchAvailability();
+  }
+
+  function applyStreamProfile(profile, shouldSend = true) {
+    const normalized = (profile || "").toLowerCase();
+    const allowed = new Set(["speed", "balanced", "quality"]);
+    const next = allowed.has(normalized) ? normalized : "balanced";
+    state.streamProfile = next;
+    if (dom.streamProfile && dom.streamProfile.value !== next) {
+      dom.streamProfile.value = next;
+    }
+    state.netTargetHeight = null;
+    state.netTargetFps = null;
+    state.netStats = null;
+    state.networkHint = { height: null, fps: null };
+    state.lastStreamHint = null;
+    if (shouldSend && state.isConnected) {
+      void sendStreamProfile(next);
+      scheduleStreamHint();
+    }
   }
 
   function updateInteractionMode() {
@@ -195,13 +275,23 @@
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
     updateAppLaunchAvailability();
+    const disableManage = !state.controlEnabled;
+    dom.manageOnly.forEach((section) => {
+      section.classList.toggle("disabled", disableManage);
+      section
+        .querySelectorAll("button, input, select, textarea")
+        .forEach((control) => {
+          control.disabled = disableManage;
+          control.setAttribute("aria-disabled", disableManage.toString());
+        });
+    });
     if (!state.controlEnabled) {
       releasePointerLock();
     }
   }
 
   function releasePointerLock() {
-    if (document.pointerLockElement === dom.screenEl) {
+    if (document.pointerLockElement === dom.screenFrame) {
       document.exitPointerLock();
     }
   }
@@ -210,8 +300,36 @@
     return Math.min(Math.max(value, min), max);
   }
 
+  function getProfileBounds(profile) {
+    return STREAM_PROFILES[profile] || STREAM_PROFILES.balanced;
+  }
+
+  function computeExpectedBitrateKbps(height, fps, aspectRatio) {
+    if (!height || !fps) {
+      return null;
+    }
+    const width = Math.max(1, Math.round(height * aspectRatio));
+    return (width * height * fps * NETWORK_BPP) / 1000;
+  }
+
+  function buildStreamHint() {
+    const base = getStreamHintSize();
+    if (!base) {
+      return null;
+    }
+    let width = base.width;
+    let height = base.height;
+    if (state.networkHint && state.networkHint.height && height > state.networkHint.height) {
+      const ratio = state.networkHint.height / height;
+      height = state.networkHint.height;
+      width = Math.round(width * ratio);
+    }
+    const fps = state.networkHint ? state.networkHint.fps : null;
+    return { width, height, fps };
+  }
+
   function getVideoMetrics() {
-    const rect = dom.screenEl.getBoundingClientRect();
+    const rect = dom.screenFrame.getBoundingClientRect();
     const videoWidth = dom.screenEl.videoWidth || rect.width;
     const videoHeight = dom.screenEl.videoHeight || rect.height;
     if (!videoWidth || !videoHeight || !rect.width || !rect.height) {
@@ -231,6 +349,222 @@
       offsetX,
       offsetY
     };
+  }
+
+  function updateScreenLayout() {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      dom.screenEl.style.width = "100%";
+      dom.screenEl.style.height = "100%";
+      return;
+    }
+    dom.screenEl.style.width = `${Math.floor(metrics.renderWidth)}px`;
+    dom.screenEl.style.height = `${Math.floor(metrics.renderHeight)}px`;
+    scheduleStreamHint();
+  }
+
+  function getStreamHintSize() {
+    const rect = dom.screenFrame.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+    const scale = window.devicePixelRatio || 1;
+    return {
+      width: Math.round(rect.width * scale),
+      height: Math.round(rect.height * scale)
+    };
+  }
+
+  function scheduleStreamHint() {
+    if (!state.isConnected) {
+      return;
+    }
+    if (state.streamHintTimer) {
+      clearTimeout(state.streamHintTimer);
+    }
+    state.streamHintTimer = setTimeout(() => {
+      state.streamHintTimer = null;
+      if (!state.isConnected) {
+        return;
+      }
+      const hint = buildStreamHint();
+      if (!hint) {
+        return;
+      }
+      const last = state.lastStreamHint;
+      if (
+        last &&
+        Math.abs(hint.width - last.width) < STREAM_HINT_THRESHOLD &&
+        Math.abs(hint.height - last.height) < STREAM_HINT_THRESHOLD &&
+        (hint.fps || null) === (last.fps || null)
+      ) {
+        return;
+      }
+      state.lastStreamHint = hint;
+      void sendStreamProfile(state.streamProfile, hint.width, hint.height, hint.fps);
+    }, STREAM_HINT_DEBOUNCE_MS);
+  }
+
+  function stopStatsMonitor() {
+    if (state.statsTimer) {
+      clearInterval(state.statsTimer);
+      state.statsTimer = null;
+    }
+    state.netStats = null;
+    state.netTargetHeight = null;
+    state.netTargetFps = null;
+    state.netLastAdaptAt = 0;
+    state.networkHint = { height: null, fps: null };
+  }
+
+  function handleIceCandidateError(event) {
+    if (!event || !event.url) {
+      return;
+    }
+    const url = event.url || "";
+    if (!url.startsWith("stun:") && !url.startsWith("turn:")) {
+      return;
+    }
+    state.iceErrorCount += 1;
+    if (state.iceFallbackTried || state.isConnected) {
+      return;
+    }
+    if (state.iceErrorCount < 2) {
+      return;
+    }
+    state.iceFallbackTried = true;
+    setStatus("STUN failed, retrying without STUN", "warn");
+    void connect({ disableIce: true });
+  }
+
+  function startStatsMonitor() {
+    stopStatsMonitor();
+    state.statsTimer = setInterval(() => {
+      void pollStats();
+    }, NETWORK_STATS_INTERVAL_MS);
+  }
+
+  async function pollStats() {
+    if (!state.peerConnection || !state.isConnected) {
+      return;
+    }
+    let stats;
+    try {
+      stats = await state.peerConnection.getStats();
+    } catch (error) {
+      return;
+    }
+    let inbound = null;
+    let candidate = null;
+    stats.forEach((report) => {
+      if (report.type === "inbound-rtp" && report.kind === "video" && !report.isRemote) {
+        inbound = report;
+      }
+      if (report.type === "candidate-pair" && report.state === "succeeded") {
+        if (report.nominated || report.selected) {
+          candidate = report;
+        }
+      }
+    });
+    if (!inbound) {
+      return;
+    }
+    const timestamp = inbound.timestamp || performance.now();
+    const bytesReceived = inbound.bytesReceived || 0;
+    const packetsReceived = inbound.packetsReceived || 0;
+    const packetsLost = inbound.packetsLost || 0;
+
+    if (!state.netStats) {
+      state.netStats = {
+        timestamp,
+        bytesReceived,
+        packetsReceived,
+        packetsLost
+      };
+      return;
+    }
+
+    const deltaTime = (timestamp - state.netStats.timestamp) / 1000;
+    if (!deltaTime || deltaTime <= 0) {
+      state.netStats = {
+        timestamp,
+        bytesReceived,
+        packetsReceived,
+        packetsLost
+      };
+      return;
+    }
+
+    const deltaBytes = bytesReceived - state.netStats.bytesReceived;
+    const deltaPacketsReceived = packetsReceived - state.netStats.packetsReceived;
+    const deltaPacketsLost = packetsLost - state.netStats.packetsLost;
+
+    state.netStats = {
+      timestamp,
+      bytesReceived,
+      packetsReceived,
+      packetsLost
+    };
+
+    const totalPackets = deltaPacketsReceived + Math.max(0, deltaPacketsLost);
+    const lossRate = totalPackets > 0 ? Math.max(0, deltaPacketsLost) / totalPackets : 0;
+    const bitrateKbps = deltaBytes > 0 ? (deltaBytes * 8) / 1000 / deltaTime : null;
+    const rttMs = candidate && candidate.currentRoundTripTime
+      ? candidate.currentRoundTripTime * 1000
+      : null;
+
+    const bounds = getProfileBounds(state.streamProfile);
+    let targetHeight = state.netTargetHeight || bounds.maxHeight;
+    let targetFps = state.netTargetFps || bounds.maxFps;
+    targetHeight = clamp(targetHeight, bounds.minHeight, bounds.maxHeight);
+    targetFps = clamp(targetFps, bounds.minFps, bounds.maxFps);
+
+    const aspectRatio = inbound.frameWidth && inbound.frameHeight
+      ? inbound.frameWidth / inbound.frameHeight
+      : dom.screenEl.videoWidth && dom.screenEl.videoHeight
+        ? dom.screenEl.videoWidth / dom.screenEl.videoHeight
+        : 16 / 9;
+    const expectedKbps = computeExpectedBitrateKbps(targetHeight, targetFps, aspectRatio);
+
+    const lowBitrate = expectedKbps && bitrateKbps
+      ? bitrateKbps < expectedKbps * 0.7
+      : false;
+    const highBitrate = expectedKbps && bitrateKbps
+      ? bitrateKbps > expectedKbps * 1.2
+      : false;
+    const shouldDegrade = lossRate > LOSS_DEGRADE || (rttMs && rttMs > RTT_DEGRADE) || lowBitrate;
+    const shouldUpgrade = lossRate < LOSS_UPGRADE && (!rttMs || rttMs < RTT_UPGRADE) && highBitrate;
+
+    const now = performance.now();
+    if (now - state.netLastAdaptAt < NETWORK_ADAPT_COOLDOWN_MS) {
+      return;
+    }
+
+    let nextHeight = targetHeight;
+    let nextFps = targetFps;
+    if (shouldDegrade) {
+      if (targetHeight > bounds.minHeight) {
+        nextHeight = Math.max(bounds.minHeight, Math.round(targetHeight * PROFILE_HEIGHT_DOWN_SCALE));
+      } else if (targetFps > bounds.minFps) {
+        nextFps = Math.max(bounds.minFps, targetFps - 5);
+      }
+    } else if (shouldUpgrade) {
+      if (targetFps < bounds.maxFps) {
+        nextFps = Math.min(bounds.maxFps, targetFps + 5);
+      } else if (targetHeight < bounds.maxHeight) {
+        nextHeight = Math.min(bounds.maxHeight, Math.round(targetHeight * PROFILE_HEIGHT_UP_SCALE));
+      }
+    } else {
+      return;
+    }
+
+    if (nextHeight !== targetHeight || nextFps !== targetFps) {
+      state.netTargetHeight = nextHeight;
+      state.netTargetFps = nextFps;
+      state.netLastAdaptAt = now;
+      state.networkHint = { height: nextHeight, fps: nextFps };
+      scheduleStreamHint();
+    }
   }
 
   function mapClientToVideo(clientX, clientY) {
@@ -306,10 +640,50 @@
   }
 
   function handlePointerLockChange() {
-    state.cursorLocked = document.pointerLockElement === dom.screenEl;
+    state.cursorLocked = document.pointerLockElement === dom.screenFrame;
     if (!state.cursorLocked) {
       updateCursorBounds();
     }
+  }
+
+  function scheduleMoveSend() {
+    if (state.moveTimer) {
+      return;
+    }
+    const now = performance.now();
+    const elapsed = now - state.lastMoveSentAt;
+    const delay = Math.max(0, CONTROL_MOVE_INTERVAL_MS - elapsed);
+    state.moveTimer = setTimeout(() => {
+      state.moveTimer = null;
+      if (!state.isConnected || !state.controlEnabled) {
+        state.pendingMove = null;
+        state.pendingDelta = null;
+        return;
+      }
+      let coords = null;
+      if (state.pendingDelta) {
+        setCursorFromDelta(state.pendingDelta.dx, state.pendingDelta.dy);
+        coords = getCursorPosition();
+        state.pendingDelta = null;
+      } else if (state.pendingMove) {
+        coords = state.pendingMove;
+        state.pendingMove = null;
+      }
+      if (!coords) {
+        return;
+      }
+      const last = state.lastSentPosition;
+      if (last && last.x === coords.x && last.y === coords.y) {
+        return;
+      }
+      state.lastSentPosition = coords;
+      state.lastMoveSentAt = performance.now();
+      void sendControl({
+        type: CONTROL_TYPES.mouseMove,
+        x: coords.x,
+        y: coords.y
+      });
+    }, delay);
   }
 
   function handleModeToggle() {
@@ -476,6 +850,18 @@
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
 
+  async function sendAction(payload) {
+    if (!ensureChannelOpen()) {
+      return;
+    }
+    try {
+      const message = await encodeOutgoing(payload);
+      state.controlChannel.send(message);
+    } catch (error) {
+      setStatus(`E2EE error: ${error.message}`, "bad");
+    }
+  }
+
   async function sendControl(payload) {
     if (!ensureChannelOpen() || !state.controlEnabled) {
       return;
@@ -541,15 +927,21 @@
     releasePointerLock();
   }
 
+<<<<<<< HEAD
   async function connect() {
     if (state.connecting) {
       return;
     }
     state.connecting = true;
+=======
+  async function connect(options = {}) {
+>>>>>>> 802497b5b22d2939778aa1279aee69ee14a6c179
     setStatus("Connecting...", "warn");
     setConnected(false);
     setModeLocked(true);
     cleanupConnection();
+    state.iceErrorCount = 0;
+    state.iceFallbackTried = Boolean(options.disableIce);
 
     const apiBase = dom.serverUrlInput.value.trim() || "http://localhost:8000";
     const sessionId = dom.sessionIdInput.value.trim() || "default-session";
@@ -566,7 +958,9 @@
       return;
     }
 
-    state.rtcConfig = await loadIceConfig(apiBase, authToken);
+    state.rtcConfig = options.disableIce
+      ? { iceServers: [] }
+      : await loadIceConfig(apiBase, authToken);
     const apiUrl = new URL(apiBase);
     const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
     const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
@@ -617,8 +1011,17 @@
       }
       state.connecting = false;
       state.peerConnection = new RTCPeerConnection(state.rtcConfig);
+<<<<<<< HEAD
       if (signalingSocket.readyState === WebSocket.OPEN) {
         signalingSocket.send(
+=======
+      if (state.peerConnection.addEventListener) {
+        state.peerConnection.addEventListener("icecandidateerror", handleIceCandidateError);
+      } else {
+        state.peerConnection.onicecandidateerror = handleIceCandidateError;
+      }
+      state.signalingWebSocket.send(
+>>>>>>> 802497b5b22d2939778aa1279aee69ee14a6c179
         JSON.stringify({
           type: "register",
           session_id: sessionId,
@@ -632,6 +1035,7 @@
 
       state.peerConnection.ontrack = (event) => {
         dom.screenEl.srcObject = event.streams[0];
+        updateScreenLayout();
       };
       state.peerConnection.onicecandidate = (event) => {
         if (event.candidate && signalingSocket.readyState === WebSocket.OPEN) {
@@ -657,6 +1061,9 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        applyStreamProfile(state.streamProfile, true);
+        scheduleStreamHint();
+        startStatsMonitor();
         if (dom.storageDrawer.classList.contains("open")) {
           void requestRemoteList(state.remoteCurrentPath);
         }
@@ -693,7 +1100,7 @@
     }
     state.controlsBound = true;
 
-    dom.screenEl.addEventListener("mousemove", (event) => {
+    dom.screenFrame.addEventListener("mousemove", (event) => {
       if (state.cursorLocked) {
         return;
       }
@@ -701,19 +1108,16 @@
       if (!coords) {
         return;
       }
-      void sendControl({
-        type: CONTROL_TYPES.mouseMove,
-        x: coords.x,
-        y: coords.y
-      });
+      state.pendingMove = coords;
+      scheduleMoveSend();
     });
 
-    dom.screenEl.addEventListener("mousedown", () => {
+    dom.screenFrame.addEventListener("mousedown", () => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      if (!state.cursorLocked && dom.screenEl.requestPointerLock) {
-        dom.screenEl.requestPointerLock();
+      if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
+        dom.screenFrame.requestPointerLock();
       }
     });
 
@@ -721,16 +1125,15 @@
       if (!state.cursorLocked) {
         return;
       }
-      setCursorFromDelta(event.movementX || 0, event.movementY || 0);
-      const coords = getCursorPosition();
-      void sendControl({
-        type: CONTROL_TYPES.mouseMove,
-        x: coords.x,
-        y: coords.y
-      });
+      if (!state.pendingDelta) {
+        state.pendingDelta = { dx: 0, dy: 0 };
+      }
+      state.pendingDelta.dx += event.movementX || 0;
+      state.pendingDelta.dy += event.movementY || 0;
+      scheduleMoveSend();
     });
 
-    dom.screenEl.addEventListener("click", (event) => {
+    dom.screenFrame.addEventListener("click", (event) => {
       let coords = null;
       if (state.cursorLocked) {
         coords = getCursorPosition();
@@ -841,6 +1244,11 @@
     state.remoteCurrentPath = path || ".";
     dom.remotePathInput.value = state.remoteCurrentPath;
     setRemoteStatus("Loading...", "warn");
+    clearStorageTimeout();
+    state.storageTimer = setTimeout(() => {
+      setRemoteStatus("Storage request timed out", "bad");
+      state.storageTimer = null;
+    }, STORAGE_TIMEOUT_MS);
     try {
       const message = await encodeOutgoing({
         action: "list_files",
@@ -849,7 +1257,22 @@
       state.controlChannel.send(message);
     } catch (error) {
       setRemoteStatus(`E2EE error: ${error.message}`, "bad");
+      clearStorageTimeout();
     }
+  }
+
+  async function sendStreamProfile(profile, width = null, height = null, fps = null) {
+    const payload = { action: "stream_profile", profile };
+    if (width) {
+      payload.width = Math.round(width);
+    }
+    if (height) {
+      payload.height = Math.round(height);
+    }
+    if (fps) {
+      payload.fps = Math.round(fps);
+    }
+    await sendAction(payload);
   }
 
   async function requestDownload(path) {
@@ -898,6 +1321,7 @@
   }
 
   function handleFileList(entries) {
+    clearStorageTimeout();
     dom.remoteFileList.textContent = "";
     if (!entries.length) {
       const row = document.createElement("tr");
@@ -1006,6 +1430,7 @@
   }
 
   function handleError(errorPayload) {
+    clearStorageTimeout();
     const message = errorPayload.message || "Unknown error";
     if (state.pendingAppLaunch) {
       setAppStatus(message, "bad");
@@ -1037,6 +1462,7 @@
     } catch (error) {
       const reason = error && error.message ? error.message : "E2EE failure";
       setStatus(reason, "bad");
+      clearStorageTimeout();
       if (state.pendingAppLaunch) {
         setAppStatus(reason, "bad");
         state.pendingAppLaunch = null;
@@ -1105,7 +1531,19 @@
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
-    dom.screenEl.addEventListener("loadedmetadata", updateCursorBounds);
+    dom.screenEl.addEventListener("loadedmetadata", () => {
+      updateScreenLayout();
+      updateCursorBounds();
+    });
+    dom.screenEl.addEventListener("resize", () => {
+      updateScreenLayout();
+      updateCursorBounds();
+    });
+    if (dom.streamProfile) {
+      dom.streamProfile.addEventListener("change", () => {
+        applyStreamProfile(dom.streamProfile.value, true);
+      });
+    }
     if (dom.e2eeKeyInput) {
       dom.e2eeKeyInput.addEventListener("input", () => {
         const value = dom.e2eeKeyInput.value;
@@ -1157,12 +1595,20 @@
     });
 
     window.addEventListener("resize", updateDrawerOffset);
+    window.addEventListener("resize", updateScreenLayout);
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(() => {
+        updateScreenLayout();
+      });
+      resizeObserver.observe(dom.screenFrame);
+    }
   }
 
   initDefaults();
   const shouldConnect = applyUrlParams();
   updateInteractionMode();
   updateDrawerOffset();
+  updateScreenLayout();
   bindEvents();
   if (shouldConnect) {
     void connect();

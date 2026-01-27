@@ -26,7 +26,7 @@ def _normalize_mode(mode: str | None) -> str:
 
 
 def _hidden_desktop_enabled() -> bool:
-    value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "1")
+    value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "0")
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -36,7 +36,23 @@ def build_session_resources(mode: str | None) -> SessionResources:
         controller = NullInputController()
         screen_track = ScreenTrack()
         control_handler = ControlHandler(controller)
-        return SessionResources(control_handler, [screen_track, AudioTrack()])
+        media_tracks: list[Any] = [screen_track, AudioTrack()]
+
+        def _set_stream_profile(
+            profile: str | None,
+            width: int | None,
+            height: int | None,
+            fps: int | None,
+        ) -> None:
+            for track in media_tracks:
+                if hasattr(track, "set_profile"):
+                    track.set_profile(profile, width, height, fps)
+
+        return SessionResources(
+            control_handler,
+            media_tracks,
+            set_stream_profile=_set_stream_profile,
+        )
 
     if platform.system() == "Windows" and _hidden_desktop_enabled():
         try:
@@ -51,14 +67,42 @@ def build_session_resources(mode: str | None) -> SessionResources:
             else:
                 control_handler = ControlHandler(session.input_controller)
                 media_tracks: list[Any] = [session.screen_track, AudioTrack()]
+
+                def _set_stream_profile(
+                    profile: str | None,
+                    width: int | None,
+                    height: int | None,
+                    fps: int | None,
+                ) -> None:
+                    for track in media_tracks:
+                        if hasattr(track, "set_profile"):
+                            track.set_profile(profile, width, height, fps)
+
                 return SessionResources(
                     control_handler,
                     media_tracks,
                     close=session.close,
                     launch_app=session.launch_application,
+                    set_stream_profile=_set_stream_profile,
                 )
 
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=False)
     control_handler = ControlHandler(controller)
-    return SessionResources(control_handler, [screen_track, AudioTrack()])
+    media_tracks: list[Any] = [screen_track, AudioTrack()]
+
+    def _set_stream_profile(
+        profile: str | None,
+        width: int | None,
+        height: int | None,
+        fps: int | None,
+    ) -> None:
+        for track in media_tracks:
+            if hasattr(track, "set_profile"):
+                track.set_profile(profile, width, height, fps)
+
+    return SessionResources(
+        control_handler,
+        media_tracks,
+        set_stream_profile=_set_stream_profile,
+    )
