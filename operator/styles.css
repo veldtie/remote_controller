@@ -58,8 +58,7 @@ body::before {
 }
 
 body.desktop-mode #connectionSection,
-body.desktop-mode #securitySection,
-body.desktop-mode #streamSection {
+body.desktop-mode #securitySection {
   display: none;
 }
 

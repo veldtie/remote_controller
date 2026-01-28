@@ -3,6 +3,7 @@ from __future__ import annotations
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import json
+import uuid
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -35,6 +36,7 @@ def build_session_url(
         "mode": "manage",
         "desktop": "1",
         "server": base_url,
+        "v": uuid.uuid4().hex,
     }
     if open_storage:
         query["storage"] = "1"

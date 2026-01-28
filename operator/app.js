@@ -1094,7 +1094,22 @@
       }
       const payload = JSON.parse(event.data);
       if (payload.type === "answer") {
-        await state.peerConnection.setRemoteDescription(payload);
+        if (!state.peerConnection) {
+          return;
+        }
+        if (state.peerConnection.signalingState !== "have-local-offer") {
+          console.warn(
+            "Ignoring answer in state",
+            state.peerConnection.signalingState
+          );
+          return;
+        }
+        try {
+          await state.peerConnection.setRemoteDescription(payload);
+        } catch (error) {
+          console.warn("Failed to apply answer", error);
+          return;
+        }
         registerControls();
       } else if (payload.type === "ice" && payload.candidate) {
         await state.peerConnection.addIceCandidate({
