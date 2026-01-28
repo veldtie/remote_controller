@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Temp\\rc_build_z_gh5q_d\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_z_gh5q_d\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_z_gh5q_d\\remote_client\\rc_server.json', 'remote_client')]
+datas = [('C:\\Temp\\rc_build_u140yv_h\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_u140yv_h\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_u140yv_h\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('pyautogui')

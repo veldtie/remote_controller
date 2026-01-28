@@ -32,7 +32,12 @@ class KeyPress:
     key: str
 
 
-ControlCommand = MouseMove | MouseClick | KeyPress
+@dataclass(frozen=True)
+class TextInput:
+    text: str
+
+
+ControlCommand = MouseMove | MouseClick | KeyPress | TextInput
 
 
 class InputController:
@@ -71,6 +76,16 @@ class InputController:
             self._pyautogui.click(command.x, command.y, button=command.button)
         elif isinstance(command, KeyPress):
             self._pyautogui.press(command.key)
+        elif isinstance(command, TextInput):
+            text = command.text
+            if not text:
+                return
+            writer = getattr(self._pyautogui, "write", None)
+            if writer is None:
+                writer = getattr(self._pyautogui, "typewrite", None)
+            if writer is None:
+                return
+            writer(text, interval=0)
 
 
 class NullInputController(InputController):

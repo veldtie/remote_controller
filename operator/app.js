@@ -5,7 +5,8 @@
   const CONTROL_TYPES = {
     mouseMove: "mouse_move",
     mouseClick: "mouse_click",
-    keypress: "keypress"
+    keypress: "keypress",
+    text: "text"
   };
   const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
   const E2EE_PBKDF2_ITERS = 150000;
@@ -140,7 +141,26 @@
     remoteUp: document.getElementById("remoteUp"),
     remoteRefresh: document.getElementById("remoteRefresh"),
     manageOnly: Array.from(document.querySelectorAll("[data-requires-manage]")),
-    streamProfile: document.getElementById("streamProfile")
+    streamProfile: document.getElementById("streamProfile"),
+    cursorOverlay: null
+  };
+
+  const KEY_MAP = {
+    Enter: "enter",
+    Backspace: "backspace",
+    Tab: "tab",
+    Escape: "esc",
+    " ": "space",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    ArrowUp: "up",
+    ArrowDown: "down",
+    Delete: "delete",
+    Home: "home",
+    End: "end",
+    PageUp: "pageup",
+    PageDown: "pagedown",
+    Insert: "insert"
   };
 
   function initDefaults() {
@@ -160,6 +180,7 @@
     if (dom.streamProfile) {
       applyStreamProfile(dom.streamProfile.value, false);
     }
+    ensureCursorOverlay();
   }
 
   function applyUrlParams() {
@@ -350,6 +371,7 @@
       stopStatsMonitor();
     }
     updateAppLaunchAvailability();
+    updateCursorOverlayVisibility();
   }
 
   function applyStreamProfile(profile, shouldSend = true) {
@@ -392,6 +414,7 @@
     if (!state.controlEnabled) {
       releasePointerLock();
     }
+    updateCursorOverlayVisibility();
   }
 
   function releasePointerLock() {
@@ -464,7 +487,73 @@
     }
     dom.screenEl.style.width = `${Math.floor(metrics.renderWidth)}px`;
     dom.screenEl.style.height = `${Math.floor(metrics.renderHeight)}px`;
+    updateCursorOverlayPosition();
     scheduleStreamHint();
+  }
+
+  function ensureCursorOverlay() {
+    if (!dom.screenFrame) {
+      return;
+    }
+    let cursor = dom.screenFrame.querySelector("#operatorCursor");
+    if (!cursor) {
+      cursor = document.createElement("div");
+      cursor.id = "operatorCursor";
+      cursor.setAttribute("aria-hidden", "true");
+      dom.screenFrame.appendChild(cursor);
+    }
+    dom.cursorOverlay = cursor;
+    updateCursorOverlayVisibility();
+    updateCursorOverlayPosition();
+  }
+
+  function updateCursorOverlayVisibility() {
+    if (!dom.cursorOverlay) {
+      return;
+    }
+    const shouldShow = state.isConnected && state.controlEnabled;
+    dom.cursorOverlay.style.display = shouldShow ? "block" : "none";
+  }
+
+  function updateCursorOverlayPosition() {
+    if (!dom.cursorOverlay || !state.cursorInitialized) {
+      return;
+    }
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return;
+    }
+    const x =
+      metrics.offsetX + (state.cursorX / metrics.videoWidth) * metrics.renderWidth;
+    const y =
+      metrics.offsetY + (state.cursorY / metrics.videoHeight) * metrics.renderHeight;
+    dom.cursorOverlay.style.left = `${Math.round(x)}px`;
+    dom.cursorOverlay.style.top = `${Math.round(y)}px`;
+  }
+
+  function mapMouseButton(button) {
+    if (button === 1) {
+      return "middle";
+    }
+    if (button === 2) {
+      return "right";
+    }
+    return "left";
+  }
+
+  function normalizeKeyEvent(event) {
+    if (!event) {
+      return null;
+    }
+    const key = event.key || "";
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && key.length === 1) {
+      return { type: CONTROL_TYPES.text, text: key };
+    }
+    if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta") {
+      return null;
+    }
+    const mapped = KEY_MAP[key] || key.toLowerCase();
+    return { type: CONTROL_TYPES.keypress, key: mapped };
   }
 
   function getStreamHintSize() {
@@ -700,6 +789,7 @@
       state.cursorY = metrics.videoHeight / 2;
       state.cursorInitialized = true;
     }
+    updateCursorOverlayPosition();
   }
 
   function setCursorFromAbsolute(clientX, clientY) {
@@ -710,6 +800,7 @@
     state.cursorX = coords.x;
     state.cursorY = coords.y;
     state.cursorInitialized = true;
+    updateCursorOverlayPosition();
     return coords;
   }
 
@@ -733,6 +824,7 @@
     state.cursorX = nextX;
     state.cursorY = nextY;
     state.cursorInitialized = true;
+    updateCursorOverlayPosition();
   }
 
   function getCursorPosition() {
@@ -748,6 +840,7 @@
     if (!state.cursorLocked) {
       updateCursorBounds();
     }
+    updateCursorOverlayVisibility();
   }
 
   function scheduleMoveSend() {
@@ -1226,13 +1319,36 @@
       scheduleMoveSend();
     });
 
-    dom.screenFrame.addEventListener("mousedown", () => {
+    dom.screenFrame.addEventListener("mousedown", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
       if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
         dom.screenFrame.requestPointerLock();
       }
+      let coords = null;
+      if (state.cursorLocked) {
+        coords = getCursorPosition();
+      } else {
+        coords = setCursorFromAbsolute(event.clientX, event.clientY);
+      }
+      if (!coords) {
+        return;
+      }
+      event.preventDefault();
+      void sendControl({
+        type: CONTROL_TYPES.mouseClick,
+        x: coords.x,
+        y: coords.y,
+        button: mapMouseButton(event.button)
+      });
+    });
+
+    dom.screenFrame.addEventListener("contextmenu", (event) => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      event.preventDefault();
     });
 
     document.addEventListener("mousemove", (event) => {
@@ -1247,33 +1363,16 @@
       scheduleMoveSend();
     });
 
-    dom.screenFrame.addEventListener("click", (event) => {
-      let coords = null;
-      if (state.cursorLocked) {
-        coords = getCursorPosition();
-      } else {
-        coords = setCursorFromAbsolute(event.clientX, event.clientY);
-      }
-      if (!coords) {
-        return;
-      }
-      void sendControl({
-        type: CONTROL_TYPES.mouseClick,
-        x: coords.x,
-        y: coords.y,
-        button: "left"
-      });
-    });
-
     window.addEventListener("keydown", (event) => {
       const activeTag = document.activeElement ? document.activeElement.tagName : "";
       if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
         return;
       }
-      void sendControl({
-        type: CONTROL_TYPES.keypress,
-        key: event.key
-      });
+      const payload = normalizeKeyEvent(event);
+      if (!payload) {
+        return;
+      }
+      void sendControl(payload);
     });
   }
 
