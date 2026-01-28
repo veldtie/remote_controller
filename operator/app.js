@@ -112,7 +112,8 @@
     netLastAdaptAt: 0,
     networkHint: { height: null, fps: null },
     iceErrorCount: 0,
-    iceFallbackTried: false
+    iceFallbackTried: false,
+    textInputSupported: true
   };
 
   const dom = {
@@ -547,7 +548,10 @@
     }
     const key = event.key || "";
     if (!event.ctrlKey && !event.metaKey && !event.altKey && key.length === 1) {
-      return { type: CONTROL_TYPES.text, text: key };
+      if (state.textInputSupported) {
+        return { type: CONTROL_TYPES.text, text: key };
+      }
+      return { type: CONTROL_TYPES.keypress, key };
     }
     if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta") {
       return null;
@@ -1121,6 +1125,7 @@
     state.peerConnection = null;
     state.signalingWebSocket = null;
     state.pendingAppLaunch = null;
+    state.textInputSupported = true;
     releasePointerLock();
   }
 
@@ -1645,6 +1650,13 @@
   function handleError(errorPayload) {
     clearStorageTimeout();
     const message = errorPayload.message || "Unknown error";
+    if (
+      errorPayload.code === "invalid_control" &&
+      typeof message === "string" &&
+      message.toLowerCase().includes("text")
+    ) {
+      state.textInputSupported = false;
+    }
     if (state.pendingAppLaunch) {
       setAppStatus(message, "bad");
       state.pendingAppLaunch = null;
