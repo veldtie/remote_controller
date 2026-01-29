@@ -25,9 +25,9 @@ from remote_client.control.input_controller import ControlCommand, InputControll
 logger = logging.getLogger(__name__)
 
 STREAM_PROFILES: dict[str, dict[str, int]] = {
-    "speed": {"min_height": 360, "max_height": 480, "min_fps": 60, "max_fps": 60},
-    "balanced": {"min_height": 560, "max_height": 720, "min_fps": 40, "max_fps": 60},
-    "quality": {"min_height": 720, "max_height": 1080, "min_fps": 30, "max_fps": 40},
+    "speed": {"min_height": 480, "max_height": 720, "min_fps": 50, "max_fps": 60},
+    "balanced": {"min_height": 720, "max_height": 1080, "min_fps": 40, "max_fps": 60},
+    "quality": {"min_height": 900, "max_height": 1440, "min_fps": 30, "max_fps": 60},
 }
 ADAPT_INTERVAL_SEC = 2.0
 FPS_SAMPLE_SIZE = 24

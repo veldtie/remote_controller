@@ -11,13 +11,30 @@ class ControlMessageParser:
 
     def parse(self, payload: dict[str, Any]) -> MouseMove | MouseClick | KeyPress | TextInput:
         message_type = payload.get("type")
+        source_width = payload.get("source_width")
+        source_height = payload.get("source_height")
+        try:
+            source_width_value = int(source_width) if source_width is not None else None
+        except (TypeError, ValueError):
+            source_width_value = None
+        try:
+            source_height_value = int(source_height) if source_height is not None else None
+        except (TypeError, ValueError):
+            source_height_value = None
         if message_type == "mouse_move":
-            return MouseMove(x=int(payload["x"]), y=int(payload["y"]))
+            return MouseMove(
+                x=int(payload["x"]),
+                y=int(payload["y"]),
+                source_width=source_width_value,
+                source_height=source_height_value,
+            )
         if message_type == "mouse_click":
             return MouseClick(
                 x=int(payload["x"]),
                 y=int(payload["y"]),
                 button=payload.get("button", "left"),
+                source_width=source_width_value,
+                source_height=source_height_value,
             )
         if message_type == "keypress":
             return KeyPress(key=str(payload["key"]))

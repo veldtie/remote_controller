@@ -17,7 +17,7 @@
   const STREAM_HINT_THRESHOLD = 40;
   const NETWORK_STATS_INTERVAL_MS = 2000;
   const NETWORK_ADAPT_COOLDOWN_MS = 4000;
-  const NETWORK_BPP = 0.08;
+  const NETWORK_BPP = 0.06;
   const LOSS_DEGRADE = 0.08;
   const LOSS_UPGRADE = 0.02;
   const RTT_DEGRADE = 300;
@@ -67,9 +67,9 @@
   }
 
   const STREAM_PROFILES = {
-    speed: { minHeight: 360, maxHeight: 480, minFps: 60, maxFps: 60 },
-    balanced: { minHeight: 560, maxHeight: 720, minFps: 40, maxFps: 60 },
-    quality: { minHeight: 720, maxHeight: 1080, minFps: 30, maxFps: 40 }
+    speed: { minHeight: 480, maxHeight: 720, minFps: 50, maxFps: 60 },
+    balanced: { minHeight: 720, maxHeight: 1080, minFps: 40, maxFps: 60 },
+    quality: { minHeight: 900, maxHeight: 1440, minFps: 30, maxFps: 60 }
   };
 
   const state = {
@@ -102,7 +102,7 @@
     moveTimer: null,
     lastSentPosition: null,
     storageTimer: null,
-    streamProfile: "balanced",
+    streamProfile: "quality",
     streamHintTimer: null,
     lastStreamHint: null,
     statsTimer: null,
@@ -113,7 +113,8 @@
     networkHint: { height: null, fps: null },
     iceErrorCount: 0,
     iceFallbackTried: false,
-    textInputSupported: true
+    textInputSupported: true,
+    screenAspect: null
   };
 
   const dom = {
@@ -480,6 +481,7 @@
   }
 
   function updateScreenLayout() {
+    updateScreenFrameBounds();
     const metrics = getVideoMetrics();
     if (!metrics) {
       dom.screenEl.style.width = "100%";
@@ -490,6 +492,53 @@
     dom.screenEl.style.height = `${Math.floor(metrics.renderHeight)}px`;
     updateCursorOverlayPosition();
     scheduleStreamHint();
+  }
+
+  function getWorkspaceBounds() {
+    const style = getComputedStyle(document.documentElement);
+    const edgeGap = Number.parseFloat(style.getPropertyValue("--edge-gap")) || 16;
+    const workspaceLeft =
+      Number.parseFloat(style.getPropertyValue("--workspace-left")) || 320;
+    const workspaceBottom =
+      Number.parseFloat(style.getPropertyValue("--workspace-bottom")) || 120;
+    const availableWidth = Math.max(0, window.innerWidth - workspaceLeft - edgeGap);
+    const availableHeight = Math.max(
+      0,
+      window.innerHeight - workspaceBottom - edgeGap * 2
+    );
+    return {
+      edgeGap,
+      workspaceLeft,
+      workspaceBottom,
+      availableWidth,
+      availableHeight
+    };
+  }
+
+  function updateScreenFrameBounds() {
+    if (!dom.screenFrame) {
+      return;
+    }
+    const { edgeGap, workspaceLeft, availableWidth, availableHeight } =
+      getWorkspaceBounds();
+    if (!availableWidth || !availableHeight) {
+      return;
+    }
+    const aspect = state.screenAspect || 16 / 9;
+    let width = availableWidth;
+    let height = width / aspect;
+    if (height > availableHeight) {
+      height = availableHeight;
+      width = height * aspect;
+    }
+    const left = workspaceLeft + (availableWidth - width) / 2;
+    const top = edgeGap + (availableHeight - height) / 2;
+    dom.screenFrame.style.left = `${Math.round(left)}px`;
+    dom.screenFrame.style.top = `${Math.round(top)}px`;
+    dom.screenFrame.style.width = `${Math.round(width)}px`;
+    dom.screenFrame.style.height = `${Math.round(height)}px`;
+    dom.screenFrame.style.right = "auto";
+    dom.screenFrame.style.bottom = "auto";
   }
 
   function ensureCursorOverlay() {
@@ -793,6 +842,10 @@
       state.cursorY = metrics.videoHeight / 2;
       state.cursorInitialized = true;
     }
+    if (metrics.videoWidth && metrics.videoHeight) {
+      state.screenAspect = metrics.videoWidth / metrics.videoHeight;
+      updateScreenFrameBounds();
+    }
     updateCursorOverlayPosition();
   }
 
@@ -873,6 +926,9 @@
       if (!coords) {
         return;
       }
+      const metrics = getVideoMetrics();
+      const sourceWidth = metrics ? metrics.videoWidth : null;
+      const sourceHeight = metrics ? metrics.videoHeight : null;
       const last = state.lastSentPosition;
       if (last && last.x === coords.x && last.y === coords.y) {
         return;
@@ -882,7 +938,9 @@
       void sendControl({
         type: CONTROL_TYPES.mouseMove,
         x: coords.x,
-        y: coords.y
+        y: coords.y,
+        source_width: sourceWidth || undefined,
+        source_height: sourceHeight || undefined
       });
     }, delay);
   }
@@ -1341,11 +1399,16 @@
         return;
       }
       event.preventDefault();
+      const metrics = getVideoMetrics();
+      const sourceWidth = metrics ? metrics.videoWidth : null;
+      const sourceHeight = metrics ? metrics.videoHeight : null;
       void sendControl({
         type: CONTROL_TYPES.mouseClick,
         x: coords.x,
         y: coords.y,
-        button: mapMouseButton(event.button)
+        button: mapMouseButton(event.button),
+        source_width: sourceWidth || undefined,
+        source_height: sourceHeight || undefined
       });
     });
 
@@ -1755,6 +1818,7 @@
 
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
+    window.addEventListener("resize", updateScreenFrameBounds);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
     dom.screenEl.addEventListener("loadedmetadata", () => {
       updateScreenLayout();

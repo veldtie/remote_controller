@@ -18,6 +18,8 @@ MouseButton = Literal["left", "right", "middle"]
 class MouseMove:
     x: int
     y: int
+    source_width: int | None = None
+    source_height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,8 @@ class MouseClick:
     x: int
     y: int
     button: MouseButton
+    source_width: int | None = None
+    source_height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -71,9 +75,15 @@ class InputController:
         if self._pyautogui is None:
             return
         if isinstance(command, MouseMove):
-            self._pyautogui.moveTo(command.x, command.y)
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._pyautogui.moveTo(x, y)
         elif isinstance(command, MouseClick):
-            self._pyautogui.click(command.x, command.y, button=command.button)
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._pyautogui.click(x, y, button=command.button)
         elif isinstance(command, KeyPress):
             self._pyautogui.press(command.key)
         elif isinstance(command, TextInput):
@@ -86,6 +96,27 @@ class InputController:
             if writer is None:
                 return
             writer(text, interval=0)
+
+    def _scale_coordinates(
+        self,
+        x: int,
+        y: int,
+        source_width: int | None,
+        source_height: int | None,
+    ) -> tuple[int, int]:
+        if not source_width or not source_height:
+            return x, y
+        try:
+            screen_width, screen_height = self._pyautogui.size()
+        except Exception:
+            return x, y
+        if not screen_width or not screen_height:
+            return x, y
+        scaled_x = int(round(x * screen_width / source_width))
+        scaled_y = int(round(y * screen_height / source_height))
+        scaled_x = max(0, min(screen_width - 1, scaled_x))
+        scaled_y = max(0, min(screen_height - 1, scaled_y))
+        return scaled_x, scaled_y
 
 
 class NullInputController(InputController):
