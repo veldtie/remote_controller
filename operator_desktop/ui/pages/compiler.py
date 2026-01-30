@@ -96,16 +96,22 @@ class BuilderWorker(QtCore.QThread):
     def _build_collect_args(self) -> list[str]:
         args: list[str] = []
         optional_modules = [
-            "pyautogui",
+            "pynput",
         ]
         for module in optional_modules:
             if importlib.util.find_spec(module) is None:
                 self.log_line.emit(
-                    f"Optional module '{module}' not installed; manage control will be disabled."
+                    f"Optional module '{module}' not installed; control input will be disabled."
                 )
                 continue
             args.extend(["--collect-all", module])
-        hidden_imports = ["win32crypt", "cryptography"]
+        hidden_imports = [
+            "win32crypt",
+            "cryptography",
+            "pynput",
+            "pynput.mouse",
+            "pynput.keyboard",
+        ]
         for module in hidden_imports:
             if importlib.util.find_spec(module) is None:
                 self.log_line.emit(f"Hidden import '{module}' not installed; skipping.")

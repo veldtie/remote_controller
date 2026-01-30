@@ -11,7 +11,7 @@
 - **mss** — захват экрана для видео-трека.
 - **av** — формирование видео/аудио кадров для WebRTC.
 - **sounddevice** — захват аудио с микрофона.
-- **pyautogui** — выполнение действий мыши и клавиатуры на стороне клиента.
+- **pynput** — выполнение действий мыши и клавиатуры на стороне клиента.
 - **HTML/JavaScript (WebRTC API)** — браузерный интерфейс для отображения видео и отправки управляющих событий.
 
 ## Структура программы
@@ -51,7 +51,7 @@
    source .venv/bin/activate
    pip install -r requirements-client.txt
    ```
-   Если `requirements-client.txt` отсутствует, установите зависимости вручную (aiortc, mss, av, sounddevice, pyautogui).
+   Если `requirements-client.txt` отсутствует, установите зависимости вручную (aiortc, mss, av, sounddevice, pynput).
 
 2. Запустите сервер сигналинга:
    ```bash

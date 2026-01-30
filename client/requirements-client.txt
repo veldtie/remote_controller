@@ -3,8 +3,8 @@ websockets>=12,<13
 mss
 av
 sounddevice
-pyautogui
 numpy
 cryptography
 geoip2
+pynput; platform_system == "Windows"
 pywin32; platform_system == "Windows"
