@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Temp\\rc_build_wsfm4586\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_wsfm4586\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_wsfm4586\\remote_client\\rc_server.json', 'remote_client')]
+datas = [('C:\\Temp\\rc_build_lqsp6vqe\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_lqsp6vqe\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_lqsp6vqe\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
-hiddenimports = []
+hiddenimports = ['cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
 tmp_ret = collect_all('pynput')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

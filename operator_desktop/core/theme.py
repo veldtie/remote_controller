@@ -152,33 +152,77 @@ def build_stylesheet(theme: Theme) -> str:
     QPushButton:hover {{
         border-color: {c["accent"]};
     }}
+    QPushButton:focus {{
+        border-color: {c["accent"]};
+    }}
+    QPushButton:pressed {{
+        background: {c["card"]};
+    }}
     QPushButton[variant="primary"] {{
         background: {c["accent"]};
         color: #0b121a;
         border: none;
         font-weight: 600;
     }}
+    QPushButton[variant="primary"]:hover {{
+        background: {c["glow"]};
+    }}
+    QPushButton[variant="primary"]:pressed {{
+        background: {c["accent"]};
+    }}
     QPushButton[variant="ghost"] {{
         background: transparent;
         border: 1px solid {c["border"]};
+    }}
+    QPushButton[variant="ghost"]:hover {{
+        background: {c["card_alt"]};
+        border-color: {c["accent"]};
+    }}
+    QPushButton[variant="ghost"]:checked {{
+        background: {c["accent_soft"]};
+        border-color: {c["accent"]};
+        color: {c["accent"]};
+        font-weight: 600;
+    }}
+    QPushButton[variant="ghost"]:pressed {{
+        background: {c["accent_soft"]};
     }}
     QPushButton[variant="danger"] {{
         background: {c["danger"]};
         color: #ffffff;
         border: none;
     }}
+    QPushButton[variant="danger"]:hover {{
+        background: {c["danger"]};
+    }}
+    QPushButton[variant="danger"]:pressed {{
+        background: {c["danger"]};
+    }}
     QPushButton:disabled {{
         background: {c["border"]};
         color: {c["muted"]};
         border: none;
     }}
-    QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {{
+    QToolButton {{
+        border: 1px solid transparent;
+        padding: 4px;
+        border-radius: 8px;
+    }}
+    QToolButton:hover {{
+        background: {c["card_alt"]};
+        border-color: {c["border"]};
+    }}
+    QToolButton:pressed {{
+        background: {c["accent_soft"]};
+        border-color: {c["accent"]};
+    }}
+    QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QTextBrowser {{
         background: {c["card_alt"]};
         border: 1px solid {c["border"]};
         border-radius: 10px;
         padding: 8px 10px;
     }}
-    QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+    QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus, QTextBrowser:focus {{
         border-color: {c["accent"]};
     }}
     QTableWidget {{
@@ -206,6 +250,9 @@ def build_stylesheet(theme: Theme) -> str:
     QTableWidget::item {{
         padding: 4px;
     }}
+    QTableWidget::item:hover {{
+        background: {c["card_alt"]};
+    }}
     QTableWidget::item:selected {{
         background: {c["accent_soft"]};
         color: {c["text"]};
@@ -226,12 +273,20 @@ def build_stylesheet(theme: Theme) -> str:
     QMenu::item:disabled {{
         color: {c["muted"]};
     }}
+    QMenu::separator {{
+        height: 1px;
+        background: {c["border"]};
+        margin: 4px 2px;
+    }}
     QListWidget {{
         background: transparent;
         border: none;
     }}
     QListWidget::item {{
         color: {c["text"]};
+    }}
+    QListWidget::item:hover {{
+        background: {c["card_alt"]};
     }}
     QListWidget::item:selected {{
         background: {c["accent_soft"]};
@@ -266,6 +321,9 @@ def build_stylesheet(theme: Theme) -> str:
     QScrollBar::handle:vertical {{
         background: {c["border"]};
         border-radius: 5px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background: {c["muted"]};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;

@@ -84,6 +84,9 @@ class DashboardPage(QtWidgets.QWidget):
         self._ping_base_interval_ms = 500
         self._ping_max_interval_ms = 5000
         self.column_keys: list[str] = []
+        self._menu_open_count = 0
+        self._clients_timer_was_active = False
+        self._pending_render = False
         self._ensure_client_state()
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -101,6 +104,7 @@ class DashboardPage(QtWidgets.QWidget):
         header.addStretch()
         self.search_input = QtWidgets.QLineEdit()
         self.search_input.setMinimumWidth(220)
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self.filter_clients)
         header.addWidget(self.search_input)
         self.refresh_button = make_button("", "ghost")
@@ -119,6 +123,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setMouseTracking(True)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         self._configure_columns()
@@ -134,6 +139,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.log_title.setStyleSheet("font-weight: 600;")
         log_layout.addWidget(self.log_title)
         self.log_list = QtWidgets.QListWidget()
+        self.log_list.setMouseTracking(True)
         log_layout.addWidget(self.log_list, 1)
         split.addWidget(self.log_card)
         split.setStretchFactor(0, 3)
@@ -192,7 +198,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.current_role = role
         self.account_id = self.settings.get("account_id", "")
         self._configure_columns()
-        self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
 
     def _build_column_keys(self) -> list[str]:
         keys = ["name", "id"]
@@ -229,6 +235,36 @@ class DashboardPage(QtWidgets.QWidget):
 
     def _column_index(self) -> dict[str, int]:
         return {key: index for index, key in enumerate(self.column_keys)}
+
+    def _render_current_clients(self) -> None:
+        search_text = self.search_input.text() if hasattr(self, "search_input") else ""
+        if search_text.strip():
+            self.filter_clients(search_text)
+        else:
+            self.render_clients(self._visible_clients(self.clients))
+
+    def _set_menu_active(self, active: bool) -> None:
+        if active:
+            self._menu_open_count += 1
+            if self._menu_open_count == 1:
+                if hasattr(self, "clients_timer") and self.clients_timer.isActive():
+                    self._clients_timer_was_active = True
+                    self.clients_timer.stop()
+                else:
+                    self._clients_timer_was_active = False
+            return
+        if self._menu_open_count:
+            self._menu_open_count -= 1
+        if self._menu_open_count == 0:
+            if (
+                self._clients_timer_was_active
+                and hasattr(self, "clients_timer")
+                and self._server_online is not False
+            ):
+                self.clients_timer.start()
+            if self._pending_render:
+                self._pending_render = False
+                self._render_current_clients()
 
     def _visible_clients(self, clients: list[Dict]) -> list[Dict]:
         if self.current_role == "moderator":
@@ -310,10 +346,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.settings.save()
         if self._server_online is None:
             self._set_server_online(True)
-        self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
 
     def _handle_client_fetch_error(self, message: str) -> None:
-        self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
 
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
@@ -387,7 +423,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.log_title.setText(self.i18n.t("log_title"))
         self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
-        self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
 
     def refresh_logs(self) -> None:
         scrollbar = self.log_list.verticalScrollBar()
@@ -439,6 +475,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.render_clients(filtered)
 
     def render_clients(self, clients: List[Dict]) -> None:
+        if self._menu_open_count > 0:
+            self._pending_render = True
+            return
+        self._pending_render = False
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         column_index = self._column_index()
@@ -542,7 +582,10 @@ class DashboardPage(QtWidgets.QWidget):
 
     def apply_theme(self, theme) -> None:
         self.theme = theme
-        self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
+
+    def refresh_view(self) -> None:
+        self._render_current_clients()
 
     def poll_server_status(self) -> None:
         self._start_ping()
@@ -688,6 +731,8 @@ class DashboardPage(QtWidgets.QWidget):
             button.setIcon(more_icon)
             button.setIconSize(QtCore.QSize(16, 16))
         menu = QtWidgets.QMenu(button)
+        menu.aboutToShow.connect(lambda: self._set_menu_active(True))
+        menu.aboutToHide.connect(lambda: self._set_menu_active(False))
         cookies_menu = menu.addMenu(self.i18n.t("menu_cookies_title"))
         cookie_actions = [
             ("all", self.i18n.t("menu_cookies_all")),
@@ -731,11 +776,7 @@ class DashboardPage(QtWidgets.QWidget):
                 self.api.update_client_name(client_id, name)
             except Exception:
                 pass
-        search_text = self.search_input.text()
-        if search_text.strip():
-            self.filter_clients(search_text)
-        else:
-            self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()
 
     def confirm_delete_client(self, client_id: str) -> None:
         client = next((c for c in self.clients if c["id"] == client_id), None)
@@ -788,8 +829,4 @@ class DashboardPage(QtWidgets.QWidget):
             except Exception:
                 pass
         self.delete_requested.emit(client_id)
-        search_text = self.search_input.text()
-        if search_text.strip():
-            self.filter_clients(search_text)
-        else:
-            self.render_clients(self._visible_clients(self.clients))
+        self._render_current_clients()

@@ -263,7 +263,7 @@ class MainShell(QtWidgets.QWidget):
             if self._open_session(client_id):
                 client["connected"] = True
                 self.logger.log("log_connected", client=client["name"])
-        self.dashboard.render_clients(self.dashboard.clients)
+        self.dashboard.refresh_view()
         self.settings.set("clients", self.dashboard.clients)
         self.settings.save()
 
@@ -412,7 +412,7 @@ class MainShell(QtWidgets.QWidget):
             return
         client["connected"] = False
         self.logger.log("log_disconnect", client=client.get("name", client_id))
-        self.dashboard.render_clients(self.dashboard.clients)
+        self.dashboard.refresh_view()
         self.settings.set("clients", self.dashboard.clients)
         self.settings.save()
 
