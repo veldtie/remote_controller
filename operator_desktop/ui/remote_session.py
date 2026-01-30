@@ -73,6 +73,13 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.server_url = server_url
         self.token = token or ""
         self._open_storage_on_load = open_storage
+        self._page_ready = False
+        self._pending_cookie_requests: list[dict[str, object]] = []
+        self._download_override_dir: str | None = None
+        self._download_override_name: str | None = None
+        self._last_download_dir = QtCore.QStandardPaths.writableLocation(
+            QtCore.QStandardPaths.StandardLocation.DownloadLocation
+        )
         self.setWindowTitle(f"RemDesk - {session_id}")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(1200, 720)
@@ -96,6 +103,20 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             return
         self.apply_context(auto_connect=True, open_storage=True)
 
+    def request_cookie_export(
+        self,
+        browsers: list[str] | None,
+        filename: str | None = None,
+        download_dir: str | None = None,
+    ) -> None:
+        if download_dir:
+            self._download_override_dir = download_dir
+            self._download_override_name = filename
+        self._pending_cookie_requests.append(
+            {"browsers": list(browsers or []), "filename": filename}
+        )
+        self._flush_cookie_requests()
+
     def apply_context(
         self,
         server_url: str | None = None,
@@ -115,10 +136,31 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     def _handle_download_request(self, download) -> None:
         if download.isFinished():
             return
-        directory = QtCore.QStandardPaths.writableLocation(
-            QtCore.QStandardPaths.StandardLocation.DownloadLocation
-        )
         filename = download.suggestedFileName() or "download"
+        directory = None
+        if self._download_override_dir and (
+            self._download_override_name is None
+            or self._download_override_name == filename
+        ):
+            directory = self._download_override_dir
+            self._download_override_dir = None
+            self._download_override_name = None
+        is_cookie_download = filename.lower().startswith("cookies_")
+        if not directory and is_cookie_download:
+            start_dir = self._last_download_dir or ""
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Select download folder", start_dir
+            )
+            if not folder:
+                if hasattr(download, "cancel"):
+                    download.cancel()
+                return
+            directory = folder
+        if not directory:
+            directory = self._last_download_dir or QtCore.QStandardPaths.writableLocation(
+                QtCore.QStandardPaths.StandardLocation.DownloadLocation
+            )
+        self._last_download_dir = directory
         download.setDownloadDirectory(directory)
         download.setDownloadFileName(filename)
         download.accept()
@@ -126,14 +168,38 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     def _handle_load_finished(self, ok: bool) -> None:
         if not ok:
             return
+        self._page_ready = True
         self._apply_desktop_overrides(auto_connect=True, open_storage=self._open_storage_on_load)
         self._open_storage_on_load = False
+        self._flush_cookie_requests()
 
     def _fallback_apply(self) -> None:
         if not self.view:
             return
+        self._page_ready = True
         self._apply_desktop_overrides(auto_connect=True, open_storage=self._open_storage_on_load)
         self._open_storage_on_load = False
+        self._flush_cookie_requests()
+
+    def _flush_cookie_requests(self) -> None:
+        if not self.view or not self._page_ready or not self._pending_cookie_requests:
+            return
+        pending = self._pending_cookie_requests[:]
+        self._pending_cookie_requests.clear()
+        for entry in pending:
+            payload = json.dumps(entry)
+            script = f"""
+(() => {{
+  const req = {payload};
+  if (window.remdeskDownloadCookies) {{
+    window.remdeskDownloadCookies(req.browsers || [], req.filename || null);
+    return;
+  }}
+  window.__remdeskCookieQueue = window.__remdeskCookieQueue || [];
+  window.__remdeskCookieQueue.push(req);
+}})();
+"""
+            self.view.page().runJavaScript(script)
 
     def _apply_desktop_overrides(self, auto_connect: bool, open_storage: bool) -> None:
         if not self.view:

@@ -7,3 +7,4 @@ pyautogui
 numpy
 cryptography
 geoip2
+pywin32; platform_system == "Windows"

