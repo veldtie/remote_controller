@@ -688,6 +688,23 @@ class DashboardPage(QtWidgets.QWidget):
             button.setIcon(more_icon)
             button.setIconSize(QtCore.QSize(16, 16))
         menu = QtWidgets.QMenu(button)
+        cookies_menu = menu.addMenu(self.i18n.t("menu_cookies_title"))
+        cookie_actions = [
+            ("all", self.i18n.t("menu_cookies_all")),
+            ("chrome", self.i18n.t("menu_cookies_chrome")),
+            ("edge", self.i18n.t("menu_cookies_edge")),
+            ("brave", self.i18n.t("menu_cookies_brave")),
+            ("opera", self.i18n.t("menu_cookies_opera")),
+            ("firefox", self.i18n.t("menu_cookies_firefox")),
+        ]
+        for key, label in cookie_actions:
+            action = cookies_menu.addAction(label)
+            action.triggered.connect(
+                lambda _, cid=client_id, browser=key: self.extra_action_requested.emit(
+                    cid, f"cookies:{browser}"
+                )
+            )
+        menu.addSeparator()
         placeholder = menu.addAction(self.i18n.t("menu_more_placeholder"))
         placeholder.setEnabled(False)
         button.setMenu(menu)

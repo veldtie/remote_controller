@@ -447,6 +447,11 @@ button:disabled {
   color: var(--muted);
 }
 
+#cookieStatus {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 #appStatus[data-state="ok"] {
   color: var(--good);
 }
@@ -456,6 +461,18 @@ button:disabled {
 }
 
 #appStatus[data-state="bad"] {
+  color: var(--bad);
+}
+
+#cookieStatus[data-state="ok"] {
+  color: var(--good);
+}
+
+#cookieStatus[data-state="warn"] {
+  color: var(--warn);
+}
+
+#cookieStatus[data-state="bad"] {
   color: var(--bad);
 }
 
