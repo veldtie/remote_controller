@@ -52,10 +52,12 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole --log-le
     --collect-all aiortc ^
     --collect-all sounddevice ^
     --collect-all mss ^
-    --collect-all pyautogui ^
     --collect-all numpy ^
     --hidden-import=win32crypt ^
     --hidden-import=cryptography ^
+    --hidden-import=pynput ^
+    --hidden-import=pynput.mouse ^
+    --hidden-import=pynput.keyboard ^
     client.py >> "%LOG_PATH%" 2>&1
 if errorlevel 1 (
     echo Ошибка сборки. См. %LOG_PATH%

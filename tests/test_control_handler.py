@@ -7,45 +7,96 @@ from remote_client.control.input_controller import InputController
 from remote_client.webrtc.client import WebRTCClient
 
 
-def install_fake_pyautogui(monkeypatch):
-    module = types.ModuleType("pyautogui")
-    module.moves: list[tuple[int, int]] = []
-    module.clicks: list[tuple[int, int, str]] = []
-    module.presses: list[str] = []
+def install_fake_pynput(monkeypatch):
+    pynput_module = types.ModuleType("pynput")
+    mouse_module = types.ModuleType("pynput.mouse")
+    keyboard_module = types.ModuleType("pynput.keyboard")
 
-    def move_to(x, y):
-        module.moves.append((x, y))
+    class FakeButton:
+        left = "left"
+        right = "right"
+        middle = "middle"
 
-    def click(x, y, button="left"):
-        module.clicks.append((x, y, button))
+    class FakeMouseController:
+        def __init__(self):
+            self.moves: list[tuple[int, int]] = []
+            self.clicks: list[tuple[int, int, str]] = []
+            self._pos = (0, 0)
 
-    def press(key):
-        module.presses.append(key)
+        @property
+        def position(self):
+            return self._pos
 
-    module.moveTo = move_to
-    module.click = click
-    module.press = press
-    monkeypatch.setitem(sys.modules, "pyautogui", module)
-    return module
+        @position.setter
+        def position(self, value):
+            self._pos = value
+            self.moves.append(value)
+
+        def click(self, button):
+            self.clicks.append((self._pos[0], self._pos[1], button))
+
+    class FakeKey:
+        enter = "enter"
+        backspace = "backspace"
+        tab = "tab"
+        esc = "esc"
+        space = "space"
+        left = "left"
+        right = "right"
+        up = "up"
+        down = "down"
+        delete = "delete"
+        home = "home"
+        end = "end"
+        page_up = "page_up"
+        page_down = "page_down"
+        insert = "insert"
+
+    class FakeKeyboardController:
+        def __init__(self):
+            self.presses: list[object] = []
+            self.releases: list[object] = []
+            self.typed: list[str] = []
+
+        def press(self, key):
+            self.presses.append(key)
+
+        def release(self, key):
+            self.releases.append(key)
+
+        def type(self, text):
+            self.typed.append(text)
+
+    mouse_module.Controller = FakeMouseController
+    mouse_module.Button = FakeButton
+    keyboard_module.Controller = FakeKeyboardController
+    keyboard_module.Key = FakeKey
+
+    monkeypatch.setitem(sys.modules, "pynput", pynput_module)
+    monkeypatch.setitem(sys.modules, "pynput.mouse", mouse_module)
+    monkeypatch.setitem(sys.modules, "pynput.keyboard", keyboard_module)
+    return mouse_module, keyboard_module
 
 
 def test_control_handler_executes_commands(monkeypatch):
-    fake_pyautogui = install_fake_pyautogui(monkeypatch)
+    fake_mouse, fake_keyboard = install_fake_pynput(monkeypatch)
     handler = ControlHandler(InputController())
 
     handler.handle({"type": "mouse_move", "x": 5, "y": 9})
     handler.handle({"type": "mouse_click", "x": 3, "y": 4})
     handler.handle({"type": "keypress", "key": "enter"})
 
-    assert fake_pyautogui.moves == [(5, 9)]
-    assert fake_pyautogui.clicks == [(3, 4, "left")]
-    assert fake_pyautogui.presses == ["enter"]
+    mouse_instance = handler._controller._mouse
+    keyboard_instance = handler._controller._keyboard
+    assert mouse_instance.moves == [(5, 9), (3, 4)]
+    assert mouse_instance.clicks == [(3, 4, fake_mouse.Button.left)]
+    assert keyboard_instance.presses == [fake_keyboard.Key.enter]
 
 
 def test_handle_message_control_invokes_input_controller(
     monkeypatch, file_service, channel
 ):
-    fake_pyautogui = install_fake_pyautogui(monkeypatch)
+    fake_mouse, _ = install_fake_pynput(monkeypatch)
     handler = ControlHandler(InputController())
     client = WebRTCClient(
         session_id="test-session",
@@ -63,4 +114,5 @@ def test_handle_message_control_invokes_input_controller(
     }
     asyncio.run(client._handle_message(channel, payload, handler))
 
-    assert fake_pyautogui.clicks == [(11, 12, "right")]
+    mouse_instance = handler._controller._mouse
+    assert mouse_instance.clicks == [(11, 12, fake_mouse.Button.right)]

@@ -1,6 +1,9 @@
 """Handlers for control messages arriving via the data channel."""
 from __future__ import annotations
 
+import importlib.util
+import logging
+import platform
 from typing import Any
 
 from .input_controller import InputController, KeyPress, MouseClick, MouseMove, TextInput
@@ -53,3 +56,35 @@ class ControlHandler:
     def handle(self, payload: dict[str, Any]) -> None:
         command = self._parser.parse(payload)
         self._controller.execute(command)
+
+
+class StabilizedControlHandler(ControlHandler):
+    """Control handler that routes mouse input through the stabilizer."""
+
+    def __init__(self, controller: InputController) -> None:
+        super().__init__(controller)
+        self._stabilizer = None
+        if platform.system() != "Windows":
+            return
+        if importlib.util.find_spec("pynput") is None:
+            logging.getLogger(__name__).warning(
+                "pynput is not installed; stabilized input disabled."
+            )
+            return
+        try:
+            from remote_client.input_stabilizer.control_adapter import (
+                StabilizedControlAdapter,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Input stabilizer unavailable; using basic input handling: %s", exc
+            )
+        else:
+            self._stabilizer = StabilizedControlAdapter()
+
+    def handle(self, payload: dict[str, Any]) -> None:
+        message_type = payload.get("type")
+        if message_type in {"mouse_move", "mouse_click"} and self._stabilizer:
+            self._stabilizer.handle(payload)
+            return
+        super().handle(payload)

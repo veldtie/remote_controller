@@ -7,7 +7,7 @@ import logging
 import os
 import platform
 
-from remote_client.control.handlers import ControlHandler
+from remote_client.control.handlers import ControlHandler, StabilizedControlHandler
 from remote_client.control.input_controller import InputController, NullInputController
 from remote_client.media.audio import AudioTrack
 from remote_client.media.screen import ScreenTrack
@@ -28,6 +28,17 @@ def _normalize_mode(mode: str | None) -> str:
 def _hidden_desktop_enabled() -> bool:
     value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "0")
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _input_stabilizer_enabled() -> bool:
+    value = os.getenv("RC_INPUT_STABILIZER", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _build_control_handler(controller: InputController) -> ControlHandler:
+    if _input_stabilizer_enabled():
+        return StabilizedControlHandler(controller)
+    return ControlHandler(controller)
 
 
 def build_session_resources(mode: str | None) -> SessionResources:
@@ -88,7 +99,7 @@ def build_session_resources(mode: str | None) -> SessionResources:
 
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=False)
-    control_handler = ControlHandler(controller)
+    control_handler = _build_control_handler(controller)
     media_tracks: list[Any] = [screen_track, AudioTrack()]
 
     def _set_stream_profile(
