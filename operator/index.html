@@ -10,9 +10,68 @@
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="styles.css?v=20260128-4" />
+  <link rel="stylesheet" href="styles.css?v=20260130-1" />
 </head>
 <body class="view-mode">
+  <div id="topBar">
+    <div class="topbar-left">
+      <div class="pill" id="topSessionId">14161</div>
+      <div class="pill pill-region">
+        <span class="pill-label">REGION</span>
+        <span id="topRegion">--</span>
+      </div>
+      <div class="pill top-flag">
+        <span class="flag" id="topCountryFlag" aria-hidden="true">--</span>
+        <span id="topCountry">--</span>
+      </div>
+      <div class="pill pill-flags">
+        <span class="pill-label">FLAGS</span>
+        <span id="topFlags" class="flag-group"></span>
+      </div>
+      <div class="pill" id="topIp">185.103.71.157</div>
+      <button class="pill pill-action" id="topInstallBot" type="button">INSTALLSBOT</button>
+    </div>
+    <div class="topbar-mid">
+      <div class="stat"><span id="topStatA">5</span></div>
+      <div class="stat"><span id="topStatB">2537</span></div>
+      <div class="stat"><span id="topStatC">0</span></div>
+    </div>
+    <div class="topbar-right">
+      <div class="top-dots" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="top-apps" aria-hidden="true">
+        <span class="app-dot app-dot--blue"></span>
+        <span class="app-dot app-dot--green"></span>
+        <span class="app-dot app-dot--orange"></span>
+        <span class="app-dot app-dot--violet"></span>
+        <span class="app-dot app-dot--gray"></span>
+        <span class="app-dot app-dot--white"></span>
+      </div>
+      <div class="top-time" id="topTime">01/24/2024, 01:55 PM</div>
+      <div class="top-actions">
+        <button class="icon-btn" type="button" title="Download">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v10m0 0l4-4m-4 4l-4-4M5 15v4h14v-4" />
+          </svg>
+        </button>
+        <button class="icon-btn" type="button" title="Copy">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 8h10v10H8zM6 6h10v2H6zM6 6v10h2" />
+          </svg>
+        </button>
+        <button class="icon-btn danger" type="button" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 7l10 10M17 7l-10 10" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="managePanel">
     <div class="panel-header">
       <div class="brand">
@@ -175,6 +234,6 @@
     </div>
     <video id="screen" autoplay playsinline></video>
   </div>
-  <script src="app.js?v=20260128-4" defer></script>
+  <script src="app.js?v=20260130-1" defer></script>
 </body>
 </html>

@@ -26,6 +26,10 @@ def build_session_url(
     session_id: str,
     token: str | None,
     open_storage: bool = False,
+    region: str | None = None,
+    country: str | None = None,
+    country_code: str | None = None,
+    flags: list[str] | None = None,
 ) -> QtCore.QUrl:
     if "://" not in base_url:
         base_url = f"http://{base_url}"
@@ -42,6 +46,14 @@ def build_session_url(
         query["storage"] = "1"
     if token:
         query["token"] = token
+    if region:
+        query["region"] = region
+    if country:
+        query["country"] = country
+    if country_code:
+        query["country_code"] = country_code
+    if flags:
+        query["flags"] = ",".join([str(code) for code in flags if str(code).strip()])
     url = urlunsplit(
         (
             parsed.scheme,
@@ -64,6 +76,10 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         server_url: str,
         token: str | None,
         open_storage: bool = False,
+        region: str | None = None,
+        country: str | None = None,
+        country_code: str | None = None,
+        flags: list[str] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -72,8 +88,15 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.session_id = session_id
         self.server_url = server_url
         self.token = token or ""
+        self.region = region or ""
+        self.country = country or ""
+        self.country_code = country_code or ""
+        self.flags = list(flags or [])
         self._open_storage_on_load = open_storage
         self._page_ready = False
+        self._session_chip: QtWidgets.QLabel | None = None
+        self._region_chip: QtWidgets.QLabel | None = None
+        self._flags_chip: QtWidgets.QLabel | None = None
         self._pending_cookie_requests: list[dict[str, object]] = []
         self._download_override_dir: str | None = None
         self._download_override_name: str | None = None
@@ -90,6 +113,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
 
         self._window_controls = self._build_window_controls()
         layout.addWidget(self._window_controls, 0)
+        self._refresh_top_info()
 
         self.view = QWebEngineView()
         if QWebEngineSettings is not None:
@@ -132,6 +156,10 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         server_url: str | None = None,
         token: str | None = None,
         session_id: str | None = None,
+        region: str | None = None,
+        country: str | None = None,
+        country_code: str | None = None,
+        flags: list[str] | None = None,
         auto_connect: bool = True,
         open_storage: bool = False,
     ) -> None:
@@ -141,6 +169,15 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.token = token
         if session_id is not None:
             self.session_id = session_id
+        if region is not None:
+            self.region = region
+        if country is not None:
+            self.country = country
+        if country_code is not None:
+            self.country_code = country_code
+        if flags is not None:
+            self.flags = list(flags)
+        self._refresh_top_info()
         self._apply_desktop_overrides(auto_connect=auto_connect, open_storage=open_storage)
 
     def _handle_download_request(self, download) -> None:
@@ -194,9 +231,16 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     def _build_window_controls(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame(self)
         bar.setObjectName("SessionControlBar")
+        bar.setStyleSheet(
+            "QFrame#SessionControlBar {"
+            "background: rgba(12, 14, 18, 0.92);"
+            "border-bottom: 1px solid rgba(255, 255, 255, 0.08);"
+            "}"
+        )
         bar_layout = QtWidgets.QHBoxLayout(bar)
         bar_layout.setContentsMargins(10, 8, 10, 8)
-        bar_layout.setSpacing(0)
+        bar_layout.setSpacing(10)
+
         bar_layout.addStretch()
 
         controls = QtWidgets.QFrame(bar)
@@ -240,6 +284,32 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._update_fullscreen_button()
         bar_layout.addWidget(controls, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         return bar
+
+    def _refresh_top_info(self) -> None:
+        return
+
+    def _format_flags(self) -> str:
+        codes = [code for code in (self.flags or []) if str(code).strip()]
+        if not codes and self.country_code:
+            codes = [self.country_code]
+        if not codes:
+            return "--"
+        rendered = []
+        for code in codes[:6]:
+            rendered.append(self._flag_from_code(str(code)))
+        return " ".join(rendered)
+
+    @staticmethod
+    def _flag_from_code(code: str) -> str:
+        normalized = (code or "").strip().upper()
+        if len(normalized) != 2 or not normalized.isalpha():
+            return normalized or "--"
+        base = 0x1F1E6
+        first = ord(normalized[0]) - 65
+        second = ord(normalized[1]) - 65
+        if first < 0 or first > 25 or second < 0 or second > 25:
+            return normalized
+        return chr(base + first) + chr(base + second)
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -300,6 +370,10 @@ class RemoteSessionDialog(QtWidgets.QDialog):
                 "serverUrl": self.server_url,
                 "sessionId": self.session_id,
                 "token": self.token,
+                "region": self.region,
+                "country": self.country,
+                "country_code": self.country_code,
+                "flags": self.flags,
                 "autoConnect": auto_connect,
                 "openStorage": open_storage,
                 "desktop": True,

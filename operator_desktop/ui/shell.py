@@ -369,14 +369,35 @@ class MainShell(QtWidgets.QWidget):
                 "Unable to open session: missing client id.",
             )
             return False
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
+        region = ""
+        country = ""
+        country_code = ""
+        flags: list[str] = []
+        if client:
+            region = str(client.get("region") or "").strip()
+            country = region
+            config = client.get("client_config") or {}
+            if isinstance(config, dict):
+                antifraud = config.get("antifraud") or {}
+                if isinstance(antifraud, dict):
+                    raw_flags = antifraud.get("countries") or []
+                    if isinstance(raw_flags, list):
+                        flags = [str(code).upper() for code in raw_flags if str(code).strip()]
+            if flags:
+                country_code = flags[0]
         if client_id in self._session_windows:
             window = self._session_windows[client_id]
             window.apply_context(
                 server_url=base_url,
                 token=token,
                 session_id=client_id,
+                region=region or None,
+                country=country or None,
+                country_code=country_code or None,
+                flags=flags or None,
                 auto_connect=True,
                 open_storage=open_storage,
             )
@@ -384,7 +405,16 @@ class MainShell(QtWidgets.QWidget):
             window.activateWindow()
             return True
 
-        session_url = build_session_url(base_url, client_id, token, open_storage=open_storage)
+        session_url = build_session_url(
+            base_url,
+            client_id,
+            token,
+            open_storage=open_storage,
+            region=region or None,
+            country=country or None,
+            country_code=country_code or None,
+            flags=flags or None,
+        )
 
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
@@ -394,7 +424,18 @@ class MainShell(QtWidgets.QWidget):
             )
             return False
 
-        dialog = RemoteSessionDialog(client_id, session_url, base_url, token, open_storage, self)
+        dialog = RemoteSessionDialog(
+            client_id,
+            session_url,
+            base_url,
+            token,
+            open_storage,
+            region=region or None,
+            country=country or None,
+            country_code=country_code or None,
+            flags=flags or None,
+            parent=self,
+        )
         dialog.closed.connect(self._handle_session_closed)
         self._session_windows[client_id] = dialog
         dialog.show()

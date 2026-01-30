@@ -111,6 +111,10 @@
     lastLocalX: null,
     lastLocalY: null,
     lastSentPosition: null,
+    regionLabel: "",
+    countryLabel: "",
+    countryCode: "",
+    flagCodes: [],
     storageTimer: null,
     streamProfile: "quality",
     streamHintTimer: null,
@@ -160,7 +164,14 @@
     remoteRefresh: document.getElementById("remoteRefresh"),
     manageOnly: Array.from(document.querySelectorAll("[data-requires-manage]")),
     streamProfile: document.getElementById("streamProfile"),
-    cursorOverlay: null
+    cursorOverlay: null,
+    topSessionId: document.getElementById("topSessionId"),
+    topCountry: document.getElementById("topCountry"),
+    topCountryFlag: document.getElementById("topCountryFlag"),
+    topRegion: document.getElementById("topRegion"),
+    topIp: document.getElementById("topIp"),
+    topTime: document.getElementById("topTime"),
+    topFlags: document.getElementById("topFlags")
   };
 
   const KEY_MAP = {
@@ -202,6 +213,115 @@
     restorePanelState();
     updatePanelToggleLabel();
     updateFullscreenToggleLabel();
+    updateTopBar();
+    startTopClock();
+  }
+
+  function normalizeTopValue(value) {
+    const trimmed = (value || "").trim();
+    return trimmed || "--";
+  }
+
+  function extractHost(value) {
+    const raw = (value || "").trim();
+    if (!raw) {
+      return "--";
+    }
+    try {
+      const url = raw.includes("://") ? new URL(raw) : new URL(`http://${raw}`);
+      return url.hostname || raw;
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function updateTopBar() {
+    if (dom.topSessionId) {
+      dom.topSessionId.textContent = normalizeTopValue(dom.sessionIdInput.value);
+    }
+    if (dom.topRegion) {
+      dom.topRegion.textContent = normalizeTopValue(state.regionLabel);
+    }
+    if (dom.topIp) {
+      dom.topIp.textContent = extractHost(dom.serverUrlInput.value);
+    }
+    if (dom.topCountry) {
+      const countryLabel = state.countryLabel || state.regionLabel;
+      dom.topCountry.textContent = normalizeTopValue(countryLabel);
+    }
+    if (dom.topCountryFlag) {
+      const code = state.countryCode || (state.flagCodes[0] || "");
+      dom.topCountryFlag.textContent = code ? countryCodeToFlag(code) : "--";
+    }
+    renderFlags();
+  }
+
+  function formatTopTime(date) {
+    return date.toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function startTopClock() {
+    if (!dom.topTime) {
+      return;
+    }
+    const update = () => {
+      dom.topTime.textContent = formatTopTime(new Date());
+    };
+    update();
+    setInterval(update, 60000);
+  }
+
+  function parseFlagList(value) {
+    if (!value) {
+      return [];
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item)).filter((item) => item.trim());
+    }
+    return String(value)
+      .split(/[,; ]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function countryCodeToFlag(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    if (normalized.length !== 2) {
+      return normalized || "--";
+    }
+    const base = 0x1f1e6;
+    const first = normalized.charCodeAt(0) - 65;
+    const second = normalized.charCodeAt(1) - 65;
+    if (first < 0 || first > 25 || second < 0 || second > 25) {
+      return normalized;
+    }
+    return String.fromCodePoint(base + first, base + second);
+  }
+
+  function renderFlags() {
+    if (!dom.topFlags) {
+      return;
+    }
+    dom.topFlags.replaceChildren();
+    const codes = Array.isArray(state.flagCodes) ? state.flagCodes : [];
+    const visible = codes.slice(0, 8);
+    if (!visible.length) {
+      dom.topFlags.textContent = "--";
+      return;
+    }
+    visible.forEach((code) => {
+      const item = document.createElement("span");
+      item.className = "flag-item";
+      item.textContent = countryCodeToFlag(code);
+      item.title = String(code || "").toUpperCase();
+      dom.topFlags.appendChild(item);
+    });
   }
 
   function applyUrlParams() {
@@ -260,6 +380,23 @@
       applyStreamProfile(streamProfile, false);
     }
 
+    const region = params.get("region") || params.get("geo") || "";
+    if (region) {
+      state.regionLabel = region;
+    }
+    const country = params.get("country") || params.get("country_name") || "";
+    if (country) {
+      state.countryLabel = country;
+    }
+    const countryCode = params.get("country_code") || params.get("cc") || "";
+    if (countryCode) {
+      state.countryCode = countryCode;
+    }
+    const flagsParam = params.get("flags") || params.get("countries") || "";
+    if (flagsParam) {
+      state.flagCodes = parseFlagList(flagsParam);
+    }
+
     const autoConnect =
       params.get("autoconnect") ||
       params.get("connect") ||
@@ -289,6 +426,19 @@
     setValue("serverUrl", payload.serverUrl);
     setValue("sessionId", payload.sessionId);
     setValue("authToken", payload.token);
+    if (payload.region) {
+      state.regionLabel = String(payload.region);
+    }
+    if (payload.country) {
+      state.countryLabel = String(payload.country);
+    }
+    if (payload.country_code) {
+      state.countryCode = String(payload.country_code);
+    }
+    if (payload.flags || payload.countries) {
+      state.flagCodes = parseFlagList(payload.flags || payload.countries);
+    }
+    updateTopBar();
     if (payload.stream && dom.streamProfile) {
       applyStreamProfile(payload.stream, false);
     }
@@ -2164,6 +2314,12 @@
         applyStreamProfile(dom.streamProfile.value, true);
       });
     }
+    if (dom.sessionIdInput) {
+      dom.sessionIdInput.addEventListener("input", updateTopBar);
+    }
+    if (dom.serverUrlInput) {
+      dom.serverUrlInput.addEventListener("input", updateTopBar);
+    }
     if (dom.e2eeKeyInput) {
       dom.e2eeKeyInput.addEventListener("input", () => {
         const value = dom.e2eeKeyInput.value;
@@ -2246,6 +2402,7 @@
 
   initDefaults();
   const shouldConnect = applyUrlParams();
+  updateTopBar();
   updateInteractionMode();
   updateDrawerOffset();
   updateScreenLayout();
