@@ -714,6 +714,31 @@ button:disabled {
   transform: translateX(0);
 }
 
+body.storage-only #managePanel {
+  display: none;
+}
+
+body.storage-only #screenFrame {
+  display: none;
+}
+
+body.storage-only #storageDrawer {
+  left: var(--edge-gap);
+  right: var(--edge-gap);
+  top: var(--edge-gap);
+  bottom: var(--edge-gap);
+  width: auto;
+  transform: translateX(0);
+}
+
+body.storage-only #storageDrawer.open {
+  transform: translateX(0);
+}
+
+body.storage-only #storageClose {
+  display: none;
+}
+
 .drawer-header {
   display: flex;
   justify-content: space-between;

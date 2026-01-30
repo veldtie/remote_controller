@@ -26,10 +26,15 @@ def build_session_url(
     session_id: str,
     token: str | None,
     open_storage: bool = False,
+<<<<<<< HEAD
+    mode: str = "manage",
+    storage_only: bool = False,
+=======
     region: str | None = None,
     country: str | None = None,
     country_code: str | None = None,
     flags: list[str] | None = None,
+>>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
 ) -> QtCore.QUrl:
     if "://" not in base_url:
         base_url = f"http://{base_url}"
@@ -37,13 +42,15 @@ def build_session_url(
     query = {
         "session_id": session_id,
         "autoconnect": "1",
-        "mode": "manage",
+        "mode": mode,
         "desktop": "1",
         "server": base_url,
         "v": uuid.uuid4().hex,
     }
     if open_storage:
         query["storage"] = "1"
+    if storage_only:
+        query["storage_only"] = "1"
     if token:
         query["token"] = token
     if region:
@@ -76,10 +83,16 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         server_url: str,
         token: str | None,
         open_storage: bool = False,
+<<<<<<< HEAD
+        manage_mode: bool = True,
+        storage_only: bool = False,
+        show_window: bool = True,
+=======
         region: str | None = None,
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
+>>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
         parent=None,
     ):
         super().__init__(parent)
@@ -93,11 +106,14 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.country_code = country_code or ""
         self.flags = list(flags or [])
         self._open_storage_on_load = open_storage
+        self._manage_mode = manage_mode
+        self._storage_only = storage_only
         self._page_ready = False
         self._session_chip: QtWidgets.QLabel | None = None
         self._region_chip: QtWidgets.QLabel | None = None
         self._flags_chip: QtWidgets.QLabel | None = None
         self._pending_cookie_requests: list[dict[str, object]] = []
+        self._pending_proxy_requests: list[dict[str, object]] = []
         self._download_override_dir: str | None = None
         self._download_override_name: str | None = None
         self._last_download_dir = QtCore.QStandardPaths.writableLocation(
@@ -105,6 +121,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         )
         self.setWindowTitle(f"RemDesk - {session_id}")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        if not show_window:
+            self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.resize(1200, 720)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -151,6 +169,20 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         )
         self._flush_cookie_requests()
 
+    def request_proxy_export(
+        self,
+        client_id: str | None = None,
+        filename: str | None = None,
+        download_dir: str | None = None,
+    ) -> None:
+        if download_dir:
+            self._download_override_dir = download_dir
+            self._download_override_name = filename
+        self._pending_proxy_requests.append(
+            {"clientId": client_id or self.session_id, "filename": filename}
+        )
+        self._flush_proxy_requests()
+
     def apply_context(
         self,
         server_url: str | None = None,
@@ -162,6 +194,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         flags: list[str] | None = None,
         auto_connect: bool = True,
         open_storage: bool = False,
+        manage_mode: bool | None = None,
+        storage_only: bool | None = None,
     ) -> None:
         if server_url is not None:
             self.server_url = server_url
@@ -169,6 +203,18 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.token = token
         if session_id is not None:
             self.session_id = session_id
+<<<<<<< HEAD
+        if manage_mode is not None:
+            self._manage_mode = manage_mode
+        if storage_only is not None:
+            self._storage_only = storage_only
+        self._apply_desktop_overrides(
+            auto_connect=auto_connect,
+            open_storage=open_storage,
+            manage_mode=self._manage_mode,
+            storage_only=self._storage_only,
+        )
+=======
         if region is not None:
             self.region = region
         if country is not None:
@@ -179,6 +225,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.flags = list(flags)
         self._refresh_top_info()
         self._apply_desktop_overrides(auto_connect=auto_connect, open_storage=open_storage)
+>>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
 
     def _handle_download_request(self, download) -> None:
         if download.isFinished():
@@ -216,17 +263,29 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         if not ok:
             return
         self._page_ready = True
-        self._apply_desktop_overrides(auto_connect=True, open_storage=self._open_storage_on_load)
+        self._apply_desktop_overrides(
+            auto_connect=True,
+            open_storage=self._open_storage_on_load,
+            manage_mode=self._manage_mode,
+            storage_only=self._storage_only,
+        )
         self._open_storage_on_load = False
         self._flush_cookie_requests()
+        self._flush_proxy_requests()
 
     def _fallback_apply(self) -> None:
         if not self.view:
             return
         self._page_ready = True
-        self._apply_desktop_overrides(auto_connect=True, open_storage=self._open_storage_on_load)
+        self._apply_desktop_overrides(
+            auto_connect=True,
+            open_storage=self._open_storage_on_load,
+            manage_mode=self._manage_mode,
+            storage_only=self._storage_only,
+        )
         self._open_storage_on_load = False
         self._flush_cookie_requests()
+        self._flush_proxy_requests()
 
     def _build_window_controls(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame(self)
@@ -362,7 +421,33 @@ class RemoteSessionDialog(QtWidgets.QDialog):
 """
             self.view.page().runJavaScript(script)
 
-    def _apply_desktop_overrides(self, auto_connect: bool, open_storage: bool) -> None:
+    def _flush_proxy_requests(self) -> None:
+        if not self.view or not self._page_ready or not self._pending_proxy_requests:
+            return
+        pending = self._pending_proxy_requests[:]
+        self._pending_proxy_requests.clear()
+        for entry in pending:
+            payload = json.dumps(entry)
+            script = f"""
+(() => {{
+  const req = {payload};
+  if (window.remdeskDownloadProxy) {{
+    window.remdeskDownloadProxy(req.clientId || null, req.filename || null);
+    return;
+  }}
+  window.__remdeskProxyQueue = window.__remdeskProxyQueue || [];
+  window.__remdeskProxyQueue.push(req);
+}})();
+"""
+            self.view.page().runJavaScript(script)
+
+    def _apply_desktop_overrides(
+        self,
+        auto_connect: bool,
+        open_storage: bool,
+        manage_mode: bool,
+        storage_only: bool,
+    ) -> None:
         if not self.view:
             return
         payload = json.dumps(
@@ -377,7 +462,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
                 "autoConnect": auto_connect,
                 "openStorage": open_storage,
                 "desktop": True,
-                "manage": True,
+                "manage": manage_mode,
+                "storageOnly": storage_only,
             }
         )
         script = f"""
@@ -394,12 +480,23 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     setValue("serverUrl", data.serverUrl || "");
     setValue("sessionId", data.sessionId || "");
     setValue("authToken", data.token || "");
-    if (data.manage) {{
+    if (data.manage === true) {{
       const toggle = document.getElementById("interactionToggle");
       if (toggle && !toggle.checked) {{
         toggle.checked = true;
         toggle.dispatchEvent(new Event("change", {{ bubbles: true }}));
       }}
+    }} else if (data.manage === false) {{
+      const toggle = document.getElementById("interactionToggle");
+      if (toggle && toggle.checked) {{
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event("change", {{ bubbles: true }}));
+      }}
+    }}
+    if (data.storageOnly) {{
+      document.body.classList.add("storage-only");
+    }} else {{
+      document.body.classList.remove("storage-only");
     }}
     if (data.openStorage) {{
       const storageButton = document.getElementById("storageToggle");

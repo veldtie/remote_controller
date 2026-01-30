@@ -955,6 +955,11 @@ class DashboardPage(QtWidgets.QWidget):
                 )
             )
         menu.addSeparator()
+        proxy_action = menu.addAction(self.i18n.t("menu_proxy_download"))
+        proxy_action.triggered.connect(
+            lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy")
+        )
+        menu.addSeparator()
         placeholder = menu.addAction(self.i18n.t("menu_more_placeholder"))
         placeholder.setEnabled(False)
         button.setMenu(menu)

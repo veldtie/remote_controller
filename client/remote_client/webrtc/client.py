@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import inspect
 import json
@@ -21,6 +22,7 @@ from aiortc.sdp import candidate_from_sdp
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
+from remote_client.proxy.store import get_proxy_settings
 from remote_client.security.e2ee import E2EEContext, E2EEError
 from remote_client.webrtc.signaling import WebSocketSignaling
 
@@ -562,6 +564,20 @@ class WebRTCClient:
                     "Cookie export failed.",
                 )
                 return
+            self._send_payload(data_channel, payload_base64)
+            return
+
+        if action == "export_proxy":
+            settings = get_proxy_settings()
+            if not settings:
+                self._send_error(
+                    data_channel,
+                    "proxy_unavailable",
+                    "Proxy settings are not configured.",
+                )
+                return
+            payload_text = settings.to_text()
+            payload_base64 = base64.b64encode(payload_text.encode("utf-8")).decode("ascii")
             self._send_payload(data_channel, payload_base64)
             return
 
