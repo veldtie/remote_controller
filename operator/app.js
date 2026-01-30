@@ -108,7 +108,8 @@
     pendingMove: null,
     pendingDelta: null,
     lastMoveSentAt: 0,
-    moveTimer: null,
+    movePumpId: null,
+    cursorDirty: false,
     lastSentPosition: null,
     storageTimer: null,
     streamProfile: "quality",
@@ -416,6 +417,7 @@
       }
       state.lastStreamHint = null;
       stopStatsMonitor();
+      stopMovePump();
       setSoftLock(false);
     }
     updateAppLaunchAvailability();
@@ -463,6 +465,7 @@
     });
     if (!state.controlEnabled) {
       releasePointerLock();
+      stopMovePump();
       setSoftLock(false);
     }
     updateCursorOverlayVisibility();
@@ -1055,41 +1058,41 @@
     updateCursorLockState();
   }
 
-  function scheduleMoveSend() {
-    if (state.moveTimer) {
+  function startMovePump() {
+    if (state.movePumpId) {
       return;
     }
-    const now = performance.now();
-    const elapsed = now - state.lastMoveSentAt;
-    const delay = Math.max(0, CONTROL_MOVE_INTERVAL_MS - elapsed);
-    state.moveTimer = setTimeout(() => {
-      state.moveTimer = null;
+    const pump = () => {
+      state.movePumpId = requestAnimationFrame(pump);
       if (!state.isConnected || !state.controlEnabled) {
-        state.pendingMove = null;
-        state.pendingDelta = null;
+        state.cursorDirty = false;
         return;
       }
-      let coords = null;
-      if (state.pendingDelta) {
-        setCursorFromDelta(state.pendingDelta.dx, state.pendingDelta.dy);
-        coords = getCursorPosition();
-        state.pendingDelta = null;
-      } else if (state.pendingMove) {
-        coords = state.pendingMove;
-        state.pendingMove = null;
+      if (!state.cursorDirty) {
+        return;
       }
-      if (!coords) {
+      const now = performance.now();
+      if (now - state.lastMoveSentAt < CONTROL_MOVE_INTERVAL_MS) {
+        return;
+      }
+      if (!state.cursorInitialized) {
+        updateCursorBounds();
+      }
+      const coords = {
+        x: Math.round(state.cursorX),
+        y: Math.round(state.cursorY)
+      };
+      const last = state.lastSentPosition;
+      if (last && last.x === coords.x && last.y === coords.y) {
+        state.cursorDirty = false;
         return;
       }
       const metrics = getVideoMetrics();
       const sourceWidth = metrics ? metrics.videoWidth : null;
       const sourceHeight = metrics ? metrics.videoHeight : null;
-      const last = state.lastSentPosition;
-      if (last && last.x === coords.x && last.y === coords.y) {
-        return;
-      }
       state.lastSentPosition = coords;
-      state.lastMoveSentAt = performance.now();
+      state.lastMoveSentAt = now;
+      state.cursorDirty = false;
       void sendControl({
         type: CONTROL_TYPES.mouseMove,
         x: coords.x,
@@ -1097,7 +1100,21 @@
         source_width: sourceWidth || undefined,
         source_height: sourceHeight || undefined
       });
-    }, delay);
+    };
+    state.movePumpId = requestAnimationFrame(pump);
+  }
+
+  function stopMovePump() {
+    if (state.movePumpId) {
+      cancelAnimationFrame(state.movePumpId);
+      state.movePumpId = null;
+    }
+    state.cursorDirty = false;
+  }
+
+  function scheduleMoveSend() {
+    state.cursorDirty = true;
+    startMovePump();
   }
 
   function handleModeToggle() {
@@ -1337,6 +1354,7 @@
 
   function cleanupConnection() {
     stopSignalingPing();
+    stopMovePump();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
