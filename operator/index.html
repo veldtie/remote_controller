@@ -72,9 +72,10 @@
           <div class="field">
             <label for="streamProfile">Quality</label>
             <select id="streamProfile">
-              <option value="speed">Speed (480-720p 50-60fps)</option>
-              <option value="balanced">Balance (720-1080p 40-60fps)</option>
-              <option value="quality" selected>Quality (900-1440p 30-60fps)</option>
+              <option value="speed">Speed (720-1080p 40-60fps)</option>
+              <option value="balanced">Balance (900-1440p 30-60fps)</option>
+              <option value="reading">Reading (1440-2160p 10-20fps)</option>
+              <option value="quality" selected>Quality (1080-2160p 30-60fps)</option>
             </select>
           </div>
         </div>
@@ -155,6 +156,10 @@
   </div>
 
   <div id="screenFrame">
+    <div id="screenControls">
+      <button id="panelToggle" class="ghost small" type="button" title="Ctrl+Shift+M">Minimize</button>
+      <button id="fullscreenToggle" class="ghost small" type="button" title="F11 / Ctrl+Shift+F">Fullscreen</button>
+    </div>
     <video id="screen" autoplay playsinline></video>
   </div>
   <script src="app.js?v=20260128-4" defer></script>

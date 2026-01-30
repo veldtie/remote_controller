@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import logging
@@ -24,6 +25,49 @@ from remote_client.security.e2ee import E2EEContext, E2EEError
 from remote_client.webrtc.signaling import WebSocketSignaling
 
 logger = logging.getLogger(__name__)
+
+def _read_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_bitrate_bps(env_value: str | None, default_bps: int) -> int:
+    if env_value is None:
+        return default_bps
+    try:
+        value = int(env_value)
+    except (TypeError, ValueError):
+        return default_bps
+    if value <= 0:
+        return 0
+    if value < 1_000_000:
+        return value * 1000
+    return value
+
+
+SIGNALING_PING_INTERVAL = max(0.0, _read_env_float("RC_SIGNALING_PING_INTERVAL", 20.0))
+DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 10.0))
+RECONNECT_BASE_DELAY = max(0.5, _read_env_float("RC_RECONNECT_DELAY", 2.0))
+RECONNECT_MAX_DELAY = max(RECONNECT_BASE_DELAY, _read_env_float("RC_RECONNECT_MAX_DELAY", 30.0))
+VIDEO_MAX_BITRATE_BPS = _resolve_bitrate_bps(
+    os.getenv("RC_VIDEO_MAX_BITRATE"), 12_000_000
+)
+VIDEO_MAX_FPS = max(0, _read_env_int("RC_VIDEO_MAX_FPS", 0))
 
 
 def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
@@ -120,28 +164,118 @@ class WebRTCClient:
 
     async def run_forever(self) -> None:
         """Reconnect in a loop, keeping the client available."""
+        delay = RECONNECT_BASE_DELAY
         while True:
-            await self._run_once()
-            await asyncio.sleep(2)
+            try:
+                await self._run_once()
+                delay = RECONNECT_BASE_DELAY
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("Unexpected error in client loop: %s", exc)
+                delay = min(RECONNECT_MAX_DELAY, max(delay * 2, RECONNECT_BASE_DELAY))
+            await asyncio.sleep(delay)
+
+    async def _signaling_keepalive(self) -> None:
+        """Periodically send signaling keepalive messages to prevent idle timeouts."""
+        if SIGNALING_PING_INTERVAL <= 0:
+            return
+        while True:
+            await asyncio.sleep(SIGNALING_PING_INTERVAL)
+            await self._signaling.send(
+                {"type": "ping", "session_id": self._session_id, "role": "client"}
+            )
+
+    async def _tune_video_sender(self, sender) -> None:
+        """Apply video sender constraints to improve bitrate/quality when possible."""
+        if sender is None or (VIDEO_MAX_BITRATE_BPS <= 0 and VIDEO_MAX_FPS <= 0):
+            return
+        try:
+            params = sender.getParameters()
+        except Exception as exc:
+            logger.debug("Sender parameters unavailable: %s", exc)
+            return
+        encodings = getattr(params, "encodings", None)
+        if not encodings:
+            return
+        encoding = encodings[0]
+        if VIDEO_MAX_BITRATE_BPS > 0:
+            try:
+                encoding.maxBitrate = VIDEO_MAX_BITRATE_BPS
+            except Exception:
+                pass
+        if VIDEO_MAX_FPS > 0:
+            try:
+                encoding.maxFramerate = VIDEO_MAX_FPS
+            except Exception:
+                pass
+        try:
+            result = sender.setParameters(params)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.debug("Failed to set sender parameters: %s", exc)
 
     async def _run_once(self) -> None:
         """Run a single signaling and WebRTC session."""
         peer_connection = RTCPeerConnection(self._rtc_configuration)
         connection_done = asyncio.Event()
+        disconnect_task: asyncio.Task | None = None
+        keepalive_task: asyncio.Task | None = None
         control_handler: ControlHandler | None = None
         session_cleanup: Callable[[], None] | None = None
         session_actions: SessionResources | None = None
         operator_id_holder: dict[str, str | None] = {"value": None}
 
+        def _cancel_disconnect_task() -> None:
+            nonlocal disconnect_task
+            if disconnect_task and not disconnect_task.done():
+                disconnect_task.cancel()
+            disconnect_task = None
+
+        async def _schedule_disconnect() -> None:
+            nonlocal disconnect_task
+            if DISCONNECT_GRACE_SECONDS <= 0:
+                connection_done.set()
+                return
+            if disconnect_task and not disconnect_task.done():
+                return
+
+            async def _wait_for_disconnect() -> None:
+                try:
+                    await asyncio.sleep(DISCONNECT_GRACE_SECONDS)
+                except asyncio.CancelledError:
+                    return
+                if (
+                    peer_connection.connectionState == "disconnected"
+                    or peer_connection.iceConnectionState == "disconnected"
+                ):
+                    connection_done.set()
+
+            disconnect_task = asyncio.create_task(_wait_for_disconnect())
+
         @peer_connection.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
-            if peer_connection.connectionState in {"failed", "closed", "disconnected"}:
+            state = peer_connection.connectionState
+            if state in {"failed", "closed"}:
                 connection_done.set()
+                return
+            if state == "disconnected":
+                await _schedule_disconnect()
+                return
+            _cancel_disconnect_task()
 
         @peer_connection.on("iceconnectionstatechange")
         async def on_iceconnectionstatechange() -> None:
-            if peer_connection.iceConnectionState in {"failed", "closed", "disconnected"}:
+            state = peer_connection.iceConnectionState
+            if state in {"failed", "closed"}:
                 connection_done.set()
+                return
+            if state == "disconnected":
+                await _schedule_disconnect()
+                return
+            if state in {"connected", "completed"}:
+                _cancel_disconnect_task()
 
         @peer_connection.on("datachannel")
         def on_datachannel(data_channel):
@@ -197,6 +331,7 @@ class WebRTCClient:
             if self._client_config:
                 register_payload["client_config"] = self._client_config
             await self._signaling.send(register_payload)
+            keepalive_task = asyncio.create_task(self._signaling_keepalive())
             offer_payload = await self._await_offer()
             if offer_payload is None:
                 return
@@ -222,7 +357,9 @@ class WebRTCClient:
             }
             for track in media_tracks:
                 if track.kind in offered_kinds:
-                    peer_connection.addTrack(track)
+                    sender = peer_connection.addTrack(track)
+                    if track.kind == "video":
+                        await self._tune_video_sender(sender)
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)
@@ -252,6 +389,14 @@ class WebRTCClient:
         except (ConnectionError, OSError, asyncio.CancelledError):
             return
         finally:
+            if keepalive_task:
+                keepalive_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keepalive_task
+            if disconnect_task:
+                disconnect_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await disconnect_task
             await peer_connection.close()
             await self._signaling.close()
             if session_cleanup:

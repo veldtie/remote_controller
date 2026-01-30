@@ -50,6 +50,7 @@ db_pool: asyncpg.Pool | None = None
 DEVICE_STATUS_ACTIVE = "active"
 DEVICE_STATUS_INACTIVE = "inactive"
 DEVICE_STATUS_DISCONNECTED = "disconnected"
+KEEPALIVE_MESSAGE_TYPES = {"ping", "pong", "keepalive"}
 
 
 def _load_signaling_token() -> str | None:
@@ -996,6 +997,12 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                     if operator_id:
                         payload["operator_id"] = operator_id
                         message = json.dumps(payload)
+                if message_type in KEEPALIVE_MESSAGE_TYPES:
+                    await registry.touch(session_id)
+                    if message_type == "ping":
+                        with contextlib.suppress(Exception):
+                            await websocket.send_text(json.dumps({"type": "pong"}))
+                    continue
                 if message_type == "register":
                     if role == "client":
                         device_token = payload.get("device_token")

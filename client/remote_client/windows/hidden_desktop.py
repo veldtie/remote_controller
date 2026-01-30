@@ -25,9 +25,10 @@ from remote_client.control.input_controller import ControlCommand, InputControll
 logger = logging.getLogger(__name__)
 
 STREAM_PROFILES: dict[str, dict[str, int]] = {
-    "speed": {"min_height": 480, "max_height": 720, "min_fps": 50, "max_fps": 60},
-    "balanced": {"min_height": 720, "max_height": 1080, "min_fps": 40, "max_fps": 60},
-    "quality": {"min_height": 900, "max_height": 1440, "min_fps": 30, "max_fps": 60},
+    "speed": {"min_height": 720, "max_height": 1080, "min_fps": 40, "max_fps": 60},
+    "balanced": {"min_height": 900, "max_height": 1440, "min_fps": 30, "max_fps": 60},
+    "quality": {"min_height": 1080, "max_height": 2160, "min_fps": 30, "max_fps": 60},
+    "reading": {"min_height": 1440, "max_height": 2160, "min_fps": 10, "max_fps": 20},
 }
 ADAPT_INTERVAL_SEC = 2.0
 FPS_SAMPLE_SIZE = 24
@@ -491,21 +492,21 @@ class HiddenDesktopTrack(VideoStreamTrack):
         underperform = avg_fps < self._target_fps * 0.85
         headroom = avg_fps >= self._target_fps * 0.98 and processing_time < target_interval * 0.6
         if underperform:
-            if self._target_height > self._min_height:
-                self._target_height = max(self._min_height, int(self._target_height * HEIGHT_DOWN_SCALE))
-                self._target_size = _height_to_size(self._native_size, self._target_height)
-            elif self._target_fps > self._min_fps:
+            if self._target_fps > self._min_fps:
                 self._target_fps = max(self._min_fps, self._target_fps - FPS_STEP)
                 self._frame_source.set_fps(self._target_fps)
+            elif self._target_height > self._min_height:
+                self._target_height = max(self._min_height, int(self._target_height * HEIGHT_DOWN_SCALE))
+                self._target_size = _height_to_size(self._native_size, self._target_height)
             self._last_adjust_ts = now
             return
         if headroom:
-            if self._target_fps < effective_max_fps:
-                self._target_fps = min(effective_max_fps, self._target_fps + FPS_STEP)
-                self._frame_source.set_fps(self._target_fps)
-            elif self._target_height < effective_max_height:
+            if self._target_height < effective_max_height:
                 self._target_height = min(effective_max_height, int(self._target_height * HEIGHT_UP_SCALE))
                 self._target_size = _height_to_size(self._native_size, self._target_height)
+            elif self._target_fps < effective_max_fps:
+                self._target_fps = min(effective_max_fps, self._target_fps + FPS_STEP)
+                self._frame_source.set_fps(self._target_fps)
             self._last_adjust_ts = now
 
     async def recv(self) -> VideoFrame:
