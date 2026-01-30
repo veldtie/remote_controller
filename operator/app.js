@@ -105,11 +105,11 @@
     softLock: false,
     cursorInitialized: false,
     cursorBounds: { width: 0, height: 0 },
-    pendingMove: null,
-    pendingDelta: null,
     lastMoveSentAt: 0,
     movePumpId: null,
     cursorDirty: false,
+    lastLocalX: null,
+    lastLocalY: null,
     lastSentPosition: null,
     storageTimer: null,
     streamProfile: "quality",
@@ -943,24 +943,6 @@
     }
   }
 
-  function mapClientToVideo(clientX, clientY) {
-    const metrics = getVideoMetrics();
-    if (!metrics) {
-      return null;
-    }
-    const x = clientX - metrics.rect.left - metrics.offsetX;
-    const y = clientY - metrics.rect.top - metrics.offsetY;
-    if (x < 0 || y < 0 || x > metrics.renderWidth || y > metrics.renderHeight) {
-      return null;
-    }
-    const mappedX = Math.round((x / metrics.renderWidth) * metrics.videoWidth);
-    const mappedY = Math.round((y / metrics.renderHeight) * metrics.videoHeight);
-    return {
-      x: clamp(mappedX, 0, metrics.videoWidth - 1),
-      y: clamp(mappedY, 0, metrics.videoHeight - 1)
-    };
-  }
-
   function updateCursorBounds() {
     const metrics = getVideoMetrics();
     if (!metrics) {
@@ -979,33 +961,43 @@
     updateCursorOverlayPosition();
   }
 
-  function snapCursorToCenter() {
+  function getRelativeDelta(event) {
+    const dx = event.movementX || 0;
+    const dy = event.movementY || 0;
+    if (dx || dy) {
+      state.lastLocalX = event.clientX;
+      state.lastLocalY = event.clientY;
+      return { dx, dy };
+    }
+    if (state.lastLocalX === null || state.lastLocalY === null) {
+      state.lastLocalX = event.clientX;
+      state.lastLocalY = event.clientY;
+      return null;
+    }
+    const deltaX = event.clientX - state.lastLocalX;
+    const deltaY = event.clientY - state.lastLocalY;
+    state.lastLocalX = event.clientX;
+    state.lastLocalY = event.clientY;
+    if (!deltaX && !deltaY) {
+      return null;
+    }
+    return { dx: deltaX, dy: deltaY };
+  }
+
+  function applyRelativeMove(event) {
     const metrics = getVideoMetrics();
     if (!metrics) {
       return;
     }
-    state.cursorX = metrics.videoWidth / 2;
-    state.cursorY = metrics.videoHeight / 2;
-    state.cursorInitialized = true;
-    updateCursorOverlayPosition();
-    if (!state.controlEnabled || !state.isConnected) {
+    const delta = getRelativeDelta(event);
+    if (!delta) {
       return;
     }
-    state.pendingDelta = null;
-    state.pendingMove = { x: Math.round(state.cursorX), y: Math.round(state.cursorY) };
-    scheduleMoveSend();
-  }
-
-  function setCursorFromAbsolute(clientX, clientY) {
-    const coords = mapClientToVideo(clientX, clientY);
-    if (!coords) {
-      return null;
+    if (!state.cursorInitialized) {
+      updateCursorBounds();
     }
-    state.cursorX = coords.x;
-    state.cursorY = coords.y;
-    state.cursorInitialized = true;
-    updateCursorOverlayPosition();
-    return coords;
+    setCursorFromDelta(delta.dx, delta.dy);
+    scheduleMoveSend();
   }
 
   function setCursorFromDelta(deltaX, deltaY) {
@@ -1585,30 +1577,23 @@
       if (state.softLock) {
         return;
       }
-      const coords = setCursorFromAbsolute(event.clientX, event.clientY);
-      if (!coords) {
-        return;
-      }
-      state.pendingMove = coords;
-      scheduleMoveSend();
+      applyRelativeMove(event);
     });
 
-    dom.screenFrame.addEventListener("mouseenter", () => {
+    dom.screenFrame.addEventListener("mouseenter", (event) => {
       if (dom.screenFrame.focus) {
         dom.screenFrame.focus({ preventScroll: true });
       }
+      state.lastLocalX = event.clientX;
+      state.lastLocalY = event.clientY;
     });
 
     dom.screenFrame.addEventListener("mouseleave", () => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      if (state.cursorLocked || state.softLock) {
-        return;
-      }
-      if (!state.cursorLocked) {
-        snapCursorToCenter();
-      }
+      state.lastLocalX = null;
+      state.lastLocalY = null;
     });
 
     dom.screenFrame.addEventListener("mousedown", (event) => {
@@ -1624,11 +1609,7 @@
         dom.screenFrame.requestPointerLock();
       }
       let coords = null;
-      if (state.cursorLocked) {
-        coords = getCursorPosition();
-      } else {
-        coords = setCursorFromAbsolute(event.clientX, event.clientY);
-      }
+      coords = getCursorPosition();
       if (!coords) {
         return;
       }
@@ -1666,18 +1647,7 @@
       if (!state.cursorLocked && !state.softLock) {
         return;
       }
-      const dx = event.movementX || 0;
-      const dy = event.movementY || 0;
-      if (!dx && !dy) {
-        return;
-      }
-      setCursorFromDelta(dx, dy);
-      state.pendingMove = {
-        x: Math.round(state.cursorX),
-        y: Math.round(state.cursorY)
-      };
-      state.pendingDelta = null;
-      scheduleMoveSend();
+      applyRelativeMove(event);
     });
 
     window.addEventListener("keydown", (event) => {
