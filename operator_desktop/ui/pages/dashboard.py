@@ -1,4 +1,5 @@
 import ipaddress
+import sys
 import time
 from datetime import datetime
 from typing import Dict, List
@@ -132,7 +133,23 @@ class IpCountryWorker(QtCore.QThread):
         code = _lookup_country_code(self.ip_value)
         self.resolved.emit(self.ip_value, code)
 
-FLAG_ASSET_DIR = Path(__file__).resolve().parents[2] / "assets" / "flags"
+
+def _resolve_flag_asset_dir() -> Path:
+    base_dir = Path(__file__).resolve().parents[2]
+    candidates = [base_dir / "assets" / "flags"]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        meipass_path = Path(meipass)
+        candidates.append(meipass_path / "operator_desktop" / "assets" / "flags")
+        candidates.append(meipass_path / "assets" / "flags")
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
+
+
+FLAG_ASSET_DIR = _resolve_flag_asset_dir()
+TWEMOJI_BASE_URL = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72"
 
 
 class DashboardPage(QtWidgets.QWidget):
@@ -438,11 +455,19 @@ class DashboardPage(QtWidgets.QWidget):
         key = normalized.lower()
         if key in self._flag_pixmap_cache:
             return self._flag_pixmap_cache[key]
-        path = FLAG_ASSET_DIR / f"{key}.png"
-        if not path.exists():
-            self._flag_pixmap_cache[key] = None
-            return None
-        pixmap = QtGui.QPixmap(str(path))
+        paths = [FLAG_ASSET_DIR / f"{key}.png"]
+        cache_dir = self._flag_cache_dir()
+        if cache_dir:
+            paths.append(cache_dir / f"{key}.png")
+        pixmap = None
+        for path in paths:
+            if path.exists():
+                loaded = QtGui.QPixmap(str(path))
+                if not loaded.isNull():
+                    pixmap = loaded
+                    break
+        if pixmap is None:
+            pixmap = self._download_flag_pixmap(key, cache_dir)
         if pixmap.isNull():
             self._flag_pixmap_cache[key] = None
             return None
@@ -452,6 +477,52 @@ class DashboardPage(QtWidgets.QWidget):
         )
         self._flag_pixmap_cache[key] = scaled
         return scaled
+
+    def _flag_cache_dir(self) -> Path | None:
+        base = QtCore.QStandardPaths.writableLocation(
+            QtCore.QStandardPaths.StandardLocation.AppDataLocation
+        )
+        if not base:
+            return None
+        path = Path(base) / "flags"
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return path
+
+    def _twemoji_filename(self, code: str) -> str:
+        normalized = _normalize_country_code(code)
+        if not normalized:
+            return ""
+        first = ord(normalized[0]) - 65
+        second = ord(normalized[1]) - 65
+        if first < 0 or first > 25 or second < 0 or second > 25:
+            return ""
+        hex1 = f"{0x1F1E6 + first:x}"
+        hex2 = f"{0x1F1E6 + second:x}"
+        return f"{hex1}-{hex2}.png"
+
+    def _download_flag_pixmap(self, code: str, cache_dir: Path | None) -> QtGui.QPixmap:
+        filename = self._twemoji_filename(code)
+        if not filename:
+            return QtGui.QPixmap()
+        url = f"{TWEMOJI_BASE_URL}/{filename}"
+        try:
+            response = requests.get(url, timeout=(2, 4))
+        except Exception:
+            return QtGui.QPixmap()
+        if response.status_code != 200:
+            return QtGui.QPixmap()
+        data = response.content
+        if cache_dir:
+            try:
+                (cache_dir / f"{code}.png").write_bytes(data)
+            except OSError:
+                pass
+        pixmap = QtGui.QPixmap()
+        pixmap.loadFromData(data)
+        return pixmap
 
     def _schedule_ip_lookup(self, ip_value: str) -> None:
         normalized = _normalize_ip(ip_value)
@@ -718,13 +789,9 @@ class DashboardPage(QtWidgets.QWidget):
             self.table.setItem(row, column_index["flags"], flags_item)
             flag_pixmap = self._flag_pixmap(flags_codes[0]) if flags_codes else None
             if flag_pixmap:
-                flags_label = QtWidgets.QLabel()
-                flags_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                flags_label.setPixmap(flag_pixmap)
-                flags_label.setAttribute(
-                    QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-                )
-                self.table.setCellWidget(row, column_index["flags"], flags_label)
+                flags_item.setText("")
+                flags_item.setIcon(QtGui.QIcon(flag_pixmap))
+                flags_item.setToolTip(flags_codes[0])
             self.table.setItem(row, column_index["ip"], ip_item)
 
             storage_button = make_button(self.i18n.t("button_storage"), "ghost")

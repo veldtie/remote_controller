@@ -26,15 +26,12 @@ def build_session_url(
     session_id: str,
     token: str | None,
     open_storage: bool = False,
-<<<<<<< HEAD
     mode: str = "manage",
     storage_only: bool = False,
-=======
     region: str | None = None,
     country: str | None = None,
     country_code: str | None = None,
     flags: list[str] | None = None,
->>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
 ) -> QtCore.QUrl:
     if "://" not in base_url:
         base_url = f"http://{base_url}"
@@ -83,16 +80,13 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         server_url: str,
         token: str | None,
         open_storage: bool = False,
-<<<<<<< HEAD
-        manage_mode: bool = True,
-        storage_only: bool = False,
-        show_window: bool = True,
-=======
         region: str | None = None,
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
->>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
+        manage_mode: bool = True,
+        storage_only: bool = False,
+        show_window: bool = True,
         parent=None,
     ):
         super().__init__(parent)
@@ -203,18 +197,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.token = token
         if session_id is not None:
             self.session_id = session_id
-<<<<<<< HEAD
-        if manage_mode is not None:
-            self._manage_mode = manage_mode
-        if storage_only is not None:
-            self._storage_only = storage_only
-        self._apply_desktop_overrides(
-            auto_connect=auto_connect,
-            open_storage=open_storage,
-            manage_mode=self._manage_mode,
-            storage_only=self._storage_only,
-        )
-=======
         if region is not None:
             self.region = region
         if country is not None:
@@ -223,9 +205,17 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.country_code = country_code
         if flags is not None:
             self.flags = list(flags)
+        if manage_mode is not None:
+            self._manage_mode = manage_mode
+        if storage_only is not None:
+            self._storage_only = storage_only
         self._refresh_top_info()
-        self._apply_desktop_overrides(auto_connect=auto_connect, open_storage=open_storage)
->>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
+        self._apply_desktop_overrides(
+            auto_connect=auto_connect,
+            open_storage=open_storage,
+            manage_mode=self._manage_mode,
+            storage_only=self._storage_only,
+        )
 
     def _handle_download_request(self, download) -> None:
         if download.isFinished():
