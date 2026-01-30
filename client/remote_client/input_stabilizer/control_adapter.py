@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
 
+from .cursor_confinement import confine_cursor_to_window
 from .mouse_handler_pynput import click_mouse, move_mouse
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,23 @@ logger = logging.getLogger(__name__)
 
 class StabilizedControlAdapter:
     """Handle control messages with pynput-based stabilization."""
+
+    def __init__(
+        self,
+        root: "tk.Tk | None" = None,
+        confine_cursor: bool = False,
+        canvas: "tk.Canvas | None" = None,
+    ) -> None:
+        self.root = root
+        self.confine_cursor = confine_cursor
+        self.canvas = canvas
+        self._confinement_ready = False
+        if self.confine_cursor and self.root:
+            try:
+                confine_cursor_to_window(self.root, self.canvas)
+                self._confinement_ready = True
+            except Exception as exc:
+                logger.warning("[Stabilizer] Cursor confinement setup failed: %s", exc)
 
     def handle(self, payload: Dict[str, Any]) -> None:
         message_type = payload.get("type")
@@ -22,6 +40,8 @@ class StabilizedControlAdapter:
                 int(payload.get("y", 0)),
                 payload.get("source_width"),
                 payload.get("source_height"),
+                confine_to_window=self.confine_cursor,
+                root=self.root,
             )
             return
 
@@ -32,6 +52,8 @@ class StabilizedControlAdapter:
                 button=payload.get("button", "left"),
                 source_width=payload.get("source_width"),
                 source_height=payload.get("source_height"),
+                confine_to_window=self.confine_cursor,
+                root=self.root,
             )
             return
 
@@ -40,3 +62,7 @@ class StabilizedControlAdapter:
             return
 
         logger.warning("[Stabilizer] Unknown control type: %s", message_type)
+
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    import tkinter as tk

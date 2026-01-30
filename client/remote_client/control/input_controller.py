@@ -11,7 +11,7 @@ import sys
 from typing import Literal
 
 
-MouseButton = Literal["left", "right", "middle"]
+MouseButton = Literal["left", "right", "middle", "x1", "x2"]
 
 
 @dataclass(frozen=True)
@@ -166,6 +166,10 @@ class InputController:
             return self._mouse_button.right
         if button == "middle":
             return self._mouse_button.middle
+        if button == "x1":
+            return getattr(self._mouse_button, "x1", self._mouse_button.left)
+        if button == "x2":
+            return getattr(self._mouse_button, "x2", self._mouse_button.left)
         return self._mouse_button.left
 
     def _scale_coordinates(

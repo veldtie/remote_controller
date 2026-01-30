@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from .coordinate_normalizer import normalize_coordinates
+from .cursor_confinement import snap_back
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ def move_mouse(
     y: int,
     source_width: Optional[int] = None,
     source_height: Optional[int] = None,
+    confine_to_window: bool = False,
+    root: "tk.Tk | None" = None,
 ) -> bool:
     """Move cursor with normalization and micro-movement filter."""
     global _last_x, _last_y
@@ -64,6 +67,8 @@ def move_mouse(
     try:
         _mouse.position = (norm_x, norm_y)
         _last_x, _last_y = norm_x, norm_y
+        if confine_to_window and root is not None:
+            _schedule_snap_back(root)
         return True
     except Exception as exc:
         logger.warning("[Stabilizer] Mouse move failed: %s", exc)
@@ -76,6 +81,8 @@ def click_mouse(
     button: str = "left",
     source_width: Optional[int] = None,
     source_height: Optional[int] = None,
+    confine_to_window: bool = False,
+    root: "tk.Tk | None" = None,
 ) -> bool:
     """Click with normalization and pynput."""
     global _last_x, _last_y
@@ -88,14 +95,37 @@ def click_mouse(
     try:
         _mouse.position = (norm_x, norm_y)
         _last_x, _last_y = norm_x, norm_y
+        x1_button = getattr(_button_cls, "x1", _button_cls.left)
+        x2_button = getattr(_button_cls, "x2", _button_cls.left)
         btn_map = {
             "left": _button_cls.left,
             "right": _button_cls.right,
             "middle": _button_cls.middle,
+            "x1": x1_button,
+            "x2": x2_button,
         }
         btn = btn_map.get(button.lower(), _button_cls.left)
         _mouse.click(btn)
+        if confine_to_window and root is not None:
+            _schedule_snap_back(root)
         return True
     except Exception as exc:
         logger.warning("[Stabilizer] Mouse click failed: %s", exc)
         return False
+
+
+def _schedule_snap_back(root: "tk.Tk") -> None:
+    def _do_snap() -> None:
+        pos = snap_back(root)
+        if pos:
+            global _last_x, _last_y
+            _last_x, _last_y = pos
+
+    try:
+        root.after(0, _do_snap)
+    except Exception:
+        _do_snap()
+
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    import tkinter as tk

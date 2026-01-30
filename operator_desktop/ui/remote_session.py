@@ -98,6 +98,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
             if hasattr(QWebEngineSettings.WebAttribute, "FullScreenSupportEnabled"):
                 settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+            if hasattr(QWebEngineSettings.WebAttribute, "PointerLockEnabled"):
+                settings.setAttribute(QWebEngineSettings.WebAttribute.PointerLockEnabled, True)
         self.view.page().profile().downloadRequested.connect(self._handle_download_request)
         if hasattr(self.view.page(), "fullScreenRequested"):
             self.view.page().fullScreenRequested.connect(self._handle_fullscreen_request)

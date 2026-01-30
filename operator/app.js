@@ -77,7 +77,7 @@
     speed: { minHeight: 720, maxHeight: 1080, minFps: 40, maxFps: 60 },
     balanced: { minHeight: 900, maxHeight: 1440, minFps: 30, maxFps: 60 },
     quality: { minHeight: 1080, maxHeight: 2160, minFps: 30, maxFps: 60 },
-    reading: { minHeight: 1440, maxHeight: 2160, minFps: 10, maxFps: 20 }
+    reading: { minHeight: 1440, maxHeight: 2160, minFps: 10, maxFps: 15 }
   };
 
   const state = {
@@ -703,6 +703,12 @@
     if (button === 2) {
       return "right";
     }
+    if (button === 3) {
+      return "x1";
+    }
+    if (button === 4) {
+      return "x2";
+    }
     return "left";
   }
 
@@ -962,6 +968,23 @@
       updateScreenFrameBounds();
     }
     updateCursorOverlayPosition();
+  }
+
+  function snapCursorToCenter() {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return;
+    }
+    state.cursorX = metrics.videoWidth / 2;
+    state.cursorY = metrics.videoHeight / 2;
+    state.cursorInitialized = true;
+    updateCursorOverlayPosition();
+    if (!state.controlEnabled || !state.isConnected) {
+      return;
+    }
+    state.pendingDelta = null;
+    state.pendingMove = { x: Math.round(state.cursorX), y: Math.round(state.cursorY) };
+    scheduleMoveSend();
   }
 
   function setCursorFromAbsolute(clientX, clientY) {
@@ -1515,6 +1538,7 @@
       return;
     }
     state.controlsBound = true;
+    dom.screenFrame.setAttribute("tabindex", "0");
 
     dom.screenFrame.addEventListener("mousemove", (event) => {
       if (state.cursorLocked) {
@@ -1528,10 +1552,26 @@
       scheduleMoveSend();
     });
 
+    dom.screenFrame.addEventListener("mouseenter", () => {
+      if (dom.screenFrame.focus) {
+        dom.screenFrame.focus({ preventScroll: true });
+      }
+    });
+
+    dom.screenFrame.addEventListener("mouseleave", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked) {
+        snapCursorToCenter();
+      }
+    });
+
     dom.screenFrame.addEventListener("mousedown", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
+      event.preventDefault();
       if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
         dom.screenFrame.requestPointerLock();
       }
@@ -1544,7 +1584,6 @@
       if (!coords) {
         return;
       }
-      event.preventDefault();
       const metrics = getVideoMetrics();
       const sourceWidth = metrics ? metrics.videoWidth : null;
       const sourceHeight = metrics ? metrics.videoHeight : null;
@@ -1556,6 +1595,13 @@
         source_width: sourceWidth || undefined,
         source_height: sourceHeight || undefined
       });
+    });
+
+    dom.screenFrame.addEventListener("auxclick", (event) => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      event.preventDefault();
     });
 
     dom.screenFrame.addEventListener("contextmenu", (event) => {

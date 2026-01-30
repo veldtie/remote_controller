@@ -18,7 +18,7 @@ STREAM_PROFILES: dict[str, dict[str, int]] = {
     "speed": {"min_height": 720, "max_height": 1080, "min_fps": 40, "max_fps": 60},
     "balanced": {"min_height": 900, "max_height": 1440, "min_fps": 30, "max_fps": 60},
     "quality": {"min_height": 1080, "max_height": 2160, "min_fps": 30, "max_fps": 60},
-    "reading": {"min_height": 1440, "max_height": 2160, "min_fps": 10, "max_fps": 20},
+    "reading": {"min_height": 1440, "max_height": 2160, "min_fps": 10, "max_fps": 15},
 }
 ADAPT_INTERVAL_SEC = 2.0
 FPS_SAMPLE_SIZE = 24
