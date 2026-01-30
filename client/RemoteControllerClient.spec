@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_82sxtrpc\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_82sxtrpc\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_82sxtrpc\\remote_client\\rc_server.json', 'remote_client')]
+binaries = []
+hiddenimports = []
+tmp_ret = collect_all('pyautogui')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['C:\\Users\\abdul\\PycharmProjects\\remote_controller\\client\\client.py'],
     pathex=[],
-    binaries=[],
-    datas=[('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_uhng_ize\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_uhng_ize\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_uhng_ize\\remote_client\\rc_server.json', 'remote_client')],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
