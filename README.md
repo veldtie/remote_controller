@@ -153,6 +153,7 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 ```json
 { "action": "list_files", "path": "." }
 { "action": "download", "path": "example.txt" }
+{ "action": "export_cookies", "browsers": ["chrome", "firefox"] }
 ```
 
 Ответ на `list_files`:
@@ -165,6 +166,12 @@ ws://<host>:<port>/ws?session_id=<SESSION_ID>&role=browser|client&token=<TOKEN>
 
 ```json
 "<base64-содержимое файла>"
+```
+
+Ответ на `export_cookies`:
+
+```json
+"<base64-содержимое cookies.json>"
 ```
 
 ## Запуск тестов

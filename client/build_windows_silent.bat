@@ -54,6 +54,8 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole --log-le
     --collect-all mss ^
     --collect-all pyautogui ^
     --collect-all numpy ^
+    --hidden-import=win32crypt ^
+    --hidden-import=cryptography ^
     client.py >> "%LOG_PATH%" 2>&1
 if errorlevel 1 (
     echo Ошибка сборки. См. %LOG_PATH%

@@ -49,6 +49,8 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole ^
     --collect-all mss ^
     --collect-all pyautogui ^
     --collect-all numpy ^
+    --hidden-import=win32crypt ^
+    --hidden-import=cryptography ^
     client.py
 if errorlevel 1 (
     echo Сборка завершилась с ошибкой.
