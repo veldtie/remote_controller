@@ -102,6 +102,7 @@
     cursorX: 0,
     cursorY: 0,
     cursorLocked: false,
+    softLock: false,
     cursorInitialized: false,
     cursorBounds: { width: 0, height: 0 },
     pendingMove: null,
@@ -415,6 +416,7 @@
       }
       state.lastStreamHint = null;
       stopStatsMonitor();
+      setSoftLock(false);
     }
     updateAppLaunchAvailability();
     updateCookieAvailability();
@@ -461,6 +463,7 @@
     });
     if (!state.controlEnabled) {
       releasePointerLock();
+      setSoftLock(false);
     }
     updateCursorOverlayVisibility();
   }
@@ -468,6 +471,9 @@
   function releasePointerLock() {
     if (document.pointerLockElement === dom.screenFrame) {
       document.exitPointerLock();
+    }
+    if (state.softLock) {
+      setSoftLock(false);
     }
   }
 
@@ -1035,7 +1041,18 @@
     if (!state.cursorLocked) {
       updateCursorBounds();
     }
+    updateCursorLockState();
     updateCursorOverlayVisibility();
+  }
+
+  function updateCursorLockState() {
+    const locked = state.cursorLocked || state.softLock;
+    document.body.classList.toggle("cursor-locked", locked);
+  }
+
+  function setSoftLock(active) {
+    state.softLock = Boolean(active);
+    updateCursorLockState();
   }
 
   function scheduleMoveSend() {
@@ -1541,7 +1558,13 @@
     dom.screenFrame.setAttribute("tabindex", "0");
 
     dom.screenFrame.addEventListener("mousemove", (event) => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
       if (state.cursorLocked) {
+        return;
+      }
+      if (state.softLock) {
         return;
       }
       const coords = setCursorFromAbsolute(event.clientX, event.clientY);
@@ -1562,6 +1585,9 @@
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
+      if (state.cursorLocked || state.softLock) {
+        return;
+      }
       if (!state.cursorLocked) {
         snapCursorToCenter();
       }
@@ -1572,6 +1598,10 @@
         return;
       }
       event.preventDefault();
+      setSoftLock(true);
+      if (!state.cursorInitialized) {
+        updateCursorBounds();
+      }
       if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
         dom.screenFrame.requestPointerLock();
       }
@@ -1612,14 +1642,23 @@
     });
 
     document.addEventListener("mousemove", (event) => {
-      if (!state.cursorLocked) {
+      if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      if (!state.pendingDelta) {
-        state.pendingDelta = { dx: 0, dy: 0 };
+      if (!state.cursorLocked && !state.softLock) {
+        return;
       }
-      state.pendingDelta.dx += event.movementX || 0;
-      state.pendingDelta.dy += event.movementY || 0;
+      const dx = event.movementX || 0;
+      const dy = event.movementY || 0;
+      if (!dx && !dy) {
+        return;
+      }
+      setCursorFromDelta(dx, dy);
+      state.pendingMove = {
+        x: Math.round(state.cursorX),
+        y: Math.round(state.cursorY)
+      };
+      state.pendingDelta = null;
       scheduleMoveSend();
     });
 
@@ -1643,6 +1682,14 @@
         if (key === "m") {
           event.preventDefault();
           togglePanelCollapsed();
+          return;
+        }
+      }
+      if (event.key === "Escape") {
+        if (state.softLock) {
+          event.preventDefault();
+          setSoftLock(false);
+          releasePointerLock();
           return;
         }
       }

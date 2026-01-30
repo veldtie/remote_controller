@@ -144,7 +144,7 @@ body.panel-collapsed #managePanel {
   display: block;
 }
 
-body.manage-mode #screenFrame {
+body.manage-mode.cursor-locked #screenFrame {
   cursor: none;
 }
 
