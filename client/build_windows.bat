@@ -67,6 +67,11 @@ if not exist "%EXE_PATH%" (
     exit /b 1
 )
 
+if exist "%SCRIPT_DIR%start_silent.vbs" (
+    copy /y "%SCRIPT_DIR%start_silent.vbs" "%SCRIPT_DIR%dist\start_silent.vbs" >nul
+)
+
+
 echo Добавляем в автозапуск текущего пользователя...
 reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "RemoteControllerClient" /t REG_SZ /d "\"%EXE_PATH%\"" /f >nul
 

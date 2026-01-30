@@ -60,6 +60,22 @@ def _resolve_bitrate_bps(env_value: str | None, default_bps: int) -> int:
     return value
 
 
+def _parse_bool(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 SIGNALING_PING_INTERVAL = max(0.0, _read_env_float("RC_SIGNALING_PING_INTERVAL", 20.0))
 DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 10.0))
 RECONNECT_BASE_DELAY = max(0.5, _read_env_float("RC_RECONNECT_DELAY", 2.0))
@@ -132,6 +148,7 @@ class SessionResources:
     set_stream_profile: Callable[
         [str | None, int | None, int | None, int | None], None
     ] | None = None
+    set_cursor_visibility: Callable[[bool], None] | None = None
 
 
 SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
@@ -471,6 +488,12 @@ class WebRTCClient:
             self._send_error(data_channel, "missing_action", "Message missing 'action'.")
             return
         if action == "control":
+            message_type = payload.get("type")
+            if message_type in {"toggle_virtual_cursor", "cursor_visibility"}:
+                visible = _parse_bool(payload.get("visible"), True)
+                if session_actions and session_actions.set_cursor_visibility:
+                    session_actions.set_cursor_visibility(visible)
+                return
             try:
                 control_handler.handle(payload)
             except (KeyError, ValueError, TypeError) as exc:

@@ -130,7 +130,8 @@
     signalingPingTimer: null,
     panelCollapsed: false,
     textInputSupported: true,
-    screenAspect: null
+    screenAspect: null,
+    remoteCursorVisible: true
   };
 
   const dom = {
@@ -159,6 +160,8 @@
     panelToggle: document.getElementById("panelToggle"),
     fullscreenToggle: document.getElementById("fullscreenToggle"),
     connectButton: document.getElementById("connectButton"),
+    cursorVisibilityToggle: document.getElementById("cursorVisibilityToggle"),
+    cursorVisibilityHint: document.getElementById("cursorVisibilityHint"),
     remoteGo: document.getElementById("remoteGo"),
     remoteUp: document.getElementById("remoteUp"),
     remoteRefresh: document.getElementById("remoteRefresh"),
@@ -210,6 +213,10 @@
       applyStreamProfile(dom.streamProfile.value, false);
     }
     ensureCursorOverlay();
+    if (dom.cursorVisibilityToggle) {
+      state.remoteCursorVisible = dom.cursorVisibilityToggle.checked;
+    }
+    updateRemoteCursorVisibilityAvailability();
     restorePanelState();
     updatePanelToggleLabel();
     updateFullscreenToggleLabel();
@@ -573,6 +580,7 @@
     updateAppLaunchAvailability();
     updateCookieAvailability();
     updateCursorOverlayVisibility();
+    updateRemoteCursorVisibilityAvailability();
   }
 
   function applyStreamProfile(profile, shouldSend = true) {
@@ -619,6 +627,7 @@
       setSoftLock(false);
     }
     updateCursorOverlayVisibility();
+    updateRemoteCursorVisibilityAvailability();
   }
 
   function releasePointerLock() {
@@ -837,6 +846,44 @@
     }
     const shouldShow = state.isConnected && state.controlEnabled;
     dom.cursorOverlay.style.display = shouldShow ? "block" : "none";
+  }
+
+  function updateRemoteCursorVisibilityAvailability() {
+    if (!dom.cursorVisibilityToggle) {
+      return;
+    }
+    const enabled = state.isConnected && state.controlEnabled;
+    dom.cursorVisibilityToggle.disabled = !enabled;
+    dom.cursorVisibilityToggle.setAttribute("aria-disabled", (!enabled).toString());
+    if (!dom.cursorVisibilityHint) {
+      return;
+    }
+    if (!enabled) {
+      if (!state.isConnected) {
+        dom.cursorVisibilityHint.textContent = "Connect to update cursor visibility";
+      } else {
+        dom.cursorVisibilityHint.textContent = "Switch to manage mode to update cursor visibility";
+      }
+      return;
+    }
+    dom.cursorVisibilityHint.textContent = state.remoteCursorVisible
+      ? "Remote cursor visible"
+      : "Remote cursor hidden";
+  }
+
+  function setRemoteCursorVisibility(visible, shouldSend = true) {
+    const next = Boolean(visible);
+    state.remoteCursorVisible = next;
+    if (dom.cursorVisibilityToggle && dom.cursorVisibilityToggle.checked !== next) {
+      dom.cursorVisibilityToggle.checked = next;
+    }
+    updateRemoteCursorVisibilityAvailability();
+    if (shouldSend) {
+      void sendControl({
+        type: "toggle_virtual_cursor",
+        visible: next
+      });
+    }
   }
 
   function updateCursorOverlayPosition() {
@@ -1677,6 +1724,7 @@
         scheduleStreamHint();
         startStatsMonitor();
         drainCookieQueue();
+        setRemoteCursorVisibility(state.remoteCursorVisible, true);
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
           toggleStorage(true);
         }
@@ -2363,6 +2411,11 @@
     if (dom.fullscreenToggle) {
       dom.fullscreenToggle.addEventListener("click", () => {
         toggleFullscreen();
+      });
+    }
+    if (dom.cursorVisibilityToggle) {
+      dom.cursorVisibilityToggle.addEventListener("change", () => {
+        setRemoteCursorVisibility(dom.cursorVisibilityToggle.checked, true);
       });
     }
     dom.storageToggle.addEventListener("click", () => {
