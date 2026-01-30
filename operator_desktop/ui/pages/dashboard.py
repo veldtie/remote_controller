@@ -206,7 +206,7 @@ class DashboardPage(QtWidgets.QWidget):
             keys += ["team", "operator"]
         elif self.current_role == "administrator":
             keys += ["operator"]
-        keys += ["status", "region", "ip", "storage", "connect", "more"]
+        keys += ["status", "region", "flags", "ip", "storage", "connect", "more"]
         if self.current_role in {"moderator", "administrator"}:
             keys.append("delete")
         return keys
@@ -219,6 +219,7 @@ class DashboardPage(QtWidgets.QWidget):
             "operator": self.i18n.t("table_operator"),
             "status": self.i18n.t("table_status"),
             "region": self.i18n.t("table_region"),
+            "flags": self.i18n.t("table_flags"),
             "ip": self.i18n.t("table_ip"),
             "storage": self.i18n.t("table_storage"),
             "connect": self.i18n.t("table_connect"),
@@ -295,6 +296,45 @@ class DashboardPage(QtWidgets.QWidget):
                 if member.get("account_id") == operator_id:
                     return member.get("name", operator_id)
         return operator_id
+
+    def _extract_flag_codes(self, client: Dict) -> list[str]:
+        config = client.get("client_config")
+        if not isinstance(config, dict):
+            return []
+        antifraud = config.get("antifraud")
+        if not isinstance(antifraud, dict):
+            return []
+        raw = antifraud.get("countries")
+        if not raw:
+            return []
+        if isinstance(raw, str):
+            raw_values = raw.replace(",", " ").replace(";", " ").split()
+        elif isinstance(raw, list):
+            raw_values = raw
+        else:
+            return []
+        codes: list[str] = []
+        seen: set[str] = set()
+        for value in raw_values:
+            code = str(value).strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        return codes
+
+    @staticmethod
+    def _flag_from_code(code: str) -> str:
+        normalized = str(code).strip().upper()
+        if len(normalized) != 2 or not normalized.isalpha():
+            return normalized or "--"
+        base = 0x1F1E6
+        return chr(base + ord(normalized[0]) - 65) + chr(base + ord(normalized[1]) - 65)
+
+    def _format_flags(self, codes: list[str]) -> str:
+        if not codes:
+            return "--"
+        return " ".join(self._flag_from_code(code) for code in codes)
 
     def _merge_clients(self, api_clients: List[Dict]) -> List[Dict]:
         if not api_clients:
@@ -461,11 +501,16 @@ class DashboardPage(QtWidgets.QWidget):
         for client in self._visible_clients(self.clients):
             connected = client.get("status") == "connected"
             status_key = "status_connected" if connected else "status_disconnected"
+            flags = self._extract_flag_codes(client)
+            flags_text = " ".join(flags)
+            flags_view = self._format_flags(flags) if flags else ""
             values = [
                 client["name"],
                 client["id"],
                 self.i18n.t(status_key),
                 self.i18n.t(client["region"]),
+                flags_text,
+                flags_view,
                 client["ip"],
                 self._resolve_team_name(client.get("assigned_team_id")),
                 self._resolve_operator_name(client.get("assigned_operator_id")),
@@ -501,8 +546,11 @@ class DashboardPage(QtWidgets.QWidget):
             status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.apply_status_style(status_item, connected)
             region_item = QtWidgets.QTableWidgetItem(self.i18n.t(client["region"]))
+            flags_codes = self._extract_flag_codes(client)
+            flags_item = QtWidgets.QTableWidgetItem(self._format_flags(flags_codes))
+            flags_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
-            for item in (id_item, status_item, region_item, ip_item):
+            for item in (id_item, status_item, region_item, flags_item, ip_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, column_index["name"], name_item)
             self.table.setCellWidget(row, column_index["name"], self.build_name_cell(client))
@@ -521,6 +569,7 @@ class DashboardPage(QtWidgets.QWidget):
                 self.table.setItem(row, column_index["operator"], operator_item)
             self.table.setItem(row, column_index["status"], status_item)
             self.table.setItem(row, column_index["region"], region_item)
+            self.table.setItem(row, column_index["flags"], flags_item)
             self.table.setItem(row, column_index["ip"], ip_item)
 
             storage_button = make_button(self.i18n.t("button_storage"), "ghost")
@@ -627,6 +676,7 @@ class DashboardPage(QtWidgets.QWidget):
             "operator": (1.8, 150),
             "status": (2.1, 160),
             "region": (1.3, 100),
+            "flags": (1.1, 90),
             "ip": (1.3, 100),
             "storage": (1.3, 110),
             "connect": (1.6, 140),
