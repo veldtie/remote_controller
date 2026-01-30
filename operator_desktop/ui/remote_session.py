@@ -86,16 +86,24 @@ class RemoteSessionDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._window_controls = self._build_window_controls()
+        layout.addWidget(self._window_controls, 0)
 
         self.view = QWebEngineView()
         if QWebEngineSettings is not None:
             settings = self.view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
             settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+            if hasattr(QWebEngineSettings.WebAttribute, "FullScreenSupportEnabled"):
+                settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
         self.view.page().profile().downloadRequested.connect(self._handle_download_request)
+        if hasattr(self.view.page(), "fullScreenRequested"):
+            self.view.page().fullScreenRequested.connect(self._handle_fullscreen_request)
         self.view.loadFinished.connect(self._handle_load_finished)
         self.view.setUrl(url)
-        layout.addWidget(self.view)
+        layout.addWidget(self.view, 1)
         QtCore.QTimer.singleShot(800, self._fallback_apply)
 
     def open_storage_drawer(self) -> None:
@@ -180,6 +188,87 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._apply_desktop_overrides(auto_connect=True, open_storage=self._open_storage_on_load)
         self._open_storage_on_load = False
         self._flush_cookie_requests()
+
+    def _build_window_controls(self) -> QtWidgets.QFrame:
+        bar = QtWidgets.QFrame(self)
+        bar.setObjectName("SessionControlBar")
+        bar_layout = QtWidgets.QHBoxLayout(bar)
+        bar_layout.setContentsMargins(10, 8, 10, 8)
+        bar_layout.setSpacing(0)
+        bar_layout.addStretch()
+
+        controls = QtWidgets.QFrame(bar)
+        controls.setObjectName("SessionControls")
+        controls.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        controls.setStyleSheet(
+            "QFrame#SessionControls {"
+            "background: rgba(12, 16, 22, 0.82);"
+            "border: 1px solid rgba(255, 255, 255, 0.14);"
+            "border-radius: 10px;"
+            "}"
+            "QToolButton {"
+            "color: #f5f2ea;"
+            "border: none;"
+            "padding: 4px;"
+            "}"
+            "QToolButton:hover {"
+            "background: rgba(255, 255, 255, 0.12);"
+            "border-radius: 8px;"
+            "}"
+        )
+        controls_layout = QtWidgets.QHBoxLayout(controls)
+        controls_layout.setContentsMargins(8, 6, 8, 6)
+        controls_layout.setSpacing(6)
+
+        self._minimize_button = QtWidgets.QToolButton(controls)
+        self._minimize_button.setAutoRaise(True)
+        self._minimize_button.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_TitleBarMinButton)
+        )
+        self._minimize_button.setToolTip("Minimize")
+        self._minimize_button.clicked.connect(self.showMinimized)
+
+        self._fullscreen_button = QtWidgets.QToolButton(controls)
+        self._fullscreen_button.setAutoRaise(True)
+        self._fullscreen_button.setToolTip("Fullscreen")
+        self._fullscreen_button.clicked.connect(self._toggle_fullscreen)
+
+        controls_layout.addWidget(self._minimize_button)
+        controls_layout.addWidget(self._fullscreen_button)
+        self._update_fullscreen_button()
+        bar_layout.addWidget(controls, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+        return bar
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        self._update_fullscreen_button()
+
+    def _update_fullscreen_button(self) -> None:
+        if not hasattr(self, "_fullscreen_button"):
+            return
+        if self.isFullScreen():
+            icon = self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_TitleBarNormalButton
+            )
+            tooltip = "Exit fullscreen"
+        else:
+            icon = self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_TitleBarMaxButton
+            )
+            tooltip = "Fullscreen"
+        self._fullscreen_button.setIcon(icon)
+        self._fullscreen_button.setToolTip(tooltip)
+
+    def _handle_fullscreen_request(self, request) -> None:
+        request.accept()
+        if request.toggleOn():
+            self.showFullScreen()
+        else:
+            self.showNormal()
+        self._update_fullscreen_button()
 
     def _flush_cookie_requests(self) -> None:
         if not self.view or not self._page_ready or not self._pending_cookie_requests:
@@ -271,6 +360,11 @@ class RemoteSessionDialog(QtWidgets.QDialog):
 }})();
 """
         self.view.page().runJavaScript(script)
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.WindowStateChange:
+            self._update_fullscreen_button()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.closed.emit(self.session_id)
