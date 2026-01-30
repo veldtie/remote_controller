@@ -66,6 +66,14 @@ body.desktop-mode #hud {
   gap: 10px;
 }
 
+body.panel-collapsed {
+  --workspace-left: var(--edge-gap);
+}
+
+body.panel-collapsed #managePanel {
+  display: none;
+}
+
 #screenFrame {
   position: fixed;
   top: var(--edge-gap);
@@ -81,6 +89,35 @@ body.desktop-mode #hud {
   overflow: hidden;
   cursor: crosshair;
   z-index: 1;
+}
+
+#screenFrame:fullscreen,
+#screenFrame:-webkit-full-screen {
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+#screenControls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 3;
+  pointer-events: none;
+}
+
+#screenControls button {
+  pointer-events: auto;
+  background: rgba(10, 13, 19, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+#screenControls button:hover {
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
 }
 
 #operatorCursor {

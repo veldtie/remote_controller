@@ -9,6 +9,7 @@
     text: "text"
   };
   const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
+  const PANEL_COLLAPSED_KEY = "rc_panel_collapsed";
   const E2EE_PBKDF2_ITERS = 150000;
   const E2EE_SALT_PREFIX = "remote-controller:";
   const CONTROL_MOVE_INTERVAL_MS = 33;
@@ -17,13 +18,19 @@
   const STREAM_HINT_THRESHOLD = 40;
   const NETWORK_STATS_INTERVAL_MS = 2000;
   const NETWORK_ADAPT_COOLDOWN_MS = 4000;
-  const NETWORK_BPP = 0.06;
-  const LOSS_DEGRADE = 0.08;
-  const LOSS_UPGRADE = 0.02;
-  const RTT_DEGRADE = 300;
-  const RTT_UPGRADE = 150;
-  const PROFILE_HEIGHT_DOWN_SCALE = 0.85;
-  const PROFILE_HEIGHT_UP_SCALE = 1.1;
+  const NETWORK_BPP = 0.1;
+  const LOSS_DEGRADE = 0.12;
+  const LOSS_UPGRADE = 0.01;
+  const RTT_DEGRADE = 450;
+  const RTT_UPGRADE = 180;
+  const PROFILE_HEIGHT_DOWN_SCALE = 0.92;
+  const PROFILE_HEIGHT_UP_SCALE = 1.15;
+  const SIGNALING_PING_INTERVAL_MS = 20000;
+  const DEFAULT_ICE_SERVERS = [
+    { urls: ["stun:stun.l.google.com:19302"] },
+    { urls: ["stun:stun1.l.google.com:19302"] },
+    { urls: ["stun:stun.cloudflare.com:3478"] }
+  ];
   const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
   const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
 
@@ -67,9 +74,10 @@
   }
 
   const STREAM_PROFILES = {
-    speed: { minHeight: 480, maxHeight: 720, minFps: 50, maxFps: 60 },
-    balanced: { minHeight: 720, maxHeight: 1080, minFps: 40, maxFps: 60 },
-    quality: { minHeight: 900, maxHeight: 1440, minFps: 30, maxFps: 60 }
+    speed: { minHeight: 720, maxHeight: 1080, minFps: 40, maxFps: 60 },
+    balanced: { minHeight: 900, maxHeight: 1440, minFps: 30, maxFps: 60 },
+    quality: { minHeight: 1080, maxHeight: 2160, minFps: 30, maxFps: 60 },
+    reading: { minHeight: 1440, maxHeight: 2160, minFps: 10, maxFps: 20 }
   };
 
   const state = {
@@ -113,6 +121,8 @@
     networkHint: { height: null, fps: null },
     iceErrorCount: 0,
     iceFallbackTried: false,
+    signalingPingTimer: null,
+    panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null
   };
@@ -140,6 +150,8 @@
     downloadList: document.getElementById("downloadList"),
     screenFrame: document.getElementById("screenFrame"),
     screenEl: document.getElementById("screen"),
+    panelToggle: document.getElementById("panelToggle"),
+    fullscreenToggle: document.getElementById("fullscreenToggle"),
     connectButton: document.getElementById("connectButton"),
     remoteGo: document.getElementById("remoteGo"),
     remoteUp: document.getElementById("remoteUp"),
@@ -185,6 +197,9 @@
       applyStreamProfile(dom.streamProfile.value, false);
     }
     ensureCursorOverlay();
+    restorePanelState();
+    updatePanelToggleLabel();
+    updateFullscreenToggleLabel();
   }
 
   function applyUrlParams() {
@@ -408,7 +423,7 @@
 
   function applyStreamProfile(profile, shouldSend = true) {
     const normalized = (profile || "").toLowerCase();
-    const allowed = new Set(["speed", "balanced", "quality"]);
+    const allowed = new Set(["speed", "balanced", "quality", "reading"]);
     const next = allowed.has(normalized) ? normalized : "balanced";
     state.streamProfile = next;
     if (dom.streamProfile && dom.streamProfile.value !== next) {
@@ -550,6 +565,15 @@
     if (!dom.screenFrame) {
       return;
     }
+    if (document.fullscreenElement === dom.screenFrame) {
+      dom.screenFrame.style.left = "0px";
+      dom.screenFrame.style.top = "0px";
+      dom.screenFrame.style.width = "100%";
+      dom.screenFrame.style.height = "100%";
+      dom.screenFrame.style.right = "0px";
+      dom.screenFrame.style.bottom = "0px";
+      return;
+    }
     const { edgeGap, workspaceLeft, availableWidth, availableHeight } =
       getWorkspaceBounds();
     if (!availableWidth || !availableHeight) {
@@ -586,6 +610,66 @@
     dom.cursorOverlay = cursor;
     updateCursorOverlayVisibility();
     updateCursorOverlayPosition();
+  }
+
+  function updatePanelToggleLabel() {
+    if (!dom.panelToggle) {
+      return;
+    }
+    dom.panelToggle.textContent = state.panelCollapsed ? "Restore" : "Minimize";
+  }
+
+  function updateFullscreenToggleLabel() {
+    if (!dom.fullscreenToggle) {
+      return;
+    }
+    const active = document.fullscreenElement === dom.screenFrame;
+    dom.fullscreenToggle.textContent = active ? "Exit Fullscreen" : "Fullscreen";
+  }
+
+  function setPanelCollapsed(collapsed) {
+    state.panelCollapsed = collapsed;
+    document.body.classList.toggle("panel-collapsed", collapsed);
+    updatePanelToggleLabel();
+    updateScreenLayout();
+  }
+
+  function togglePanelCollapsed(force) {
+    releasePointerLock();
+    const next = typeof force === "boolean" ? force : !state.panelCollapsed;
+    setPanelCollapsed(next);
+    try {
+      localStorage.setItem(PANEL_COLLAPSED_KEY, next ? "1" : "0");
+    } catch (error) {
+      /* ignore */
+    }
+  }
+
+  function restorePanelState() {
+    try {
+      const stored = localStorage.getItem(PANEL_COLLAPSED_KEY);
+      if (stored === "1") {
+        setPanelCollapsed(true);
+      }
+    } catch (error) {
+      /* ignore */
+    }
+  }
+
+  function toggleFullscreen() {
+    if (!dom.screenFrame) {
+      return;
+    }
+    releasePointerLock();
+    if (document.fullscreenElement === dom.screenFrame) {
+      document.exitFullscreen?.();
+      return;
+    }
+    if (dom.screenFrame.requestFullscreen) {
+      dom.screenFrame.requestFullscreen().catch(() => {
+        setStatus("Fullscreen blocked", "warn");
+      });
+    }
   }
 
   function updateCursorOverlayVisibility() {
@@ -820,16 +904,16 @@
     let nextHeight = targetHeight;
     let nextFps = targetFps;
     if (shouldDegrade) {
-      if (targetHeight > bounds.minHeight) {
-        nextHeight = Math.max(bounds.minHeight, Math.round(targetHeight * PROFILE_HEIGHT_DOWN_SCALE));
-      } else if (targetFps > bounds.minFps) {
+      if (targetFps > bounds.minFps) {
         nextFps = Math.max(bounds.minFps, targetFps - 5);
+      } else if (targetHeight > bounds.minHeight) {
+        nextHeight = Math.max(bounds.minHeight, Math.round(targetHeight * PROFILE_HEIGHT_DOWN_SCALE));
       }
     } else if (shouldUpgrade) {
-      if (targetFps < bounds.maxFps) {
-        nextFps = Math.min(bounds.maxFps, targetFps + 5);
-      } else if (targetHeight < bounds.maxHeight) {
+      if (targetHeight < bounds.maxHeight) {
         nextHeight = Math.min(bounds.maxHeight, Math.round(targetHeight * PROFILE_HEIGHT_UP_SCALE));
+      } else if (targetFps < bounds.maxFps) {
+        nextFps = Math.min(bounds.maxFps, targetFps + 5);
       }
     } else {
       return;
@@ -1176,16 +1260,43 @@
         throw new Error("Failed to load ICE config");
       }
       const payload = await response.json();
-      if (payload && Array.isArray(payload.iceServers)) {
+      if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
         return { iceServers: payload.iceServers };
       }
     } catch (error) {
       console.warn("ICE config unavailable, using defaults.", error);
     }
-    return { iceServers: [] };
+    return { iceServers: DEFAULT_ICE_SERVERS };
+  }
+
+  function stopSignalingPing() {
+    if (state.signalingPingTimer) {
+      clearInterval(state.signalingPingTimer);
+      state.signalingPingTimer = null;
+    }
+  }
+
+  function startSignalingPing(signalingSocket, sessionId) {
+    stopSignalingPing();
+    if (!signalingSocket) {
+      return;
+    }
+    state.signalingPingTimer = setInterval(() => {
+      if (signalingSocket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      signalingSocket.send(
+        JSON.stringify({
+          type: "ping",
+          session_id: sessionId,
+          operator_id: state.operatorId
+        })
+      );
+    }, SIGNALING_PING_INTERVAL_MS);
   }
 
   function cleanupConnection() {
+    stopSignalingPing();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1261,6 +1372,7 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      stopSignalingPing();
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1270,6 +1382,7 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      stopSignalingPing();
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1330,6 +1443,7 @@
           })
         );
       }
+      startSignalingPing(signalingSocket, sessionId);
 
       state.peerConnection.ontrack = (event) => {
         dom.screenEl.srcObject = event.streams[0];
@@ -1467,6 +1581,24 @@
       const activeTag = document.activeElement ? document.activeElement.tagName : "";
       if (activeTag === "INPUT" || activeTag === "TEXTAREA") {
         return;
+      }
+      if (event.key === "F11") {
+        event.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+      if (event.ctrlKey && event.shiftKey) {
+        const key = (event.key || "").toLowerCase();
+        if (key === "f") {
+          event.preventDefault();
+          toggleFullscreen();
+          return;
+        }
+        if (key === "m") {
+          event.preventDefault();
+          togglePanelCollapsed();
+          return;
+        }
       }
       const payload = normalizeKeyEvent(event);
       if (!payload) {
@@ -1934,6 +2066,10 @@
     dom.interactionToggle.addEventListener("change", handleModeToggle);
     window.addEventListener("resize", updateScreenFrameBounds);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
+    document.addEventListener("fullscreenchange", () => {
+      updateFullscreenToggleLabel();
+      updateScreenLayout();
+    });
     dom.screenEl.addEventListener("loadedmetadata", () => {
       updateScreenLayout();
       updateCursorBounds();
@@ -1982,6 +2118,16 @@
     dom.connectButton.addEventListener("click", () => {
       void connect();
     });
+    if (dom.panelToggle) {
+      dom.panelToggle.addEventListener("click", () => {
+        togglePanelCollapsed();
+      });
+    }
+    if (dom.fullscreenToggle) {
+      dom.fullscreenToggle.addEventListener("click", () => {
+        toggleFullscreen();
+      });
+    }
     dom.storageToggle.addEventListener("click", () => {
       updateDrawerOffset();
       toggleStorage();
