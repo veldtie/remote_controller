@@ -1607,24 +1607,67 @@
     }
   }
 
+  function buildBaseCandidates(apiBase) {
+    let apiUrl;
+    try {
+      apiUrl = new URL(apiBase);
+    } catch (error) {
+      return [];
+    }
+    const baseOrigin = `${apiUrl.protocol}//${apiUrl.host}`;
+    const path = apiUrl.pathname || "/";
+    const baseWithPath = `${baseOrigin}${path.endsWith("/") ? path : `${path}/`}`;
+    const baseRoot = `${baseOrigin}/`;
+    if (baseWithPath === baseRoot) {
+      return [baseRoot];
+    }
+    return [baseWithPath, baseRoot];
+  }
+
+  function buildSignalingUrls(apiBase, sessionId, operatorId, authToken) {
+    let apiUrl;
+    try {
+      apiUrl = new URL(apiBase);
+    } catch (error) {
+      return [];
+    }
+    const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+    const baseOrigin = `${wsProtocol}//${apiUrl.host}`;
+    const path = apiUrl.pathname || "/";
+    const baseWithPath = `${baseOrigin}${path.endsWith("/") ? path : `${path}/`}`;
+    const baseRoot = `${baseOrigin}/`;
+    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+    const query = `session_id=${encodeURIComponent(sessionId)}&role=browser&operator_id=${encodeURIComponent(
+      operatorId
+    )}${tokenParam}`;
+    const primary = `${baseWithPath}ws?${query}`;
+    const fallback = `${baseRoot}ws?${query}`;
+    if (primary === fallback) {
+      return [primary];
+    }
+    return [primary, fallback];
+  }
+
   async function loadIceConfig(apiBase, authToken) {
     const headers = authToken ? { "x-rc-token": authToken } : {};
-    const normalizedBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
-    const iceUrl = new URL("ice-config", normalizedBase);
-    if (authToken) {
-      iceUrl.searchParams.set("token", authToken);
-    }
-    try {
-      const response = await fetch(iceUrl.toString(), { headers });
-      if (!response.ok) {
-        throw new Error("Failed to load ICE config");
+    const candidates = buildBaseCandidates(apiBase);
+    for (const base of candidates) {
+      const iceUrl = new URL("ice-config", base);
+      if (authToken) {
+        iceUrl.searchParams.set("token", authToken);
       }
-      const payload = await response.json();
-      if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
-        return { iceServers: payload.iceServers };
+      try {
+        const response = await fetch(iceUrl.toString(), { headers });
+        if (!response.ok) {
+          throw new Error("Failed to load ICE config");
+        }
+        const payload = await response.json();
+        if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
+          return { iceServers: payload.iceServers };
+        }
+      } catch (error) {
+        console.warn("ICE config unavailable, trying fallback.", error);
       }
-    } catch (error) {
-      console.warn("ICE config unavailable, using defaults.", error);
     }
     return { iceServers: DEFAULT_ICE_SERVERS };
   }
@@ -1722,13 +1765,28 @@
     state.rtcConfig = options.disableIce
       ? { iceServers: [] }
       : await loadIceConfig(apiBase, authToken);
-    const apiUrl = new URL(apiBase);
-    const basePath = apiUrl.pathname.endsWith("/") ? apiUrl.pathname : `${apiUrl.pathname}/`;
-    const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
-    const wsUrl = `${wsProtocol}//${apiUrl.host}${basePath}ws?session_id=${encodeURIComponent(
-      sessionId
-    )}&role=browser&operator_id=${encodeURIComponent(state.operatorId)}${tokenParam}`;
+    const wsUrls = buildSignalingUrls(apiBase, sessionId, state.operatorId, authToken);
+    const wsUrl = options.wsOverride || wsUrls[0];
+    const fallbackWsUrl = options.wsOverride ? null : wsUrls[1] || null;
+    if (!wsUrl) {
+      setStatus("Invalid server URL", "bad");
+      setModeLocked(false);
+      state.connecting = false;
+      return;
+    }
+
+    let fallbackTried = false;
+    const attemptFallback = (reason) => {
+      if (!state.connecting || fallbackTried || !fallbackWsUrl) {
+        return false;
+      }
+      fallbackTried = true;
+      console.warn("Signaling failed, retrying with fallback URL.", reason);
+      setStatus("Retrying connection...", "warn");
+      state.connecting = false;
+      void connect({ disableIce: options.disableIce, wsOverride: fallbackWsUrl });
+      return true;
+    };
 
     const signalingSocket = new WebSocket(wsUrl);
     state.signalingWebSocket = signalingSocket;
@@ -1738,6 +1796,9 @@
         return;
       }
       if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      if (attemptFallback("timeout")) {
         return;
       }
       setStatus("Connection timed out", "bad");
@@ -1754,6 +1815,9 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      if (attemptFallback("close")) {
+        return;
+      }
       stopSignalingPing();
       clearConnectTimeout();
       clearOfferTimeout();
@@ -1764,6 +1828,9 @@
     };
     signalingSocket.onerror = () => {
       if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      if (attemptFallback("error")) {
         return;
       }
       stopSignalingPing();
