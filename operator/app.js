@@ -36,6 +36,8 @@
   const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
   let qtBridgeAttempts = 0;
   let qtScriptInjected = false;
+  let connectTimeoutId = null;
+  let offerTimeoutId = null;
 
   function utf8Encode(value) {
     if (textEncoder) {
@@ -1567,6 +1569,20 @@
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
 
+  function clearConnectTimeout() {
+    if (connectTimeoutId) {
+      clearTimeout(connectTimeoutId);
+      connectTimeoutId = null;
+    }
+  }
+
+  function clearOfferTimeout() {
+    if (offerTimeoutId) {
+      clearTimeout(offerTimeoutId);
+      offerTimeoutId = null;
+    }
+  }
+
   async function sendAction(payload) {
     if (!ensureChannelOpen()) {
       return;
@@ -1593,7 +1609,8 @@
 
   async function loadIceConfig(apiBase, authToken) {
     const headers = authToken ? { "x-rc-token": authToken } : {};
-    const iceUrl = new URL("/ice-config", apiBase);
+    const normalizedBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
+    const iceUrl = new URL("ice-config", normalizedBase);
     if (authToken) {
       iceUrl.searchParams.set("token", authToken);
     }
@@ -1641,6 +1658,8 @@
   function cleanupConnection() {
     stopSignalingPing();
     stopMovePump();
+    clearConnectTimeout();
+    clearOfferTimeout();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1704,19 +1723,40 @@
       ? { iceServers: [] }
       : await loadIceConfig(apiBase, authToken);
     const apiUrl = new URL(apiBase);
+    const basePath = apiUrl.pathname.endsWith("/") ? apiUrl.pathname : `${apiUrl.pathname}/`;
     const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
     const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
-    const wsUrl = `${wsProtocol}//${apiUrl.host}/ws?session_id=${encodeURIComponent(
+    const wsUrl = `${wsProtocol}//${apiUrl.host}${basePath}ws?session_id=${encodeURIComponent(
       sessionId
     )}&role=browser&operator_id=${encodeURIComponent(state.operatorId)}${tokenParam}`;
 
     const signalingSocket = new WebSocket(wsUrl);
     state.signalingWebSocket = signalingSocket;
+    clearConnectTimeout();
+    connectTimeoutId = setTimeout(() => {
+      if (signalingSocket.readyState === WebSocket.OPEN) {
+        return;
+      }
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      setStatus("Connection timed out", "bad");
+      setConnected(false);
+      setModeLocked(false);
+      state.connecting = false;
+      try {
+        signalingSocket.close();
+      } catch (error) {
+        console.warn("Failed to close signaling socket", error);
+      }
+    }, 8000);
     signalingSocket.onclose = () => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
       stopSignalingPing();
+      clearConnectTimeout();
+      clearOfferTimeout();
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1727,6 +1767,8 @@
         return;
       }
       stopSignalingPing();
+      clearConnectTimeout();
+      clearOfferTimeout();
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1768,6 +1810,7 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      clearConnectTimeout();
       state.connecting = false;
       state.peerConnection = new RTCPeerConnection(state.rtcConfig);
       if (state.peerConnection.addEventListener) {
@@ -1817,6 +1860,7 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        clearOfferTimeout();
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
@@ -1853,6 +1897,14 @@
           mode: sessionMode
         })
         );
+        clearOfferTimeout();
+        offerTimeoutId = setTimeout(() => {
+          if (state.isConnected || signalingSocket !== state.signalingWebSocket) {
+            return;
+          }
+          setStatus("Waiting for client response...", "warn");
+          setModeLocked(false);
+        }, 12000);
       }
     };
   }
