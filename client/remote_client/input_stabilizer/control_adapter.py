@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, TYPE_CHECKING
 
 from .cursor_confinement import confine_cursor_to_window
-from .mouse_handler_pynput import click_mouse, move_mouse
+from .mouse_handler_pynput import click_mouse, move_mouse, scroll_mouse
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,11 @@ class StabilizedControlAdapter:
             except Exception as exc:
                 logger.warning("[Stabilizer] Cursor confinement setup failed: %s", exc)
 
-    def handle(self, payload: Dict[str, Any]) -> None:
+    def handle(self, payload: Dict[str, Any]) -> bool:
         message_type = payload.get("type")
 
         if message_type == "mouse_move":
-            move_mouse(
+            return move_mouse(
                 int(payload.get("x", 0)),
                 int(payload.get("y", 0)),
                 payload.get("source_width"),
@@ -43,10 +43,9 @@ class StabilizedControlAdapter:
                 confine_to_window=self.confine_cursor,
                 root=self.root,
             )
-            return
 
         if message_type == "mouse_click":
-            click_mouse(
+            return click_mouse(
                 int(payload.get("x", 0)),
                 int(payload.get("y", 0)),
                 button=payload.get("button", "left"),
@@ -55,13 +54,17 @@ class StabilizedControlAdapter:
                 confine_to_window=self.confine_cursor,
                 root=self.root,
             )
-            return
+        if message_type == "mouse_scroll":
+            dx = payload.get("delta_x", payload.get("dx", 0))
+            dy = payload.get("delta_y", payload.get("dy", 0))
+            return scroll_mouse(int(dx or 0), int(dy or 0))
 
         if message_type in {"keypress", "text"}:
             logger.info("[Stabilizer] Keyboard input not handled: %s", payload)
-            return
+            return False
 
         logger.warning("[Stabilizer] Unknown control type: %s", message_type)
+        return False
 
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
