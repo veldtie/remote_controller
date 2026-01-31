@@ -243,6 +243,13 @@
     </div>
     <video id="screen" autoplay playsinline></video>
   </div>
-  <script src="app.js?v=20260130-1" defer></script>
+  <script>
+    if (window.qt && window.qt.webChannelTransport) {
+      const script = document.createElement("script");
+      script.src = "qrc:///qtwebchannel/qwebchannel.js";
+      document.head.appendChild(script);
+    }
+  </script>
+  <script src="app.js?v=20260131-1" defer></script>
 </body>
 </html>

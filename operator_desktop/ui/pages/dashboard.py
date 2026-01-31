@@ -226,6 +226,8 @@ class DashboardPage(QtWidgets.QWidget):
         self.table_card = QtWidgets.QFrame()
         self.table_card.setObjectName("Card")
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
         self.table = QtWidgets.QTableWidget(0, 0)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
@@ -233,6 +235,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setMouseTracking(True)
+        self.table.viewport().installEventFilter(self)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         self._configure_columns()
@@ -705,6 +708,11 @@ class DashboardPage(QtWidgets.QWidget):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self.update_adaptive_columns()
+
+    def eventFilter(self, source: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if source is self.table.viewport() and event.type() == QtCore.QEvent.Type.Resize:
+            self.update_adaptive_columns()
+        return super().eventFilter(source, event)
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("main_title"))

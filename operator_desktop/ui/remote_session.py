@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
+import base64
 import json
+import os
 import uuid
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -15,6 +17,10 @@ try:
     from PyQt6.QtWebEngineCore import QWebEngineSettings
 except Exception:  # pragma: no cover - optional dependency
     QWebEngineSettings = None
+try:
+    from PyQt6.QtWebChannel import QWebChannel
+except Exception:  # pragma: no cover - optional dependency
+    QWebChannel = None
 
 
 def webengine_available() -> bool:
@@ -70,6 +76,16 @@ def build_session_url(
     return QtCore.QUrl(url)
 
 
+class DownloadBridge(QtCore.QObject):
+    def __init__(self, owner: "RemoteSessionDialog") -> None:
+        super().__init__()
+        self._owner = owner
+
+    @QtCore.pyqtSlot(str, str)
+    def saveBase64(self, filename: str, payload: str) -> None:
+        self._owner.save_base64_payload(filename, payload)
+
+
 class RemoteSessionDialog(QtWidgets.QDialog):
     closed = QtCore.pyqtSignal(str)
 
@@ -110,6 +126,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._pending_proxy_requests: list[dict[str, object]] = []
         self._download_override_dir: str | None = None
         self._download_override_name: str | None = None
+        self._web_channel: QWebChannel | None = None
+        self._download_bridge: DownloadBridge | None = None
         self._last_download_dir = QtCore.QStandardPaths.writableLocation(
             QtCore.QStandardPaths.StandardLocation.DownloadLocation
         )
@@ -136,6 +154,12 @@ class RemoteSessionDialog(QtWidgets.QDialog):
                 settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
             if hasattr(QWebEngineSettings.WebAttribute, "PointerLockEnabled"):
                 settings.setAttribute(QWebEngineSettings.WebAttribute.PointerLockEnabled, True)
+        if QWebChannel is not None:
+            self._download_bridge = DownloadBridge(self)
+            channel = QWebChannel()
+            channel.registerObject("remdeskHost", self._download_bridge)
+            self.view.page().setWebChannel(channel)
+            self._web_channel = channel
         self.view.page().profile().downloadRequested.connect(self._handle_download_request)
         if hasattr(self.view.page(), "fullScreenRequested"):
             self.view.page().fullScreenRequested.connect(self._handle_fullscreen_request)
@@ -248,6 +272,54 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         download.setDownloadDirectory(directory)
         download.setDownloadFileName(filename)
         download.accept()
+
+    def save_base64_payload(self, filename: str, payload: str) -> None:
+        target_path = self._resolve_download_target(filename)
+        if not target_path:
+            return
+        try:
+            cleaned = "".join(payload.split())
+            data = base64.b64decode(cleaned.encode("ascii"), validate=False)
+        except Exception:
+            return
+        try:
+            directory = os.path.dirname(target_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(target_path, "wb") as handle:
+                handle.write(data)
+        except Exception:
+            return
+
+    def _resolve_download_target(self, filename: str) -> str | None:
+        name = filename or "download"
+        directory: str | None = None
+        if self._download_override_dir:
+            directory = self._download_override_dir
+            if self._download_override_name:
+                name = self._download_override_name
+            self._download_override_dir = None
+            self._download_override_name = None
+        else:
+            is_cookie_download = name.lower().startswith("cookies_")
+            if (
+                is_cookie_download
+                and self.isVisible()
+                and not self.testAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
+            ):
+                start_dir = self._last_download_dir or ""
+                folder = QtWidgets.QFileDialog.getExistingDirectory(
+                    self, "Select download folder", start_dir
+                )
+                if not folder:
+                    return None
+                directory = folder
+        if not directory:
+            directory = self._last_download_dir or QtCore.QStandardPaths.writableLocation(
+                QtCore.QStandardPaths.StandardLocation.DownloadLocation
+            )
+        self._last_download_dir = directory
+        return os.path.join(directory, name)
 
     def _handle_load_finished(self, ok: bool) -> None:
         if not ok:
