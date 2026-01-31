@@ -1,7 +1,11 @@
+import ipaddress
+import sys
 import time
 from datetime import datetime
 from typing import Dict, List
+from pathlib import Path
 
+import requests
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.api import RemoteControllerApi
@@ -48,6 +52,106 @@ class ServerPingWorker(QtCore.QThread):
         self.succeeded.emit(latency_ms)
 
 
+def _normalize_ip(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("[") and "]" in raw:
+        raw = raw[1 : raw.index("]")]
+    elif raw.count(":") == 1 and "." in raw:
+        raw = raw.rsplit(":", 1)[0]
+    return raw.strip()
+
+
+def _is_public_ip(value: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if parsed.is_private or parsed.is_loopback or parsed.is_link_local:
+        return False
+    if parsed.is_multicast or parsed.is_reserved:
+        return False
+    return True
+
+
+def _normalize_country_code(value: str | None) -> str:
+    code = str(value or "").strip().upper()
+    if len(code) == 2 and code.isalpha():
+        return code
+    return ""
+
+
+def _lookup_country_code(ip_value: str) -> str:
+    normalized_ip = _normalize_ip(ip_value)
+    if not normalized_ip or not _is_public_ip(normalized_ip):
+        return ""
+    headers = {"User-Agent": "RemDesk/1.0"}
+    timeouts = (2, 4)
+    services: list[tuple[str, str]] = [
+        (f"https://ipapi.co/{normalized_ip}/country/", "text"),
+        (f"https://ipwho.is/{normalized_ip}", "json"),
+        (f"https://ipinfo.io/{normalized_ip}/country", "text"),
+        (f"http://ip-api.com/json/{normalized_ip}?fields=status,countryCode", "json"),
+    ]
+    for url, kind in services:
+        try:
+            response = requests.get(url, headers=headers, timeout=timeouts)
+        except Exception:
+            continue
+        if response.status_code != 200:
+            continue
+        if kind == "text":
+            code = _normalize_country_code(response.text)
+        else:
+            try:
+                payload = response.json()
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if "success" in payload and payload.get("success") is False:
+                continue
+            if payload.get("status") not in (None, "success"):
+                continue
+            code = _normalize_country_code(
+                payload.get("country_code") or payload.get("countryCode")
+            )
+        if code:
+            return code
+    return ""
+
+
+class IpCountryWorker(QtCore.QThread):
+    resolved = QtCore.pyqtSignal(str, str)
+
+    def __init__(self, ip_value: str):
+        super().__init__()
+        self.ip_value = ip_value
+
+    def run(self) -> None:
+        code = _lookup_country_code(self.ip_value)
+        self.resolved.emit(self.ip_value, code)
+
+
+def _resolve_flag_asset_dir() -> Path:
+    base_dir = Path(__file__).resolve().parents[2]
+    candidates = [base_dir / "assets" / "flags"]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        meipass_path = Path(meipass)
+        candidates.append(meipass_path / "operator_desktop" / "assets" / "flags")
+        candidates.append(meipass_path / "assets" / "flags")
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
+
+
+FLAG_ASSET_DIR = _resolve_flag_asset_dir()
+TWEMOJI_BASE_URL = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72"
+
+
 class DashboardPage(QtWidgets.QWidget):
     storage_requested = QtCore.pyqtSignal(str)
     connect_requested = QtCore.pyqtSignal(str, bool)
@@ -87,6 +191,10 @@ class DashboardPage(QtWidgets.QWidget):
         self._menu_open_count = 0
         self._clients_timer_was_active = False
         self._pending_render = False
+        self._ip_country_cache: dict[str, str] = {}
+        self._ip_lookup_inflight: set[str] = set()
+        self._ip_lookup_workers: dict[str, IpCountryWorker] = {}
+        self._flag_pixmap_cache: dict[str, QtGui.QPixmap | None] = {}
         self._ensure_client_state()
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -298,30 +406,14 @@ class DashboardPage(QtWidgets.QWidget):
         return operator_id
 
     def _extract_flag_codes(self, client: Dict) -> list[str]:
-        config = client.get("client_config")
-        if not isinstance(config, dict):
+        ip_value = _normalize_ip(client.get("ip"))
+        if not ip_value:
             return []
-        antifraud = config.get("antifraud")
-        if not isinstance(antifraud, dict):
+        cached = self._ip_country_cache.get(ip_value)
+        if cached is None:
+            self._schedule_ip_lookup(ip_value)
             return []
-        raw = antifraud.get("countries")
-        if not raw:
-            return []
-        if isinstance(raw, str):
-            raw_values = raw.replace(",", " ").replace(";", " ").split()
-        elif isinstance(raw, list):
-            raw_values = raw
-        else:
-            return []
-        codes: list[str] = []
-        seen: set[str] = set()
-        for value in raw_values:
-            code = str(value).strip().upper()
-            if not code or code in seen:
-                continue
-            seen.add(code)
-            codes.append(code)
-        return codes
+        return [cached] if cached else []
 
     @staticmethod
     def _flag_from_code(code: str) -> str:
@@ -335,6 +427,129 @@ class DashboardPage(QtWidgets.QWidget):
         if not codes:
             return "--"
         return " ".join(self._flag_from_code(code) for code in codes)
+
+    def _resolve_region_display(self, client: Dict) -> str:
+        region_value = str(client.get("region") or "").strip()
+        if region_value:
+            return self.i18n.t(region_value)
+        codes = self._extract_flag_codes(client)
+        if codes:
+            return codes[0]
+        return "--"
+
+    def _emoji_font(self) -> QtGui.QFont:
+        if hasattr(self, "_cached_emoji_font"):
+            return self._cached_emoji_font
+        font = QtGui.QFont()
+        for family in ("Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", "Apple Color Emoji"):
+            if family in QtGui.QFontDatabase.families():
+                font = QtGui.QFont(family)
+                break
+        self._cached_emoji_font = font
+        return font
+
+    def _flag_pixmap(self, code: str) -> QtGui.QPixmap | None:
+        normalized = _normalize_country_code(code)
+        if not normalized:
+            return None
+        key = normalized.lower()
+        if key in self._flag_pixmap_cache:
+            return self._flag_pixmap_cache[key]
+        paths = [FLAG_ASSET_DIR / f"{key}.png"]
+        cache_dir = self._flag_cache_dir()
+        if cache_dir:
+            paths.append(cache_dir / f"{key}.png")
+        pixmap = None
+        for path in paths:
+            if path.exists():
+                loaded = QtGui.QPixmap(str(path))
+                if not loaded.isNull():
+                    pixmap = loaded
+                    break
+        if pixmap is None:
+            pixmap = self._download_flag_pixmap(key, cache_dir)
+        if pixmap.isNull():
+            self._flag_pixmap_cache[key] = None
+            return None
+        target_height = 16
+        scaled = pixmap.scaledToHeight(
+            target_height, QtCore.Qt.TransformationMode.SmoothTransformation
+        )
+        self._flag_pixmap_cache[key] = scaled
+        return scaled
+
+    def _flag_cache_dir(self) -> Path | None:
+        base = QtCore.QStandardPaths.writableLocation(
+            QtCore.QStandardPaths.StandardLocation.AppDataLocation
+        )
+        if not base:
+            return None
+        path = Path(base) / "flags"
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return path
+
+    def _twemoji_filename(self, code: str) -> str:
+        normalized = _normalize_country_code(code)
+        if not normalized:
+            return ""
+        first = ord(normalized[0]) - 65
+        second = ord(normalized[1]) - 65
+        if first < 0 or first > 25 or second < 0 or second > 25:
+            return ""
+        hex1 = f"{0x1F1E6 + first:x}"
+        hex2 = f"{0x1F1E6 + second:x}"
+        return f"{hex1}-{hex2}.png"
+
+    def _download_flag_pixmap(self, code: str, cache_dir: Path | None) -> QtGui.QPixmap:
+        filename = self._twemoji_filename(code)
+        if not filename:
+            return QtGui.QPixmap()
+        url = f"{TWEMOJI_BASE_URL}/{filename}"
+        try:
+            response = requests.get(url, timeout=(2, 4))
+        except Exception:
+            return QtGui.QPixmap()
+        if response.status_code != 200:
+            return QtGui.QPixmap()
+        data = response.content
+        if cache_dir:
+            try:
+                (cache_dir / f"{code}.png").write_bytes(data)
+            except OSError:
+                pass
+        pixmap = QtGui.QPixmap()
+        pixmap.loadFromData(data)
+        return pixmap
+
+    def _schedule_ip_lookup(self, ip_value: str) -> None:
+        normalized = _normalize_ip(ip_value)
+        if not normalized or normalized in self._ip_country_cache:
+            return
+        if normalized in self._ip_lookup_inflight:
+            return
+        if not _is_public_ip(normalized):
+            self._ip_country_cache[normalized] = ""
+            return
+        worker = IpCountryWorker(normalized)
+        worker.resolved.connect(self._handle_ip_country_resolved)
+        worker.finished.connect(lambda ip=normalized: self._cleanup_ip_worker(ip))
+        self._ip_lookup_inflight.add(normalized)
+        self._ip_lookup_workers[normalized] = worker
+        worker.start()
+
+    def _cleanup_ip_worker(self, ip_value: str) -> None:
+        self._ip_lookup_inflight.discard(ip_value)
+        self._ip_lookup_workers.pop(ip_value, None)
+
+    def _handle_ip_country_resolved(self, ip_value: str, country_code: str) -> None:
+        normalized = _normalize_ip(ip_value)
+        if not normalized:
+            return
+        self._ip_country_cache[normalized] = _normalize_country_code(country_code)
+        self._render_current_clients()
 
     def _merge_clients(self, api_clients: List[Dict]) -> List[Dict]:
         if not api_clients:
@@ -508,7 +723,7 @@ class DashboardPage(QtWidgets.QWidget):
                 client["name"],
                 client["id"],
                 self.i18n.t(status_key),
-                self.i18n.t(client["region"]),
+                self._resolve_region_display(client),
                 flags_text,
                 flags_view,
                 client["ip"],
@@ -545,10 +760,12 @@ class DashboardPage(QtWidgets.QWidget):
             status_item = QtWidgets.QTableWidgetItem(status_text)
             status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.apply_status_style(status_item, connected)
-            region_item = QtWidgets.QTableWidgetItem(self.i18n.t(client["region"]))
+            region_item = QtWidgets.QTableWidgetItem(self._resolve_region_display(client))
             flags_codes = self._extract_flag_codes(client)
-            flags_item = QtWidgets.QTableWidgetItem(self._format_flags(flags_codes))
+            flags_text = " ".join(flags_codes) if flags_codes else "--"
+            flags_item = QtWidgets.QTableWidgetItem(flags_text)
             flags_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            flags_item.setFont(self._emoji_font())
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
             for item in (id_item, status_item, region_item, flags_item, ip_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -570,6 +787,11 @@ class DashboardPage(QtWidgets.QWidget):
             self.table.setItem(row, column_index["status"], status_item)
             self.table.setItem(row, column_index["region"], region_item)
             self.table.setItem(row, column_index["flags"], flags_item)
+            flag_pixmap = self._flag_pixmap(flags_codes[0]) if flags_codes else None
+            if flag_pixmap:
+                flags_item.setText("")
+                flags_item.setIcon(QtGui.QIcon(flag_pixmap))
+                flags_item.setToolTip(flags_codes[0])
             self.table.setItem(row, column_index["ip"], ip_item)
 
             storage_button = make_button(self.i18n.t("button_storage"), "ghost")

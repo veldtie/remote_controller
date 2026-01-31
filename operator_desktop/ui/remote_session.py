@@ -80,13 +80,22 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         server_url: str,
         token: str | None,
         open_storage: bool = False,
+<<<<<<< HEAD
         manage_mode: bool = True,
         storage_only: bool = False,
         show_window: bool = True,
+=======
+>>>>>>> cecaad8ac6bad502f8f76806583c4a0dd766ea21
         region: str | None = None,
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
+<<<<<<< HEAD
+=======
+        manage_mode: bool = True,
+        storage_only: bool = False,
+        show_window: bool = True,
+>>>>>>> cecaad8ac6bad502f8f76806583c4a0dd766ea21
         parent=None,
     ):
         super().__init__(parent)
@@ -197,10 +206,13 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.token = token
         if session_id is not None:
             self.session_id = session_id
+<<<<<<< HEAD
         if manage_mode is not None:
             self._manage_mode = manage_mode
         if storage_only is not None:
             self._storage_only = storage_only
+=======
+>>>>>>> cecaad8ac6bad502f8f76806583c4a0dd766ea21
         if region is not None:
             self.region = region
         if country is not None:
@@ -209,6 +221,10 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.country_code = country_code
         if flags is not None:
             self.flags = list(flags)
+        if manage_mode is not None:
+            self._manage_mode = manage_mode
+        if storage_only is not None:
+            self._storage_only = storage_only
         self._refresh_top_info()
         self._apply_desktop_overrides(
             auto_connect=auto_connect,
