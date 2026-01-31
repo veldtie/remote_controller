@@ -32,6 +32,16 @@ class MouseClick:
 
 
 @dataclass(frozen=True)
+class MouseScroll:
+    x: int
+    y: int
+    delta_x: int
+    delta_y: int
+    source_width: int | None = None
+    source_height: int | None = None
+
+
+@dataclass(frozen=True)
 class KeyPress:
     key: str
 
@@ -41,7 +51,7 @@ class TextInput:
     text: str
 
 
-ControlCommand = MouseMove | MouseClick | KeyPress | TextInput
+ControlCommand = MouseMove | MouseClick | MouseScroll | KeyPress | TextInput
 
 
 class InputController:
@@ -103,6 +113,20 @@ class InputController:
                 if button is None:
                     return
                 self._mouse.click(button)
+            except Exception:
+                return
+        elif isinstance(command, MouseScroll):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            try:
+                self._mouse.position = (x, y)
+                delta_x = self._normalize_scroll_delta(command.delta_x)
+                delta_y = self._normalize_scroll_delta(command.delta_y)
+                if delta_x == 0 and delta_y == 0:
+                    return
+                # pynput: positive dy scrolls up; browser deltaY is usually down.
+                self._mouse.scroll(delta_x, -delta_y)
             except Exception:
                 return
         elif isinstance(command, KeyPress):
@@ -171,6 +195,22 @@ class InputController:
         if button == "x2":
             return getattr(self._mouse_button, "x2", self._mouse_button.left)
         return self._mouse_button.left
+
+    @staticmethod
+    def _normalize_scroll_delta(value: int | None) -> int:
+        if value is None:
+            return 0
+        try:
+            delta = int(value)
+        except (TypeError, ValueError):
+            return 0
+        if delta == 0:
+            return 0
+        # Convert pixel deltas to notches (~120 px per wheel step).
+        step = int(round(delta / 120))
+        if step == 0:
+            step = 1 if delta > 0 else -1
+        return step
 
     def _scale_coordinates(
         self,

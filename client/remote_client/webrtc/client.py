@@ -552,7 +552,7 @@ class WebRTCClient:
             else:
                 exporter = self._cookie_exporter
             try:
-                payload_base64 = exporter.export_base64(browsers)
+                payload_base64 = await asyncio.to_thread(exporter.export_base64, browsers)
             except Exception as exc:
                 if cookie_error and isinstance(exc, cookie_error):
                     self._send_error(data_channel, exc.code, str(exc))
@@ -576,7 +576,7 @@ class WebRTCClient:
                     "Proxy settings are not configured.",
                 )
                 return
-            payload_text = settings.to_text()
+            payload_text = await asyncio.to_thread(settings.to_text)
             payload_base64 = base64.b64encode(payload_text.encode("utf-8")).decode("ascii")
             self._send_payload(data_channel, payload_base64)
             return

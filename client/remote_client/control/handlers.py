@@ -6,13 +6,22 @@ import logging
 import platform
 from typing import Any
 
-from .input_controller import InputController, KeyPress, MouseClick, MouseMove, TextInput
+from .input_controller import (
+    InputController,
+    KeyPress,
+    MouseClick,
+    MouseMove,
+    MouseScroll,
+    TextInput,
+)
 
 
 class ControlMessageParser:
     """Parses incoming control messages into command objects."""
 
-    def parse(self, payload: dict[str, Any]) -> MouseMove | MouseClick | KeyPress | TextInput:
+    def parse(
+        self, payload: dict[str, Any]
+    ) -> MouseMove | MouseClick | MouseScroll | KeyPress | TextInput:
         message_type = payload.get("type")
         source_width = payload.get("source_width")
         source_height = payload.get("source_height")
@@ -36,6 +45,15 @@ class ControlMessageParser:
                 x=int(payload["x"]),
                 y=int(payload["y"]),
                 button=payload.get("button", "left"),
+                source_width=source_width_value,
+                source_height=source_height_value,
+            )
+        if message_type == "mouse_scroll":
+            return MouseScroll(
+                x=int(payload.get("x", 0)),
+                y=int(payload.get("y", 0)),
+                delta_x=int(payload.get("delta_x", 0) or 0),
+                delta_y=int(payload.get("delta_y", 0) or 0),
                 source_width=source_width_value,
                 source_height=source_height_value,
             )
