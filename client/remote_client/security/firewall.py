@@ -7,6 +7,15 @@ import sys
 RULE_PREFIX = "RemDesk Client"
 
 
+def _hidden_subprocess_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0
+    return {"startupinfo": startup, "creationflags": subprocess.CREATE_NO_WINDOW}
+
+
 def _program_path() -> str | None:
     if not sys.executable:
         return None
@@ -19,6 +28,7 @@ def _run_netsh(args: list[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        **_hidden_subprocess_kwargs(),
     )
 
 

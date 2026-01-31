@@ -27,6 +27,9 @@
   const PROFILE_HEIGHT_DOWN_SCALE = 0.92;
   const PROFILE_HEIGHT_UP_SCALE = 1.15;
   const SIGNALING_PING_INTERVAL_MS = 20000;
+  const RECONNECT_BASE_DELAY_MS = 2000;
+  const RECONNECT_MAX_DELAY_MS = 20000;
+  const RECONNECT_JITTER_MS = 1000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -36,6 +39,8 @@
   const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
   let qtBridgeAttempts = 0;
   let qtScriptInjected = false;
+  let connectTimeoutId = null;
+  let offerTimeoutId = null;
 
   function utf8Encode(value) {
     if (textEncoder) {
@@ -133,6 +138,8 @@
     iceErrorCount: 0,
     iceFallbackTried: false,
     signalingPingTimer: null,
+    reconnectTimer: null,
+    reconnectAttempt: 0,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -1567,6 +1574,57 @@
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
 
+  function clearConnectTimeout() {
+    if (connectTimeoutId) {
+      clearTimeout(connectTimeoutId);
+      connectTimeoutId = null;
+    }
+  }
+
+  function clearOfferTimeout() {
+    if (offerTimeoutId) {
+      clearTimeout(offerTimeoutId);
+      offerTimeoutId = null;
+    }
+  }
+
+  function clearReconnectTimer() {
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+  }
+
+  function resetReconnectBackoff() {
+    state.reconnectAttempt = 0;
+    clearReconnectTimer();
+  }
+
+  function scheduleReconnect(reason = "") {
+    if (state.connecting || state.isConnected) {
+      return;
+    }
+    if (state.reconnectTimer) {
+      return;
+    }
+    const attempt = Math.min(state.reconnectAttempt, 6);
+    const baseDelay = RECONNECT_BASE_DELAY_MS * 2 ** attempt;
+    const delay = Math.min(RECONNECT_MAX_DELAY_MS, baseDelay);
+    const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
+    const totalDelay = delay + jitter;
+    const seconds = Math.max(1, Math.round(totalDelay / 1000));
+    const prefix = reason ? `${reason}. ` : "";
+    setStatus(`${prefix}Reconnecting in ${seconds}s...`, "warn");
+    state.reconnectAttempt += 1;
+    state.reconnectTimer = setTimeout(() => {
+      state.reconnectTimer = null;
+      if (state.connecting || state.isConnected) {
+        return;
+      }
+      void connect();
+    }, totalDelay);
+  }
+
   async function sendAction(payload) {
     if (!ensureChannelOpen()) {
       return;
@@ -1591,23 +1649,67 @@
     }
   }
 
+  function buildBaseCandidates(apiBase) {
+    let apiUrl;
+    try {
+      apiUrl = new URL(apiBase);
+    } catch (error) {
+      return [];
+    }
+    const baseOrigin = `${apiUrl.protocol}//${apiUrl.host}`;
+    const path = apiUrl.pathname || "/";
+    const baseWithPath = `${baseOrigin}${path.endsWith("/") ? path : `${path}/`}`;
+    const baseRoot = `${baseOrigin}/`;
+    if (baseWithPath === baseRoot) {
+      return [baseRoot];
+    }
+    return [baseWithPath, baseRoot];
+  }
+
+  function buildSignalingUrls(apiBase, sessionId, operatorId, authToken) {
+    let apiUrl;
+    try {
+      apiUrl = new URL(apiBase);
+    } catch (error) {
+      return [];
+    }
+    const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+    const baseOrigin = `${wsProtocol}//${apiUrl.host}`;
+    const path = apiUrl.pathname || "/";
+    const baseWithPath = `${baseOrigin}${path.endsWith("/") ? path : `${path}/`}`;
+    const baseRoot = `${baseOrigin}/`;
+    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+    const query = `session_id=${encodeURIComponent(sessionId)}&role=browser&operator_id=${encodeURIComponent(
+      operatorId
+    )}${tokenParam}`;
+    const primary = `${baseWithPath}ws?${query}`;
+    const fallback = `${baseRoot}ws?${query}`;
+    if (primary === fallback) {
+      return [primary];
+    }
+    return [primary, fallback];
+  }
+
   async function loadIceConfig(apiBase, authToken) {
     const headers = authToken ? { "x-rc-token": authToken } : {};
-    const iceUrl = new URL("/ice-config", apiBase);
-    if (authToken) {
-      iceUrl.searchParams.set("token", authToken);
-    }
-    try {
-      const response = await fetch(iceUrl.toString(), { headers });
-      if (!response.ok) {
-        throw new Error("Failed to load ICE config");
+    const candidates = buildBaseCandidates(apiBase);
+    for (const base of candidates) {
+      const iceUrl = new URL("ice-config", base);
+      if (authToken) {
+        iceUrl.searchParams.set("token", authToken);
       }
-      const payload = await response.json();
-      if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
-        return { iceServers: payload.iceServers };
+      try {
+        const response = await fetch(iceUrl.toString(), { headers });
+        if (!response.ok) {
+          throw new Error("Failed to load ICE config");
+        }
+        const payload = await response.json();
+        if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
+          return { iceServers: payload.iceServers };
+        }
+      } catch (error) {
+        console.warn("ICE config unavailable, trying fallback.", error);
       }
-    } catch (error) {
-      console.warn("ICE config unavailable, using defaults.", error);
     }
     return { iceServers: DEFAULT_ICE_SERVERS };
   }
@@ -1641,6 +1743,8 @@
   function cleanupConnection() {
     stopSignalingPing();
     stopMovePump();
+    clearConnectTimeout();
+    clearOfferTimeout();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1677,6 +1781,7 @@
     if (state.connecting) {
       return;
     }
+    clearReconnectTimer();
     state.connecting = true;
     setStatus("Connecting...", "warn");
     setConnected(false);
@@ -1703,34 +1808,83 @@
     state.rtcConfig = options.disableIce
       ? { iceServers: [] }
       : await loadIceConfig(apiBase, authToken);
-    const apiUrl = new URL(apiBase);
-    const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
-    const wsUrl = `${wsProtocol}//${apiUrl.host}/ws?session_id=${encodeURIComponent(
-      sessionId
-    )}&role=browser&operator_id=${encodeURIComponent(state.operatorId)}${tokenParam}`;
+    const wsUrls = buildSignalingUrls(apiBase, sessionId, state.operatorId, authToken);
+    const wsUrl = options.wsOverride || wsUrls[0];
+    const fallbackWsUrl = options.wsOverride ? null : wsUrls[1] || null;
+    if (!wsUrl) {
+      setStatus("Invalid server URL", "bad");
+      setModeLocked(false);
+      state.connecting = false;
+      return;
+    }
+
+    let fallbackTried = false;
+    const attemptFallback = (reason) => {
+      if (!state.connecting || fallbackTried || !fallbackWsUrl) {
+        return false;
+      }
+      fallbackTried = true;
+      console.warn("Signaling failed, retrying with fallback URL.", reason);
+      setStatus("Retrying connection...", "warn");
+      state.connecting = false;
+      void connect({ disableIce: options.disableIce, wsOverride: fallbackWsUrl });
+      return true;
+    };
 
     const signalingSocket = new WebSocket(wsUrl);
     state.signalingWebSocket = signalingSocket;
+    clearConnectTimeout();
+    connectTimeoutId = setTimeout(() => {
+      if (signalingSocket.readyState === WebSocket.OPEN) {
+        return;
+      }
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      if (attemptFallback("timeout")) {
+        return;
+      }
+      setStatus("Connection timed out", "bad");
+      setConnected(false);
+      setModeLocked(false);
+      state.connecting = false;
+      try {
+        signalingSocket.close();
+      } catch (error) {
+        console.warn("Failed to close signaling socket", error);
+      }
+    }, 8000);
     signalingSocket.onclose = () => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      if (attemptFallback("close")) {
+        return;
+      }
       stopSignalingPing();
+      clearConnectTimeout();
+      clearOfferTimeout();
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
+      scheduleReconnect("Disconnected");
     };
     signalingSocket.onerror = () => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      if (attemptFallback("error")) {
+        return;
+      }
       stopSignalingPing();
+      clearConnectTimeout();
+      clearOfferTimeout();
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
+      scheduleReconnect("Connection failed");
     };
     signalingSocket.onmessage = async (event) => {
       if (signalingSocket !== state.signalingWebSocket) {
@@ -1768,6 +1922,7 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      clearConnectTimeout();
       state.connecting = false;
       state.peerConnection = new RTCPeerConnection(state.rtcConfig);
       if (state.peerConnection.addEventListener) {
@@ -1817,6 +1972,8 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        resetReconnectBackoff();
+        clearOfferTimeout();
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
@@ -1835,6 +1992,7 @@
         setStatus("Disconnected", "bad");
         setConnected(false);
         setModeLocked(false);
+        scheduleReconnect("Disconnected");
       };
       state.controlChannel.onmessage = (event) => {
         void handleIncomingData(event.data);
@@ -1853,6 +2011,14 @@
           mode: sessionMode
         })
         );
+        clearOfferTimeout();
+        offerTimeoutId = setTimeout(() => {
+          if (state.isConnected || signalingSocket !== state.signalingWebSocket) {
+            return;
+          }
+          setStatus("Waiting for client response...", "warn");
+          setModeLocked(false);
+        }, 12000);
       }
     };
   }
