@@ -35,6 +35,7 @@
   const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
   const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
   let qtBridgeAttempts = 0;
+  let qtScriptInjected = false;
 
   function utf8Encode(value) {
     if (textEncoder) {
@@ -235,8 +236,16 @@
       return;
     }
     const hasQt = window.qt && window.qt.webChannelTransport;
-    if (!hasQt || typeof QWebChannel === "undefined") {
-      if (hasQt && qtBridgeAttempts < 20) {
+    if (!hasQt) {
+      if (qtBridgeAttempts < 20) {
+        qtBridgeAttempts += 1;
+        setTimeout(initQtBridge, 150);
+      }
+      return;
+    }
+    if (typeof QWebChannel === "undefined") {
+      ensureQWebChannelScript();
+      if (qtBridgeAttempts < 20) {
         qtBridgeAttempts += 1;
         setTimeout(initQtBridge, 150);
       }
@@ -250,6 +259,19 @@
     } catch (error) {
       console.warn("Failed to init Qt bridge", error);
     }
+  }
+
+  function ensureQWebChannelScript() {
+    if (qtScriptInjected) {
+      return;
+    }
+    qtScriptInjected = true;
+    const script = document.createElement("script");
+    script.src = "qrc:///qtwebchannel/qwebchannel.js";
+    script.onload = () => {
+      initQtBridge();
+    };
+    document.head.appendChild(script);
   }
 
   function normalizeTopValue(value) {
@@ -1878,6 +1900,9 @@
         return;
       }
       event.preventDefault();
+      if (dom.screenFrame.focus) {
+        dom.screenFrame.focus({ preventScroll: true });
+      }
       if (!state.cursorLocked && !state.softLock) {
         setCursorFromAbsolute(event);
       }

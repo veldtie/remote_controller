@@ -451,6 +451,10 @@ class WebRTCClient:
                 return
             message_type = message.get("type")
             if message_type == "offer":
+                if peer_connection.connectionState in {"connecting", "connected"}:
+                    offer_mode = str(message.get("mode") or "").lower()
+                    if offer_mode == "view":
+                        continue
                 self._pending_offer = message
                 return
             if message_type == "ice":
