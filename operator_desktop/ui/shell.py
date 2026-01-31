@@ -453,15 +453,12 @@ class MainShell(QtWidgets.QWidget):
             client_id,
             token,
             open_storage=open_storage,
-<<<<<<< HEAD
             mode="manage",
             storage_only=False,
-=======
             region=region or None,
             country=country or None,
             country_code=country_code or None,
             flags=flags or None,
->>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
         )
 
         if not webengine_available():
@@ -478,16 +475,13 @@ class MainShell(QtWidgets.QWidget):
             base_url,
             token,
             open_storage,
-<<<<<<< HEAD
             manage_mode=True,
             storage_only=False,
             show_window=True,
-=======
             region=region or None,
             country=country or None,
             country_code=country_code or None,
             flags=flags or None,
->>>>>>> 45ab282d56f3c92e79484b2ae578ee91c3965eb3
             parent=self,
         )
         dialog.closed.connect(self._handle_session_closed)
