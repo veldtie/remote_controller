@@ -948,14 +948,14 @@ class DashboardPage(QtWidgets.QWidget):
             "team": (1.6, 130),
             "operator": (1.8, 150),
             "status": (2.1, 160),
-            "last_seen": (1.4, 130),
+            "last_seen": (1.8, 180),
             "region": (1.3, 100),
             "flags": (1.1, 90),
             "ip": (1.3, 100),
             "storage": (1.3, 110),
             "connect": (1.6, 140),
-            "more": (0.8, 60),
-            "delete": (0.8, 60),
+            "more": (1.4, 130),
+            "delete": (1.0, 90),
         }
         config = {
             index: base_config[key]
