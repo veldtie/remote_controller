@@ -10,6 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
+from ...core.constants import APP_VERSION
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
@@ -314,7 +315,7 @@ class DashboardPage(QtWidgets.QWidget):
             keys += ["team", "operator"]
         elif self.current_role == "administrator":
             keys += ["operator"]
-        keys += ["status", "region", "flags", "ip", "storage", "connect", "more"]
+        keys += ["status", "last_seen", "region", "flags", "ip", "storage", "connect", "more"]
         if self.current_role in {"moderator", "administrator"}:
             keys.append("delete")
         return keys
@@ -326,6 +327,7 @@ class DashboardPage(QtWidgets.QWidget):
             "team": self.i18n.t("table_team"),
             "operator": self.i18n.t("table_operator"),
             "status": self.i18n.t("table_status"),
+            "last_seen": self.i18n.t("table_last_seen"),
             "region": self.i18n.t("table_region"),
             "flags": self.i18n.t("table_flags"),
             "ip": self.i18n.t("table_ip"),
@@ -427,6 +429,40 @@ class DashboardPage(QtWidgets.QWidget):
         if not codes:
             return "--"
         return " ".join(self._flag_from_code(code) for code in codes)
+
+    @staticmethod
+    def _parse_last_seen(value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value)
+            except (OverflowError, OSError, ValueError):
+                return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
+    def _format_last_seen(self, value: object) -> str:
+        parsed = self._parse_last_seen(value)
+        if not parsed:
+            return "--"
+        if parsed.tzinfo:
+            parsed = parsed.astimezone()
+            now = datetime.now(parsed.tzinfo)
+        else:
+            now = datetime.now()
+        if parsed.date() == now.date():
+            return parsed.strftime("%H:%M:%S")
+        return parsed.strftime("%Y-%m-%d %H:%M")
 
     def _resolve_region_display(self, client: Dict) -> str:
         region_value = str(client.get("region") or "").strip()
@@ -575,6 +611,7 @@ class DashboardPage(QtWidgets.QWidget):
                 "connected_time": api_client.get("connected_time", 0),
                 "ip": api_client.get("ip", ""),
                 "region": api_client.get("region", ""),
+                "last_seen": api_client.get("last_seen"),
                 "connected": local.get("connected", False),
                 "assigned_operator_id": assigned_operator_id or "",
                 "assigned_team_id": assigned_team_id or "",
@@ -676,7 +713,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
         self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
-        self.status_label.setText(self.i18n.t("main_status_ready"))
+        status_text = self.i18n.t("main_status_ready")
+        if APP_VERSION:
+            status_text = f"{status_text} | v{APP_VERSION}"
+        self.status_label.setText(status_text)
         self.update_last_sync_label()
         self._render_current_clients()
 
@@ -723,6 +763,7 @@ class DashboardPage(QtWidgets.QWidget):
                 client["name"],
                 client["id"],
                 self.i18n.t(status_key),
+                self._format_last_seen(client.get("last_seen")),
                 self._resolve_region_display(client),
                 flags_text,
                 flags_view,
@@ -760,6 +801,10 @@ class DashboardPage(QtWidgets.QWidget):
             status_item = QtWidgets.QTableWidgetItem(status_text)
             status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.apply_status_style(status_item, connected)
+            last_seen_item = QtWidgets.QTableWidgetItem(
+                self._format_last_seen(client.get("last_seen"))
+            )
+            last_seen_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             region_item = QtWidgets.QTableWidgetItem(self._resolve_region_display(client))
             flags_codes = self._extract_flag_codes(client)
             flags_text = " ".join(flags_codes) if flags_codes else "--"
@@ -767,7 +812,7 @@ class DashboardPage(QtWidgets.QWidget):
             flags_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             flags_item.setFont(self._emoji_font())
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
-            for item in (id_item, status_item, region_item, flags_item, ip_item):
+            for item in (id_item, status_item, last_seen_item, region_item, flags_item, ip_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, column_index["name"], name_item)
             self.table.setCellWidget(row, column_index["name"], self.build_name_cell(client))
@@ -785,6 +830,7 @@ class DashboardPage(QtWidgets.QWidget):
                 operator_item.setFlags(operator_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, column_index["operator"], operator_item)
             self.table.setItem(row, column_index["status"], status_item)
+            self.table.setItem(row, column_index["last_seen"], last_seen_item)
             self.table.setItem(row, column_index["region"], region_item)
             self.table.setItem(row, column_index["flags"], flags_item)
             flag_pixmap = self._flag_pixmap(flags_codes[0]) if flags_codes else None
@@ -897,6 +943,7 @@ class DashboardPage(QtWidgets.QWidget):
             "team": (1.6, 130),
             "operator": (1.8, 150),
             "status": (2.1, 160),
+            "last_seen": (1.4, 130),
             "region": (1.3, 100),
             "flags": (1.1, 90),
             "ip": (1.3, 100),

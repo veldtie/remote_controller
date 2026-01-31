@@ -311,6 +311,24 @@ async def _update_device_status(device_token: str, status: str) -> None:
         logger.exception("Failed to update status for token %s", device_token)
 
 
+async def _touch_device_last_seen(device_token: str) -> None:
+    """Update last_seen for an existing device record."""
+    if not db_pool:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE device_registry
+                SET last_seen = NOW()
+                WHERE device_token = $1;
+                """,
+                device_token,
+            )
+    except Exception:
+        logger.exception("Failed to update last_seen for token %s", device_token)
+
+
 async def _upsert_remote_client(
     session_id: str,
     status: str,
@@ -689,6 +707,11 @@ class OperatorUpsert(BaseModel):
     team: str | None = None
 
 
+class OperatorProfileUpdate(BaseModel):
+    name: str | None = None
+    password: str | None = None
+
+
 class AuthRequest(BaseModel):
     account_id: str
     password: str
@@ -710,7 +733,12 @@ async def list_remote_clients(request: Request) -> dict[str, list[dict[str, obje
                    region,
                    assigned_operator_id,
                    assigned_team_id,
-                   client_config
+                   client_config,
+                   (
+                       SELECT MAX(last_seen)
+                       FROM device_registry
+                       WHERE device_registry.session_id = remote_clients.id
+                   ) AS last_seen
             FROM remote_clients
             ORDER BY id;
             """
@@ -892,6 +920,42 @@ async def get_operator(operator_id: str, request: Request) -> dict[str, dict[str
     return {"operator": dict(row)}
 
 
+@app.patch("/api/operators/{operator_id}")
+async def update_operator_profile(
+    operator_id: str, payload: OperatorProfileUpdate, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    name = payload.name.strip() if payload.name is not None else None
+    password = payload.password
+    if payload.name is not None and not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    if payload.password is not None and not password:
+        raise HTTPException(status_code=400, detail="Password required")
+    if name is None and password is None:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id FROM operators WHERE id = $1;",
+            operator_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Operator not found")
+        await conn.execute(
+            """
+            UPDATE operators
+            SET name = COALESCE($2, name),
+                password = COALESCE($3, password)
+            WHERE id = $1;
+            """,
+            operator_id,
+            name,
+            password,
+        )
+    return {"ok": True}
+
+
 @app.put("/api/operators/{operator_id}")
 async def upsert_operator(
     operator_id: str, payload: OperatorUpsert, request: Request
@@ -999,6 +1063,10 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                         message = json.dumps(payload)
                 if message_type in KEEPALIVE_MESSAGE_TYPES:
                     await registry.touch(session_id)
+                    if role == "client":
+                        _, _, device_token = await registry.get_session_state(session_id)
+                        if device_token:
+                            await _touch_device_last_seen(device_token)
                     if message_type == "ping":
                         with contextlib.suppress(Exception):
                             await websocket.send_text(json.dumps({"type": "pong"}))
@@ -1047,6 +1115,10 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                 if message_type == "ice":
                     target_session_id = payload.get("session_id") or session_id
             await registry.touch(session_id)
+            if role == "client":
+                _, _, device_token = await registry.get_session_state(session_id)
+                if device_token:
+                    await _touch_device_last_seen(device_token)
             if target_session_id != session_id:
                 await registry.touch(target_session_id)
             forwarded = await registry.forward(

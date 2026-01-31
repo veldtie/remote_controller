@@ -112,5 +112,18 @@ class RemoteControllerApi:
             },
         )
 
+    def update_operator_profile(
+        self,
+        operator_id: str,
+        name: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if password is not None:
+            payload["password"] = password
+        self._request("PATCH", f"/api/operators/{operator_id}", payload)
+
     def delete_operator(self, operator_id: str) -> None:
         self._request("DELETE", f"/api/operators/{operator_id}")

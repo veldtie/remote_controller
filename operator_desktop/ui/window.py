@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from ..core.constants import APP_NAME, DEBUG_LOG_CREDENTIALS
+from ..core.constants import APP_NAME, APP_VERSION, DEBUG_LOG_CREDENTIALS
 from ..core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL, RemoteControllerApi
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
@@ -24,7 +24,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.api = RemoteControllerApi(base_url=api_url, token=api_token)
         self._reset_server_cache()
 
-        self.setWindowTitle(APP_NAME)
+        title = APP_NAME
+        if APP_VERSION:
+            title = f"{title} v{APP_VERSION}"
+        self.setWindowTitle(title)
         icon_path = Path(__file__).resolve().parent.parent / "assets" / "icons" / "icon.ico"
         if icon_path.exists():
             icon = QtGui.QIcon(str(icon_path))
@@ -164,6 +167,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.set("recent_account_ids", list(dict.fromkeys(recent))[-10:])
         self._apply_operator_profile(operator)
         self.settings.save()
+        self.shell.settings_page.set_session_password(password)
         self.logger.log("log_login", account=account_id)
         self.stack.setCurrentWidget(self.shell)
         self.login_page.password_input.clear()
@@ -173,6 +177,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.set("session_token", "")
         self.settings.set("remember_me", False)
         self.settings.save()
+        self.shell.settings_page.set_session_password(None)
         self.logger.log("log_logout")
         self.stack.setCurrentWidget(self.login_page)
         self.login_page.load_state()

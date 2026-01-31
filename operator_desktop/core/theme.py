@@ -98,8 +98,22 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         border-radius: 16px;
     }}
+    QFrame#SettingsCard {{
+        background: {c["card"]};
+        border: 1px solid {c["border"]};
+        border-radius: 12px;
+    }}
     QLabel#Muted {{
         color: {c["muted"]};
+    }}
+    QLabel#ProfileStatus {{
+        color: {c["muted"]};
+    }}
+    QLabel#ProfileStatus[status="error"] {{
+        color: {c["danger"]};
+    }}
+    QLabel#ProfileStatus[status="success"] {{
+        color: {c["accent"]};
     }}
     QLabel#StatusBadge {{
         padding: 4px 10px;

@@ -129,7 +129,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
         self.teams_page = TeamsPage(i18n, settings, api=api)
         self.compiler = CompilerPage(i18n, settings, logger)
-        self.settings_page = SettingsPage(i18n, settings)
+        self.settings_page = SettingsPage(i18n, settings, api=api)
         self.instructions_page = InstructionsPage(i18n)
         self.stack.addWidget(self.dashboard)
         self.stack.addWidget(self.teams_page)
@@ -150,6 +150,7 @@ class MainShell(QtWidgets.QWidget):
         self.settings_page.theme_changed.connect(self.emit_theme_change)
         self.settings_page.language_changed.connect(self.emit_language_change)
         self.settings_page.role_changed.connect(self.handle_role_change)
+        self.settings_page.profile_updated.connect(self.update_operator_label)
         self.teams_page.teams_updated.connect(self.update_operator_label)
 
         self.apply_translations()
