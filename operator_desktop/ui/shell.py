@@ -475,22 +475,13 @@ class MainShell(QtWidgets.QWidget):
             base_url,
             token,
             open_storage,
-<<<<<<< HEAD
             manage_mode=True,
             storage_only=False,
             show_window=True,
-=======
->>>>>>> cecaad8ac6bad502f8f76806583c4a0dd766ea21
             region=region or None,
             country=country or None,
             country_code=country_code or None,
             flags=flags or None,
-<<<<<<< HEAD
-=======
-            manage_mode=True,
-            storage_only=False,
-            show_window=True,
->>>>>>> cecaad8ac6bad502f8f76806583c4a0dd766ea21
             parent=self,
         )
         dialog.closed.connect(self._handle_session_closed)
