@@ -30,6 +30,7 @@
   const RECONNECT_BASE_DELAY_MS = 2000;
   const RECONNECT_MAX_DELAY_MS = 20000;
   const RECONNECT_JITTER_MS = 1000;
+  const CONNECTION_READY_TIMEOUT_MS = 20000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -140,6 +141,8 @@
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
+    connectReadyTimer: null,
+    hadConnection: false,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -1588,6 +1591,34 @@
     }
   }
 
+  function clearConnectReadyTimeout() {
+    if (state.connectReadyTimer) {
+      clearTimeout(state.connectReadyTimer);
+      state.connectReadyTimer = null;
+    }
+  }
+
+  function scheduleConnectReadyTimeout(signalingSocket) {
+    clearConnectReadyTimeout();
+    state.connectReadyTimer = setTimeout(() => {
+      if (state.isConnected || state.connecting) {
+        return;
+      }
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      const shouldRetry = state.hadConnection;
+      setStatus(
+        shouldRetry ? "Client not responding, retrying..." : "Client not responding",
+        "warn"
+      );
+      cleanupConnection();
+      if (shouldRetry) {
+        scheduleReconnect("No response");
+      }
+    }, CONNECTION_READY_TIMEOUT_MS);
+  }
+
   function clearReconnectTimer() {
     if (state.reconnectTimer) {
       clearTimeout(state.reconnectTimer);
@@ -1600,7 +1631,10 @@
     clearReconnectTimer();
   }
 
-  function scheduleReconnect(reason = "") {
+  function scheduleReconnect(reason = "", allowWithoutConnection = false) {
+    if (!allowWithoutConnection && !state.hadConnection) {
+      return;
+    }
     if (state.connecting || state.isConnected) {
       return;
     }
@@ -1698,8 +1732,15 @@
       if (authToken) {
         iceUrl.searchParams.set("token", authToken);
       }
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller
+        ? setTimeout(() => controller.abort(), 4000)
+        : null;
       try {
-        const response = await fetch(iceUrl.toString(), { headers });
+        const response = await fetch(iceUrl.toString(), {
+          headers,
+          signal: controller ? controller.signal : undefined
+        });
         if (!response.ok) {
           throw new Error("Failed to load ICE config");
         }
@@ -1709,6 +1750,10 @@
         }
       } catch (error) {
         console.warn("ICE config unavailable, trying fallback.", error);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
     }
     return { iceServers: DEFAULT_ICE_SERVERS };
@@ -1745,6 +1790,7 @@
     stopMovePump();
     clearConnectTimeout();
     clearOfferTimeout();
+    clearConnectReadyTimeout();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1864,6 +1910,7 @@
       stopSignalingPing();
       clearConnectTimeout();
       clearOfferTimeout();
+      clearConnectReadyTimeout();
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1880,6 +1927,7 @@
       stopSignalingPing();
       clearConnectTimeout();
       clearOfferTimeout();
+      clearConnectReadyTimeout();
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1930,6 +1978,27 @@
       } else {
         state.peerConnection.onicecandidateerror = handleIceCandidateError;
       }
+      state.peerConnection.onconnectionstatechange = () => {
+        if (!state.peerConnection) {
+          return;
+        }
+        const connectionState = state.peerConnection.connectionState;
+        if (connectionState === "failed") {
+          setStatus("Connection failed", "bad");
+          setConnected(false);
+          setModeLocked(false);
+          state.connecting = false;
+          cleanupConnection();
+          scheduleReconnect("Connection failed");
+        } else if (connectionState === "disconnected") {
+          setStatus("Disconnected", "bad");
+          setConnected(false);
+          setModeLocked(false);
+          state.connecting = false;
+          cleanupConnection();
+          scheduleReconnect("Disconnected");
+        }
+      };
       if (signalingSocket.readyState === WebSocket.OPEN) {
         signalingSocket.send(
           JSON.stringify({
@@ -1972,8 +2041,10 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        state.hadConnection = true;
         resetReconnectBackoff();
         clearOfferTimeout();
+        clearConnectReadyTimeout();
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
@@ -1992,6 +2063,7 @@
         setStatus("Disconnected", "bad");
         setConnected(false);
         setModeLocked(false);
+        clearConnectReadyTimeout();
         scheduleReconnect("Disconnected");
       };
       state.controlChannel.onmessage = (event) => {
@@ -2019,6 +2091,7 @@
           setStatus("Waiting for client response...", "warn");
           setModeLocked(false);
         }, 12000);
+        scheduleConnectReadyTimeout(signalingSocket);
       }
     };
   }
