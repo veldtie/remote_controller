@@ -1,6 +1,7 @@
 from PyQt6 import QtCore, QtWidgets
 
 from ...core.api import RemoteControllerApi
+from ...core.constants import APP_VERSION
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.translations import LANGUAGE_NAMES
@@ -24,26 +25,40 @@ class SettingsPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(18)
 
-        header = QtWidgets.QVBoxLayout()
+        self.save_profile_button = make_button("", "island")
+        self.save_profile_button.clicked.connect(self.save_profile)
+        self.data_button = make_button("", "island")
+        self.data_button.clicked.connect(self.clear_data)
+        self.data_status = QtWidgets.QLabel()
+        self.data_status.setObjectName("Muted")
+
+        header = QtWidgets.QHBoxLayout()
+        header_left = QtWidgets.QVBoxLayout()
         self.title_label = QtWidgets.QLabel()
         self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
         self.subtitle_label = QtWidgets.QLabel()
         self.subtitle_label.setObjectName("Muted")
-        header.addWidget(self.title_label)
-        header.addWidget(self.subtitle_label)
+        header_left.addWidget(self.title_label)
+        header_left.addWidget(self.subtitle_label)
+        header.addLayout(header_left, 1)
         layout.addLayout(header)
 
         content = QtWidgets.QVBoxLayout()
-        content.setSpacing(12)
+        content.setSpacing(14)
 
-        self.theme_card = QtWidgets.QFrame()
-        self.theme_card.setObjectName("SettingsCard")
-        theme_layout = QtWidgets.QHBoxLayout(self.theme_card)
-        theme_layout.setContentsMargins(16, 12, 16, 12)
-        theme_layout.setSpacing(12)
+        self.appearance_card = QtWidgets.QFrame()
+        self.appearance_card.setObjectName("SettingsCard")
+        appearance_layout = QtWidgets.QVBoxLayout(self.appearance_card)
+        appearance_layout.setContentsMargins(14, 10, 14, 10)
+        appearance_layout.setSpacing(8)
+        self.appearance_title = QtWidgets.QLabel()
+        self.appearance_title.setStyleSheet("font-weight: 800;")
+        appearance_layout.addWidget(self.appearance_title)
+
         self.theme_label = QtWidgets.QLabel()
-        self.theme_label.setStyleSheet("font-weight: 600;")
-        theme_layout.addWidget(self.theme_label, 1)
+        theme_row = QtWidgets.QHBoxLayout()
+        theme_row.setSpacing(8)
+        theme_row.addWidget(self.theme_label, 1)
         theme_buttons = QtWidgets.QHBoxLayout()
         theme_buttons.setSpacing(6)
         self.theme_dark = make_button("", "ghost")
@@ -58,31 +73,29 @@ class SettingsPage(QtWidgets.QWidget):
         self.theme_group.addButton(self.theme_light)
         theme_buttons.addWidget(self.theme_dark)
         theme_buttons.addWidget(self.theme_light)
-        theme_layout.addLayout(theme_buttons)
-        content.addWidget(self.theme_card)
+        theme_row.addLayout(theme_buttons)
+        appearance_layout.addLayout(theme_row)
 
-        self.language_card = QtWidgets.QFrame()
-        self.language_card.setObjectName("SettingsCard")
-        lang_layout = QtWidgets.QHBoxLayout(self.language_card)
-        lang_layout.setContentsMargins(16, 12, 16, 12)
-        lang_layout.setSpacing(12)
         self.language_label = QtWidgets.QLabel()
-        self.language_label.setStyleSheet("font-weight: 600;")
-        lang_layout.addWidget(self.language_label, 1)
+        language_row = QtWidgets.QHBoxLayout()
+        language_row.setSpacing(8)
+        language_row.addWidget(self.language_label, 1)
         self.language_combo = QtWidgets.QComboBox()
         self.language_combo.setMinimumWidth(180)
         for code, name in LANGUAGE_NAMES.items():
             self.language_combo.addItem(name, code)
-        lang_layout.addWidget(self.language_combo)
-        content.addWidget(self.language_card)
+        language_row.addWidget(self.language_combo)
+        appearance_layout.addLayout(language_row)
+        content.addWidget(self.appearance_card)
 
+        content.addSpacing(8)
         self.account_card = QtWidgets.QFrame()
         self.account_card.setObjectName("SettingsCard")
         account_layout = QtWidgets.QVBoxLayout(self.account_card)
-        account_layout.setContentsMargins(16, 12, 16, 12)
-        account_layout.setSpacing(10)
+        account_layout.setContentsMargins(14, 10, 14, 10)
+        account_layout.setSpacing(8)
         self.account_label = QtWidgets.QLabel()
-        self.account_label.setStyleSheet("font-weight: 600;")
+        self.account_label.setStyleSheet("font-weight: 800;")
         account_layout.addWidget(self.account_label)
         self.role_label = QtWidgets.QLabel()
         self.role_combo = QtWidgets.QComboBox()
@@ -91,19 +104,11 @@ class SettingsPage(QtWidgets.QWidget):
         self.role_combo.addItem(self.i18n.t("settings_role_moderator"), "moderator")
         self.role_combo.setEnabled(False)
         self.role_combo.setMinimumWidth(180)
-        role_row = QtWidgets.QHBoxLayout()
-        role_row.setSpacing(12)
-        role_row.addWidget(self.role_label, 1)
-        role_row.addWidget(self.role_combo)
-        account_layout.addLayout(role_row)
-        self.profile_label = QtWidgets.QLabel()
-        self.profile_label.setStyleSheet("font-weight: 600;")
-        account_layout.addWidget(self.profile_label)
         self.name_label = QtWidgets.QLabel()
         self.name_input = QtWidgets.QLineEdit()
         self.name_input.setMinimumWidth(220)
         name_row = QtWidgets.QHBoxLayout()
-        name_row.setSpacing(12)
+        name_row.setSpacing(8)
         name_row.addWidget(self.name_label, 1)
         name_row.addWidget(self.name_input)
         account_layout.addLayout(name_row)
@@ -112,43 +117,36 @@ class SettingsPage(QtWidgets.QWidget):
         self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.password_input.setMinimumWidth(220)
         password_row = QtWidgets.QHBoxLayout()
-        password_row.setSpacing(12)
+        password_row.setSpacing(8)
         password_row.addWidget(self.password_label, 1)
         password_row.addWidget(self.password_input)
         account_layout.addLayout(password_row)
-        self.password_confirm_label = QtWidgets.QLabel()
-        self.password_confirm_input = QtWidgets.QLineEdit()
-        self.password_confirm_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.password_confirm_input.setMinimumWidth(220)
-        confirm_row = QtWidgets.QHBoxLayout()
-        confirm_row.setSpacing(12)
-        confirm_row.addWidget(self.password_confirm_label, 1)
-        confirm_row.addWidget(self.password_confirm_input)
-        account_layout.addLayout(confirm_row)
-        self.save_profile_button = make_button("", "primary")
-        self.save_profile_button.clicked.connect(self.save_profile)
-        save_row = QtWidgets.QHBoxLayout()
-        save_row.addStretch()
-        save_row.addWidget(self.save_profile_button)
-        account_layout.addLayout(save_row)
         self.profile_status = QtWidgets.QLabel()
         self.profile_status.setObjectName("ProfileStatus")
         self.profile_status.setProperty("status", "idle")
         account_layout.addWidget(self.profile_status)
-        account_layout.addSpacing(6)
-        self.data_label = QtWidgets.QLabel()
-        self.data_label.setStyleSheet("font-weight: 600;")
-        self.data_button = make_button("", "ghost")
-        self.data_button.clicked.connect(self.clear_data)
-        self.data_status = QtWidgets.QLabel()
-        self.data_status.setObjectName("Muted")
-        data_row = QtWidgets.QHBoxLayout()
-        data_row.setSpacing(12)
-        data_row.addWidget(self.data_label, 1)
-        data_row.addWidget(self.data_button)
-        account_layout.addLayout(data_row)
-        account_layout.addWidget(self.data_status)
         content.addWidget(self.account_card)
+
+        actions_layout = QtWidgets.QHBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
+        actions_layout.addStretch()
+        actions_buttons = QtWidgets.QVBoxLayout()
+        actions_buttons.setSpacing(6)
+        actions_buttons.addWidget(
+            self.save_profile_button,
+            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        actions_buttons.addWidget(
+            self.data_button,
+            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        actions_buttons.addWidget(
+            self.data_status,
+            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        actions_layout.addLayout(actions_buttons)
+        content.addLayout(actions_layout)
 
         self.about_card = QtWidgets.QFrame()
         self.about_card.setObjectName("SettingsCard")
@@ -162,10 +160,12 @@ class SettingsPage(QtWidgets.QWidget):
         self.about_body.setObjectName("Muted")
         about_layout.addWidget(self.about_label)
         about_layout.addWidget(self.about_body)
-        content.addWidget(self.about_card)
-
+        self.about_version = QtWidgets.QLabel()
+        self.about_version.setObjectName("Muted")
+        about_layout.addWidget(self.about_version)
         layout.addLayout(content)
         layout.addStretch()
+        layout.addWidget(self.about_card)
 
         self.theme_group.buttonToggled.connect(self.emit_theme)
         self.language_combo.currentIndexChanged.connect(self.emit_language)
@@ -188,7 +188,6 @@ class SettingsPage(QtWidgets.QWidget):
             self.role_combo.setCurrentIndex(role_index)
         self.name_input.setText(self._current_display_name())
         self.password_input.clear()
-        self.password_confirm_input.clear()
         self._sync_profile_state()
 
     def _current_display_name(self) -> str:
@@ -211,28 +210,25 @@ class SettingsPage(QtWidgets.QWidget):
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("settings_title"))
         self.subtitle_label.setText(self.i18n.t("settings_subtitle"))
+        self.appearance_title.setText(self.i18n.t("settings_appearance"))
         self.theme_label.setText(self.i18n.t("settings_theme"))
         self.theme_dark.setText(self.i18n.t("settings_theme_dark"))
         self.theme_light.setText(self.i18n.t("settings_theme_light"))
         self.language_label.setText(self.i18n.t("settings_language"))
         self.account_label.setText(self.i18n.t("settings_account"))
-        self.role_label.setText(self.i18n.t("settings_role"))
         self.role_combo.setItemText(0, self.i18n.t("settings_role_operator"))
         self.role_combo.setItemText(1, self.i18n.t("settings_role_administrator"))
         self.role_combo.setItemText(2, self.i18n.t("settings_role_moderator"))
-        self.profile_label.setText(self.i18n.t("settings_profile"))
         self.name_label.setText(self.i18n.t("settings_name"))
         self.name_input.setPlaceholderText(self.i18n.t("settings_name_placeholder"))
         self.password_label.setText(self.i18n.t("settings_password"))
         self.password_input.setPlaceholderText(self.i18n.t("settings_password_placeholder"))
-        self.password_confirm_label.setText(self.i18n.t("settings_password_confirm"))
-        self.password_confirm_input.setPlaceholderText(
-            self.i18n.t("settings_password_confirm_placeholder")
-        )
         self.save_profile_button.setText(self.i18n.t("settings_save"))
         self.about_label.setText(self.i18n.t("settings_about"))
         self.about_body.setText(self.i18n.t("settings_about_body"))
-        self.data_label.setText(self.i18n.t("settings_data"))
+        self.about_version.setText(
+            f'{self.i18n.t("settings_version")}: {APP_VERSION or "-"}'
+        )
         self.data_button.setText(self.i18n.t("settings_clear"))
         self._sync_profile_state()
 
@@ -248,7 +244,6 @@ class SettingsPage(QtWidgets.QWidget):
         for widget in (
             self.name_input,
             self.password_input,
-            self.password_confirm_input,
             self.save_profile_button,
         ):
             widget.setEnabled(enabled)
@@ -289,19 +284,10 @@ class SettingsPage(QtWidgets.QWidget):
             return
         name = self.name_input.text().strip()
         password = self.password_input.text()
-        confirm = self.password_confirm_input.text()
         updates: dict[str, str] = {}
         if name:
             updates["name"] = name
-        if password or confirm:
-            if not password or not confirm:
-                self._set_profile_status(
-                    self.i18n.t("settings_profile_password_required"), "error"
-                )
-                return
-            if password != confirm:
-                self._set_profile_status(self.i18n.t("settings_profile_mismatch"), "error")
-                return
+        if password:
             updates["password"] = password
         if not updates:
             self._set_profile_status(self.i18n.t("settings_profile_missing"), "error")
@@ -343,7 +329,6 @@ class SettingsPage(QtWidgets.QWidget):
         if "password" in updates:
             self._session_password = updates["password"]
         self.password_input.clear()
-        self.password_confirm_input.clear()
         self._set_profile_status(self.i18n.t("settings_profile_saved"), "success")
         if "name" in updates:
             self.profile_updated.emit()

@@ -721,10 +721,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
         self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
-        status_text = self.i18n.t("main_status_ready")
-        if APP_VERSION:
-            status_text = f"{status_text} | v{APP_VERSION}"
-        self.status_label.setText(status_text)
+        self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
         self._render_current_clients()
 

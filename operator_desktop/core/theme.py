@@ -157,6 +157,12 @@ def build_stylesheet(theme: Theme) -> str:
         background: transparent;
         border: none;
     }}
+    QLabel#SectionTitle {{
+        font-weight: 700;
+        font-size: 13px;
+        color: {c["muted"]};
+        letter-spacing: 0.6px;
+    }}
     QPushButton {{
         padding: 8px 14px;
         border-radius: 10px;
@@ -211,6 +217,19 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QPushButton[variant="danger"]:pressed {{
         background: {c["danger"]};
+    }}
+    QPushButton[variant="island"] {{
+        background: {c["card_alt"]};
+        color: {c["text"]};
+        border: 1px solid {c["border"]};
+        font-weight: 600;
+    }}
+    QPushButton[variant="island"]:hover {{
+        background: {c["card"]};
+        border-color: {c["accent"]};
+    }}
+    QPushButton[variant="island"]:pressed {{
+        background: {c["card_alt"]};
     }}
     QPushButton:disabled {{
         background: {c["border"]};
