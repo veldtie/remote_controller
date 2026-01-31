@@ -27,6 +27,9 @@
   const PROFILE_HEIGHT_DOWN_SCALE = 0.92;
   const PROFILE_HEIGHT_UP_SCALE = 1.15;
   const SIGNALING_PING_INTERVAL_MS = 20000;
+  const RECONNECT_BASE_DELAY_MS = 2000;
+  const RECONNECT_MAX_DELAY_MS = 20000;
+  const RECONNECT_JITTER_MS = 1000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -135,6 +138,8 @@
     iceErrorCount: 0,
     iceFallbackTried: false,
     signalingPingTimer: null,
+    reconnectTimer: null,
+    reconnectAttempt: 0,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -1583,6 +1588,43 @@
     }
   }
 
+  function clearReconnectTimer() {
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+  }
+
+  function resetReconnectBackoff() {
+    state.reconnectAttempt = 0;
+    clearReconnectTimer();
+  }
+
+  function scheduleReconnect(reason = "") {
+    if (state.connecting || state.isConnected) {
+      return;
+    }
+    if (state.reconnectTimer) {
+      return;
+    }
+    const attempt = Math.min(state.reconnectAttempt, 6);
+    const baseDelay = RECONNECT_BASE_DELAY_MS * 2 ** attempt;
+    const delay = Math.min(RECONNECT_MAX_DELAY_MS, baseDelay);
+    const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
+    const totalDelay = delay + jitter;
+    const seconds = Math.max(1, Math.round(totalDelay / 1000));
+    const prefix = reason ? `${reason}. ` : "";
+    setStatus(`${prefix}Reconnecting in ${seconds}s...`, "warn");
+    state.reconnectAttempt += 1;
+    state.reconnectTimer = setTimeout(() => {
+      state.reconnectTimer = null;
+      if (state.connecting || state.isConnected) {
+        return;
+      }
+      void connect();
+    }, totalDelay);
+  }
+
   async function sendAction(payload) {
     if (!ensureChannelOpen()) {
       return;
@@ -1696,6 +1738,7 @@
     if (state.connecting) {
       return;
     }
+    clearReconnectTimer();
     state.connecting = true;
     setStatus("Connecting...", "warn");
     setConnected(false);
@@ -1761,6 +1804,7 @@
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
+      scheduleReconnect("Disconnected");
     };
     signalingSocket.onerror = () => {
       if (signalingSocket !== state.signalingWebSocket) {
@@ -1773,6 +1817,7 @@
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
+      scheduleReconnect("Connection failed");
     };
     signalingSocket.onmessage = async (event) => {
       if (signalingSocket !== state.signalingWebSocket) {
@@ -1860,6 +1905,7 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        resetReconnectBackoff();
         clearOfferTimeout();
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
@@ -1879,6 +1925,7 @@
         setStatus("Disconnected", "bad");
         setConnected(false);
         setModeLocked(false);
+        scheduleReconnect("Disconnected");
       };
       state.controlChannel.onmessage = (event) => {
         void handleIncomingData(event.data);
