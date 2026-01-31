@@ -34,6 +34,7 @@
   ];
   const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
   const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+  let qtBridgeAttempts = 0;
 
   function utf8Encode(value) {
     if (textEncoder) {
@@ -226,6 +227,29 @@
     updateFullscreenToggleLabel();
     updateTopBar();
     startTopClock();
+    initQtBridge();
+  }
+
+  function initQtBridge() {
+    if (window.remdeskHost) {
+      return;
+    }
+    const hasQt = window.qt && window.qt.webChannelTransport;
+    if (!hasQt || typeof QWebChannel === "undefined") {
+      if (hasQt && qtBridgeAttempts < 20) {
+        qtBridgeAttempts += 1;
+        setTimeout(initQtBridge, 150);
+      }
+      return;
+    }
+    try {
+      new QWebChannel(window.qt.webChannelTransport, (channel) => {
+        window.remdeskHost =
+          channel.objects.remdeskHost || channel.objects.remdeskBridge || null;
+      });
+    } catch (error) {
+      console.warn("Failed to init Qt bridge", error);
+    }
   }
 
   function normalizeTopValue(value) {
@@ -481,6 +505,7 @@
     if (payload.autoConnect) {
       setTimeout(() => void connect(), 50);
     }
+    updateInteractionMode();
   }
 
   function setStatus(message, stateKey = "") {
@@ -1233,17 +1258,18 @@
   function applyRelativeMove(event) {
     const metrics = getVideoMetrics();
     if (!metrics) {
-      return;
+      return false;
     }
     const delta = getRelativeDelta(event);
     if (!delta) {
-      return;
+      return false;
     }
     if (!state.cursorInitialized) {
       updateCursorBounds();
     }
     setCursorFromDelta(delta.dx, delta.dy);
     scheduleMoveSend();
+    return true;
   }
 
   function setCursorFromDelta(deltaX, deltaY) {
@@ -1820,10 +1846,11 @@
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      if (state.cursorLocked) {
-        return;
-      }
-      if (state.softLock) {
+      if (state.cursorLocked || state.softLock) {
+        if (!applyRelativeMove(event)) {
+          setCursorFromAbsolute(event);
+          scheduleMoveSend();
+        }
         return;
       }
       setCursorFromAbsolute(event);
@@ -1933,6 +1960,9 @@
         return;
       }
       if (!state.cursorLocked && !state.softLock) {
+        return;
+      }
+      if (event.target && dom.screenFrame.contains(event.target)) {
         return;
       }
       applyRelativeMove(event);
@@ -2377,6 +2407,17 @@
   }
 
   function saveBase64File(base64, filename) {
+    if (
+      window.remdeskHost &&
+      typeof window.remdeskHost.saveBase64 === "function"
+    ) {
+      try {
+        window.remdeskHost.saveBase64(filename || "download", base64);
+        return;
+      } catch (error) {
+        console.warn("Qt bridge save failed, falling back to browser download.", error);
+      }
+    }
     const cleaned = base64.replace(/\s+/g, "");
     const binary = atob(cleaned);
     const bytes = new Uint8Array(binary.length);
