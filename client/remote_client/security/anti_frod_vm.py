@@ -17,6 +17,15 @@ class AntiFraudResult:
     indicators: tuple[str, ...]
 
 
+def _hidden_subprocess_kwargs() -> dict[str, object]:
+    if platform.system() != "Windows":
+        return {}
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0
+    return {"startupinfo": startup, "creationflags": subprocess.CREATE_NO_WINDOW}
+
+
 def _get_total_memory_gb() -> float | None:
     if platform.system() != "Windows":
         return None
@@ -47,6 +56,7 @@ def _wmic_query_value(alias: str, fields: Iterable[str]) -> dict[str, str]:
             ["wmic", alias, "get", ",".join(fields), "/value"],
             text=True,
             stderr=subprocess.DEVNULL,
+            **_hidden_subprocess_kwargs(),
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return {}
@@ -73,6 +83,7 @@ def _running_vm_tools() -> bool:
             ["tasklist", "/fo", "csv"],
             text=True,
             stderr=subprocess.DEVNULL,
+            **_hidden_subprocess_kwargs(),
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
