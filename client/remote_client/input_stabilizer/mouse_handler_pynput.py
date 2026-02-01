@@ -79,7 +79,7 @@ def move_mouse(
 
     if not force and _last_x is not None and _last_y is not None and threshold > 0:
         if abs(norm_x - _last_x) < threshold and abs(norm_y - _last_y) < threshold:
-            return True
+            return False
 
     if not _ensure_mouse():
         return False
