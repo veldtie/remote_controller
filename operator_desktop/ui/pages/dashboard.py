@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import sys
 import time
 from datetime import datetime
@@ -15,6 +16,8 @@ from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import load_icon, make_button
+
+logger = logging.getLogger(__name__)
 
 
 class ClientFetchWorker(QtCore.QThread):
@@ -637,7 +640,7 @@ class DashboardPage(QtWidgets.QWidget):
     def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
         """Обработка списка клиентов от API (исправленная версия)."""
         if not api_clients:
-            self.logger.warning("No clients fetched from API")
+            logger.warning("No clients fetched from API")
             self.clients = []
             self.refresh_view()
             return
@@ -650,11 +653,7 @@ class DashboardPage(QtWidgets.QWidget):
             self._set_server_online(True)
         self.refresh_view()
 
-        for client in self.clients:
-            if client.get("connected"):
-                self._ensure_session_open(client["id"])
-
-        self.logger.info("Fetched %s clients from API", len(api_clients))
+        logger.info("Fetched %s clients from API", len(api_clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
         self._render_current_clients()
@@ -662,11 +661,6 @@ class DashboardPage(QtWidgets.QWidget):
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
         self._client_fetch_worker = None
-
-    def _ensure_session_open(self, client_id: str) -> None:
-        if not client_id:
-            return
-        self.connect_requested.emit(client_id, False)
 
     def _set_server_online(self, online: bool) -> None:
         if self._server_online is online:

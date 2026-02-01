@@ -32,7 +32,6 @@
   const RECONNECT_JITTER_MS = 1000;
   const CONNECTION_READY_TIMEOUT_MS = 20000;
   const CONNECTION_DROP_GRACE_MS = 8000;
-  const PENDING_CLICK_TTL_MS = 5000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -146,7 +145,6 @@
     connectReadyTimer: null,
     hadConnection: false,
     connectionDropTimer: null,
-    pendingClick: null,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -2116,21 +2114,6 @@
         if (dom.storageDrawer.classList.contains("open")) {
           void requestRemoteList(state.remoteCurrentPath);
         }
-        if (state.pendingClick) {
-          const click = state.pendingClick;
-          state.pendingClick = null;
-          const isFresh = !click.ts || Date.now() - click.ts <= PENDING_CLICK_TTL_MS;
-          if (isFresh) {
-            void sendControl({
-              type: CONTROL_TYPES.mouseClick,
-              x: click.x,
-              y: click.y,
-              button: click.button,
-              source_width: click.source_width,
-              source_height: click.source_height
-            });
-          }
-        }
       };
       state.controlChannel.onclose = () => {
         setStatus("Disconnected", "bad");
@@ -2212,31 +2195,7 @@
         return;
       }
       if (!state.controlEnabled) {
-        if (dom.interactionToggle && !state.modeLocked) {
-          if (!state.cursorLocked && !state.softLock) {
-            setCursorFromAbsolute(event);
-          }
-          if (!state.cursorInitialized) {
-            updateCursorBounds();
-          }
-          const coords = getCursorPosition();
-          const metrics = getVideoMetrics();
-          const sourceWidth = metrics ? metrics.videoWidth : null;
-          const sourceHeight = metrics ? metrics.videoHeight : null;
-          state.pendingClick = coords
-            ? {
-                x: coords.x,
-                y: coords.y,
-                button: mapMouseButton(event.button),
-                source_width: sourceWidth || undefined,
-                source_height: sourceHeight || undefined,
-                ts: Date.now()
-              }
-            : null;
-          dom.interactionToggle.checked = true;
-          dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
-          setStatus("Switching to manage mode...", "warn");
-        }
+        setStatus("Switch to manage mode to control", "warn");
         return;
       }
       event.preventDefault();
