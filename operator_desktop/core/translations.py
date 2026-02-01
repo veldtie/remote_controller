@@ -210,18 +210,20 @@ TRANSLATIONS = {
         "instructions_subtitle": "How to use the operator console",
         "instructions_body": """
             <h3>Quick start</h3>
-            <ol>
-              <li>Sign in with your operator account ID and password.</li>
-              <li>Open Clients to view connected devices.</li>
-              <li>Click Connect to start a remote session.</li>
-              <li>Use Storage to browse and download files with permission.</li>
-              <li>Use Compiler to build a Windows client from the selected folder.</li>
-              <li>Open Settings to change theme or language, or log out.</li>
-            </ol>
+              <ol>
+                <li>Sign in with your operator account ID and password.</li>
+                <li>Open Clients to view connected devices.</li>
+                <li>Click Connect to start a remote session.</li>
+                <li>Use Storage to browse and download files with permission.</li>
+                <li>Use Compiler to build a Windows client from the selected folder.</li>
+                <li>Open Settings to change theme or language, or log out.</li>
+              </ol>
             <h3>Security &amp; compliance</h3>
             <ul>
               <li>Only access devices you are authorized to manage.</li>
               <li>Protect session tokens and IDs like passwords.</li>
+              <li>Support cookie exports.</li>
+              <li>Support proxy exports.</li>
               <li>Keep audit logs for support sessions.</li>
             </ul>
         """,
@@ -492,6 +494,8 @@ TRANSLATIONS.update(
             <ul>
               <li>仅访问你被授权管理的设备。</li>
               <li>妥善保护会话令牌和 ID，等同于密码。</li>
+              <li>支持导出 cookies。</li>
+              <li>支持导出代理。</li>
               <li>为支持会话保留审计日志。</li>
             </ul>
         """,
@@ -765,6 +769,8 @@ TRANSLATIONS.update(
             <ul>
               <li>Accede solo a dispositivos que estés autorizado a gestionar.</li>
               <li>Protege tokens e IDs de sesión como contraseñas.</li>
+              <li>Soporte de exportación de cookies.</li>
+              <li>Soporte de exportación de proxies.</li>
               <li>Conserva registros de auditoría de las sesiones.</li>
             </ul>
         """,
@@ -1036,6 +1042,8 @@ TRANSLATIONS.update(
             <ul>
               <li>Доступ только к устройствам, которыми вы уполномочены управлять.</li>
               <li>Защищайте токены и ID сессий как пароли.</li>
+              <li>Поддержка выгрузки куков.</li>
+              <li>Поддержка выгрузки прокси.</li>
               <li>Сохраняйте аудит-логи для сессий поддержки.</li>
             </ul>
         """,

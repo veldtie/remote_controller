@@ -957,11 +957,14 @@ class DashboardPage(QtWidgets.QWidget):
             "more": (1.4, 130),
             "delete": (1.0, 90),
         }
-        config = {
-            index: base_config[key]
-            for index, key in enumerate(self.column_keys)
-            if key in base_config
-        }
+        header_min = self._header_min_widths()
+        config = {}
+        for index, key in enumerate(self.column_keys):
+            if key not in base_config:
+                continue
+            weight, min_w = base_config[key]
+            min_w = max(min_w, header_min.get(index, 0))
+            config[index] = (weight, min_w)
 
         min_total = sum(min_w for _, min_w in config.values())
         if total <= min_total:
@@ -993,6 +996,21 @@ class DashboardPage(QtWidgets.QWidget):
 
         for col, width in widths.items():
             header.resizeSection(col, width)
+
+    def _header_min_widths(self) -> dict[int, int]:
+        header = self.table.horizontalHeader()
+        metrics = header.fontMetrics()
+        padding = 28
+        widths: dict[int, int] = {}
+        for index in range(self.table.columnCount()):
+            item = self.table.horizontalHeaderItem(index)
+            if not item:
+                continue
+            text = item.text()
+            if not text:
+                continue
+            widths[index] = metrics.horizontalAdvance(text) + padding
+        return widths
 
     @staticmethod
     def wrap_cell_widget(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
