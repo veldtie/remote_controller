@@ -2147,7 +2147,14 @@
     });
 
     dom.screenFrame.addEventListener("mousedown", (event) => {
-      if (!state.controlEnabled || !state.isConnected) {
+      if (!state.isConnected) {
+        return;
+      }
+      if (!state.controlEnabled) {
+        if (dom.interactionToggle && !state.modeLocked) {
+          dom.interactionToggle.checked = true;
+          dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+        }
         return;
       }
       event.preventDefault();
