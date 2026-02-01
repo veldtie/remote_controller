@@ -88,12 +88,25 @@ def _normalize_session_mode(mode: Any) -> str:
     return "manage"
 
 
+def _resolve_profile_bitrate(profile: str | None) -> int:
+    if not profile:
+        return VIDEO_MAX_BITRATE_BPS
+    name = str(profile).strip().lower()
+    if name == "reading":
+        return VIDEO_MAX_BITRATE_READING_BPS
+    return VIDEO_MAX_BITRATE_BPS
+
+
 SIGNALING_PING_INTERVAL = max(0.0, _read_env_float("RC_SIGNALING_PING_INTERVAL", 20.0))
 DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 30.0))
 RECONNECT_BASE_DELAY = max(0.5, _read_env_float("RC_RECONNECT_DELAY", 2.0))
 RECONNECT_MAX_DELAY = max(RECONNECT_BASE_DELAY, _read_env_float("RC_RECONNECT_MAX_DELAY", 30.0))
 VIDEO_MAX_BITRATE_BPS = _resolve_bitrate_bps(
-    os.getenv("RC_VIDEO_MAX_BITRATE"), 12_000_000
+    os.getenv("RC_VIDEO_MAX_BITRATE"), 20_000_000
+)
+VIDEO_MAX_BITRATE_READING_BPS = _resolve_bitrate_bps(
+    os.getenv("RC_VIDEO_MAX_BITRATE_READING"),
+    max(VIDEO_MAX_BITRATE_BPS, 26_000_000),
 )
 VIDEO_MAX_FPS = max(0, _read_env_int("RC_VIDEO_MAX_FPS", 0))
 DATA_CHUNK_SIZE = max(4096, _read_env_int("RC_DATA_CHUNK_SIZE", 48000))
@@ -195,6 +208,7 @@ class WebRTCClient:
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
         self._pending_offer: dict[str, Any] | None = None
         self._current_mode: str = "manage"
+        self._video_sender = None
 
     async def run_forever(self) -> None:
         """Reconnect in a loop, keeping the client available."""
@@ -220,9 +234,16 @@ class WebRTCClient:
                 {"type": "ping", "session_id": self._session_id, "role": "client"}
             )
 
-    async def _tune_video_sender(self, sender) -> None:
+    async def _tune_video_sender(
+        self,
+        sender,
+        bitrate_bps: int | None = None,
+        max_fps: int | None = None,
+    ) -> None:
         """Apply video sender constraints to improve bitrate/quality when possible."""
-        if sender is None or (VIDEO_MAX_BITRATE_BPS <= 0 and VIDEO_MAX_FPS <= 0):
+        target_bitrate = VIDEO_MAX_BITRATE_BPS if bitrate_bps is None else bitrate_bps
+        target_fps = VIDEO_MAX_FPS if max_fps is None else max_fps
+        if sender is None or (target_bitrate <= 0 and target_fps <= 0):
             return
         try:
             params = sender.getParameters()
@@ -233,14 +254,14 @@ class WebRTCClient:
         if not encodings:
             return
         encoding = encodings[0]
-        if VIDEO_MAX_BITRATE_BPS > 0:
+        if target_bitrate > 0:
             try:
-                encoding.maxBitrate = VIDEO_MAX_BITRATE_BPS
+                encoding.maxBitrate = target_bitrate
             except Exception:
                 pass
-        if VIDEO_MAX_FPS > 0:
+        if target_fps > 0:
             try:
-                encoding.maxFramerate = VIDEO_MAX_FPS
+                encoding.maxFramerate = target_fps
             except Exception:
                 pass
         try:
@@ -250,9 +271,16 @@ class WebRTCClient:
         except Exception as exc:
             logger.debug("Failed to set sender parameters: %s", exc)
 
+    async def _apply_sender_profile(self, profile: str | None) -> None:
+        if not self._video_sender:
+            return
+        bitrate = _resolve_profile_bitrate(profile)
+        await self._tune_video_sender(self._video_sender, bitrate_bps=bitrate)
+
     async def _run_once(self) -> None:
         """Run a single signaling and WebRTC session."""
         peer_connection = RTCPeerConnection(self._rtc_configuration)
+        self._video_sender = None
         connection_done = asyncio.Event()
         disconnect_task: asyncio.Task | None = None
         keepalive_task: asyncio.Task | None = None
@@ -402,7 +430,8 @@ class WebRTCClient:
                 if track.kind in offered_kinds:
                     sender = peer_connection.addTrack(track)
                     if track.kind == "video":
-                        await self._tune_video_sender(sender)
+                        self._video_sender = sender
+                        await self._tune_video_sender(sender, bitrate_bps=_resolve_profile_bitrate(None))
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)
@@ -668,6 +697,7 @@ class WebRTCClient:
                 session_actions.set_stream_profile(
                     profile, width_value, height_value, fps_value
                 )
+                await self._apply_sender_profile(profile)
             except ValueError as exc:
                 self._send_error(data_channel, "invalid_profile", str(exc))
             except Exception as exc:
