@@ -149,7 +149,10 @@
     textInputSupported: true,
     screenAspect: null,
     storageOnly: false,
-    remoteCursorVisible: true
+    remoteCursorVisible: true,
+    lastRenderSize: null,
+    lastFrameBounds: null,
+    metricsCache: null
   };
 
   const dom = {
@@ -657,6 +660,9 @@
       stopStatsMonitor();
       stopMovePump();
       setSoftLock(false);
+      state.lastRenderSize = null;
+      state.lastFrameBounds = null;
+      state.metricsCache = null;
     }
     updateAppLaunchAvailability();
     updateCookieAvailability();
@@ -765,6 +771,20 @@
   }
 
   function getVideoMetrics() {
+    if (state.metricsCache) {
+      const cached = state.metricsCache;
+      const currentWidth = dom.screenEl.videoWidth;
+      const currentHeight = dom.screenEl.videoHeight;
+      if (
+        currentWidth &&
+        currentHeight &&
+        (cached.videoWidth !== currentWidth || cached.videoHeight !== currentHeight)
+      ) {
+        state.metricsCache = null;
+      } else {
+        return cached;
+      }
+    }
     const rect = dom.screenFrame.getBoundingClientRect();
     const videoWidth = dom.screenEl.videoWidth || rect.width;
     const videoHeight = dom.screenEl.videoHeight || rect.height;
@@ -776,7 +796,7 @@
     const renderHeight = videoHeight * scale;
     const offsetX = (rect.width - renderWidth) / 2;
     const offsetY = (rect.height - renderHeight) / 2;
-    return {
+    const metrics = {
       rect,
       videoWidth,
       videoHeight,
@@ -785,20 +805,39 @@
       offsetX,
       offsetY
     };
+    state.metricsCache = metrics;
+    return metrics;
   }
 
   function updateScreenLayout() {
+    state.metricsCache = null;
+    const videoWidth = dom.screenEl.videoWidth;
+    const videoHeight = dom.screenEl.videoHeight;
+    if (videoWidth && videoHeight) {
+      const nextAspect = videoWidth / videoHeight;
+      if (!state.screenAspect || Math.abs(state.screenAspect - nextAspect) > 0.002) {
+        state.screenAspect = nextAspect;
+      }
+    }
     updateScreenFrameBounds();
     const metrics = getVideoMetrics();
     if (!metrics) {
       dom.screenEl.style.width = "100%";
       dom.screenEl.style.height = "100%";
+      state.lastRenderSize = null;
       return;
     }
-    dom.screenEl.style.width = `${Math.floor(metrics.renderWidth)}px`;
-    dom.screenEl.style.height = `${Math.floor(metrics.renderHeight)}px`;
+    const nextWidth = Math.floor(metrics.renderWidth);
+    const nextHeight = Math.floor(metrics.renderHeight);
+    const last = state.lastRenderSize;
+    const sizeChanged = !last || last.width !== nextWidth || last.height !== nextHeight;
+    if (sizeChanged) {
+      dom.screenEl.style.width = `${nextWidth}px`;
+      dom.screenEl.style.height = `${nextHeight}px`;
+      state.lastRenderSize = { width: nextWidth, height: nextHeight };
+      scheduleStreamHint();
+    }
     updateCursorOverlayPosition();
-    scheduleStreamHint();
   }
 
   function getWorkspaceBounds() {
@@ -827,12 +866,16 @@
       return;
     }
     if (document.fullscreenElement === dom.screenFrame) {
-      dom.screenFrame.style.left = "0px";
-      dom.screenFrame.style.top = "0px";
-      dom.screenFrame.style.width = "100%";
-      dom.screenFrame.style.height = "100%";
-      dom.screenFrame.style.right = "0px";
-      dom.screenFrame.style.bottom = "0px";
+      if (!state.lastFrameBounds || !state.lastFrameBounds.fullscreen) {
+        state.lastFrameBounds = { fullscreen: true };
+        state.metricsCache = null;
+        dom.screenFrame.style.left = "0px";
+        dom.screenFrame.style.top = "0px";
+        dom.screenFrame.style.width = "100%";
+        dom.screenFrame.style.height = "100%";
+        dom.screenFrame.style.right = "0px";
+        dom.screenFrame.style.bottom = "0px";
+      }
       return;
     }
     const { edgeGap, workspaceLeft, availableWidth, availableHeight } =
@@ -849,10 +892,30 @@
     }
     const left = workspaceLeft + (availableWidth - width) / 2;
     const top = edgeGap + (availableHeight - height) / 2;
-    dom.screenFrame.style.left = `${Math.round(left)}px`;
-    dom.screenFrame.style.top = `${Math.round(top)}px`;
-    dom.screenFrame.style.width = `${Math.round(width)}px`;
-    dom.screenFrame.style.height = `${Math.round(height)}px`;
+    const nextBounds = {
+      fullscreen: false,
+      left: Math.round(left),
+      top: Math.round(top),
+      width: Math.round(width),
+      height: Math.round(height)
+    };
+    const last = state.lastFrameBounds;
+    if (
+      last &&
+      !last.fullscreen &&
+      last.left === nextBounds.left &&
+      last.top === nextBounds.top &&
+      last.width === nextBounds.width &&
+      last.height === nextBounds.height
+    ) {
+      return;
+    }
+    state.lastFrameBounds = nextBounds;
+    state.metricsCache = null;
+    dom.screenFrame.style.left = `${nextBounds.left}px`;
+    dom.screenFrame.style.top = `${nextBounds.top}px`;
+    dom.screenFrame.style.width = `${nextBounds.width}px`;
+    dom.screenFrame.style.height = `${nextBounds.height}px`;
     dom.screenFrame.style.right = "auto";
     dom.screenFrame.style.bottom = "auto";
   }
@@ -1271,9 +1334,13 @@
       state.cursorY = metrics.videoHeight / 2;
       state.cursorInitialized = true;
     }
-    if (metrics.videoWidth && metrics.videoHeight) {
-      state.screenAspect = metrics.videoWidth / metrics.videoHeight;
-      updateScreenFrameBounds();
+    const videoWidth = dom.screenEl.videoWidth;
+    const videoHeight = dom.screenEl.videoHeight;
+    if (videoWidth && videoHeight) {
+      const nextAspect = videoWidth / videoHeight;
+      if (!state.screenAspect || Math.abs(state.screenAspect - nextAspect) > 0.002) {
+        state.screenAspect = nextAspect;
+      }
     }
     updateCursorOverlayPosition();
   }
@@ -1353,9 +1420,16 @@
     state.cursorLocked = document.pointerLockElement === dom.screenFrame;
     if (!state.cursorLocked) {
       updateCursorBounds();
+      if (state.softLock) {
+        setSoftLock(false);
+      }
     }
     updateCursorLockState();
     updateCursorOverlayVisibility();
+  }
+
+  function shouldUsePointerLock() {
+    return !document.body.classList.contains("desktop-mode");
   }
 
   function updateCursorLockState() {
@@ -2188,6 +2262,9 @@
       }
       state.lastLocalX = null;
       state.lastLocalY = null;
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     dom.screenFrame.addEventListener("mousedown", (event) => {
@@ -2205,11 +2282,21 @@
       if (!state.cursorLocked && !state.softLock) {
         setCursorFromAbsolute(event);
       }
-      setSoftLock(true);
+      const allowPointerLock = shouldUsePointerLock();
+      if (allowPointerLock) {
+        setSoftLock(true);
+      } else {
+        if (state.cursorLocked) {
+          releasePointerLock();
+        }
+        if (state.softLock) {
+          setSoftLock(false);
+        }
+      }
       if (!state.cursorInitialized) {
         updateCursorBounds();
       }
-      if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
+      if (allowPointerLock && !state.cursorLocked && dom.screenFrame.requestPointerLock) {
         dom.screenFrame.requestPointerLock();
       }
       let coords = null;
@@ -2228,6 +2315,15 @@
         source_width: sourceWidth || undefined,
         source_height: sourceHeight || undefined
       });
+    });
+
+    dom.screenFrame.addEventListener("mouseup", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     dom.screenFrame.addEventListener(
@@ -2290,6 +2386,15 @@
         return;
       }
       applyRelativeMove(event);
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     window.addEventListener("keydown", (event) => {
@@ -2922,6 +3027,15 @@
     dom.interactionToggle.addEventListener("change", handleModeToggle);
     window.addEventListener("resize", updateScreenFrameBounds);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
+    document.addEventListener("pointerlockerror", () => {
+      state.cursorLocked = false;
+      if (state.softLock) {
+        setSoftLock(false);
+      } else {
+        updateCursorLockState();
+      }
+      updateCursorOverlayVisibility();
+    });
     document.addEventListener("fullscreenchange", () => {
       updateFullscreenToggleLabel();
       updateScreenLayout();
