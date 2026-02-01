@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import secrets
+from pathlib import Path
 from typing import Any
 
 
@@ -26,6 +27,20 @@ TURN_PORT = int(os.getenv("RC_TURN_PORT", "3478"))
 TURN_USER = os.getenv("RC_TURN_USER", "").strip()
 TURN_PASSWORD = os.getenv("RC_TURN_PASSWORD", "").strip()
 INCLUDE_PUBLIC_STUN = os.getenv("RC_INCLUDE_PUBLIC_STUN", "1").lower() in {"1", "true", "yes", "on"}
+
+
+def _default_error_log_file() -> str:
+    if os.name != "nt" and Path("/data").exists():
+        return "/data/logs/signaling-error.log"
+    return "logs/signaling-error.log"
+
+
+def _resolve_error_log_file() -> str:
+    value = os.getenv("RC_ERROR_LOG_FILE", "").strip()
+    return value or _default_error_log_file()
+
+
+ERROR_LOG_FILE = _resolve_error_log_file()
 
 DEVICE_STATUS_ACTIVE = "active"
 DEVICE_STATUS_INACTIVE = "inactive"
