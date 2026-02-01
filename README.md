@@ -103,6 +103,9 @@ build_windows_silent.bat
 - `RC_SESSION_IDLE_TIMEOUT`, `RC_SESSION_CLEANUP_INTERVAL` — idle‑таймауты.
 - `RC_TURN_HOST`, `RC_TURN_PORT`, `RC_TURN_USER`, `RC_TURN_PASSWORD` — TURN.
 - `RC_INCLUDE_PUBLIC_STUN` — добавлять публичные STUN.
+- `RC_ERROR_LOG_FILE` — файл для логов ошибок (по умолчанию `/data/logs/signaling-error.log` или `logs/signaling-error.log`).
+- `RC_ERROR_LOG_LEVEL` — минимальный уровень для файла (`WARNING` по умолчанию).
+- `RC_ERROR_LOG_MAX_BYTES`, `RC_ERROR_LOG_BACKUP_COUNT` — параметры ротации файла ошибок.
 
 ## E2EE
 

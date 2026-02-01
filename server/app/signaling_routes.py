@@ -1,7 +1,9 @@
 import secrets
+from pathlib import Path
 
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 
 import signaling_config as config
 import signaling_db
@@ -39,6 +41,17 @@ async def api_health(request: Request) -> dict[str, object]:
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")
     return {"ok": True}
+
+
+@router.get("/api/logs/error")
+async def download_error_log(request: Request) -> FileResponse:
+    _require_api_token(request)
+    log_path = Path(config.ERROR_LOG_FILE)
+    if not log_path.is_absolute():
+        log_path = (Path.cwd() / log_path).resolve()
+    if not log_path.exists() or not log_path.is_file():
+        raise HTTPException(status_code=404, detail="Log file not found")
+    return FileResponse(log_path, media_type="text/plain", filename=log_path.name)
 
 
 class RemoteClientUpdate(BaseModel):

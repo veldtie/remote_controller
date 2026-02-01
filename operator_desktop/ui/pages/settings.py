@@ -31,6 +31,11 @@ class SettingsPage(QtWidgets.QWidget):
         self.data_button.clicked.connect(self.clear_data)
         self.data_status = QtWidgets.QLabel()
         self.data_status.setObjectName("Muted")
+        self.error_log_button = make_button("", "island")
+        self.error_log_button.clicked.connect(self.download_error_log)
+        self.error_log_status = QtWidgets.QLabel()
+        self.error_log_status.setObjectName("ProfileStatus")
+        self.error_log_status.setProperty("status", "idle")
 
         header = QtWidgets.QHBoxLayout()
         header_left = QtWidgets.QVBoxLayout()
@@ -145,6 +150,14 @@ class SettingsPage(QtWidgets.QWidget):
             self.data_status,
             alignment=QtCore.Qt.AlignmentFlag.AlignRight,
         )
+        actions_buttons.addWidget(
+            self.error_log_button,
+            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        )
+        actions_buttons.addWidget(
+            self.error_log_status,
+            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        )
         actions_layout.addLayout(actions_buttons)
         content.addLayout(actions_layout)
 
@@ -189,6 +202,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.name_input.setText(self._current_display_name())
         self.password_input.clear()
         self._sync_profile_state()
+        self._sync_moderator_controls()
 
     def _current_display_name(self) -> str:
         display_name = str(self.settings.get("operator_name", "") or "").strip()
@@ -206,6 +220,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.role_combo.blockSignals(True)
         self.role_combo.setCurrentIndex(role_index)
         self.role_combo.blockSignals(False)
+        self._sync_moderator_controls()
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("settings_title"))
@@ -224,6 +239,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.password_label.setText(self.i18n.t("settings_password"))
         self.password_input.setPlaceholderText(self.i18n.t("settings_password_placeholder"))
         self.save_profile_button.setText(self.i18n.t("settings_save"))
+        self.error_log_button.setText(self.i18n.t("settings_error_log_download"))
         self.about_label.setText(self.i18n.t("settings_about"))
         self.about_body.setText(self.i18n.t("settings_about_body"))
         self.about_version.setText(
@@ -231,12 +247,19 @@ class SettingsPage(QtWidgets.QWidget):
         )
         self.data_button.setText(self.i18n.t("settings_clear"))
         self._sync_profile_state()
+        self._sync_moderator_controls()
 
     def _set_profile_status(self, message: str, status: str = "idle") -> None:
         self.profile_status.setText(message)
         self.profile_status.setProperty("status", status)
         self.profile_status.style().unpolish(self.profile_status)
         self.profile_status.style().polish(self.profile_status)
+
+    def _set_error_log_status(self, message: str, status: str = "idle") -> None:
+        self.error_log_status.setText(message)
+        self.error_log_status.setProperty("status", status)
+        self.error_log_status.style().unpolish(self.error_log_status)
+        self.error_log_status.style().polish(self.error_log_status)
 
     def _sync_profile_state(self) -> None:
         account_id = str(self.settings.get("account_id", "") or "").strip()
@@ -256,6 +279,19 @@ class SettingsPage(QtWidgets.QWidget):
         if self.profile_status.property("status") == "idle":
             self._set_profile_status("", "idle")
 
+    def _sync_moderator_controls(self) -> None:
+        role = str(self.settings.get("role", "operator") or "operator")
+        is_moderator = role == "moderator"
+        self.error_log_button.setVisible(is_moderator)
+        self.error_log_status.setVisible(is_moderator)
+        if not is_moderator:
+            return
+        account_id = str(self.settings.get("account_id", "") or "").strip()
+        enabled = bool(account_id) and self.api is not None
+        self.error_log_button.setEnabled(enabled)
+        if not enabled and self.error_log_status.text():
+            self._set_error_log_status("", "idle")
+
     def emit_theme(self) -> None:
         if self.theme_dark.isChecked():
             self.theme_changed.emit("dark")
@@ -273,6 +309,7 @@ class SettingsPage(QtWidgets.QWidget):
             self.settings.set("role", role)
             self.settings.save()
             self.role_changed.emit(role)
+            self._sync_moderator_controls()
 
     def save_profile(self) -> None:
         account_id = str(self.settings.get("account_id", "") or "").strip()
@@ -337,3 +374,28 @@ class SettingsPage(QtWidgets.QWidget):
         self.settings.clear_user_data()
         self.data_status.setText(self.i18n.t("settings_clear_done"))
         self.load_state()
+
+    def download_error_log(self) -> None:
+        if self.api is None:
+            self._set_error_log_status(self.i18n.t("settings_error_log_unavailable"), "error")
+            return
+        account_id = str(self.settings.get("account_id", "") or "").strip()
+        if not account_id:
+            self._set_error_log_status(self.i18n.t("settings_error_log_signin"), "error")
+            return
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            self.i18n.t("settings_error_log_download"),
+            "signaling-error.log",
+            "Log files (*.log);;Text files (*.txt);;All files (*.*)",
+        )
+        if not file_path:
+            return
+        try:
+            payload = self.api.download_error_log()
+            with open(file_path, "wb") as handle:
+                handle.write(payload)
+        except Exception:
+            self._set_error_log_status(self.i18n.t("settings_error_log_failed"), "error")
+            return
+        self._set_error_log_status(self.i18n.t("settings_error_log_saved"), "success")

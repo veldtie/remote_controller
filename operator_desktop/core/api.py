@@ -47,6 +47,16 @@ class RemoteControllerApi:
     def ping(self) -> None:
         self._request("GET", "/api/health")
 
+    def download_error_log(self) -> bytes:
+        url = f"{self._base_url}/api/logs/error"
+        response = requests.get(
+            url,
+            headers=self._headers(),
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        return response.content
+
     def authenticate_operator(self, account_id: str, password: str) -> dict[str, Any]:
         payload = self._request(
             "POST",
