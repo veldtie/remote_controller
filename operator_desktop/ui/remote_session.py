@@ -374,17 +374,9 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         local_url = self._resolve_local_operator_url()
         if local_url is None:
             return
-        if self._should_use_local_bundle(remote_url):
-            # Prefer local bundle when available to avoid server static mismatches.
-            self._primary_url = local_url
-            self._fallback_url = remote_url
-
-    @staticmethod
-    def _should_use_local_bundle(remote_url: QtCore.QUrl) -> bool:
-        if remote_url.isLocalFile():
-            return True
-        host = (remote_url.host() or "").strip().lower()
-        return host in {"localhost", "127.0.0.1", "::1"}
+        # Prefer local bundle when available to avoid server static mismatches.
+        self._primary_url = local_url
+        self._fallback_url = remote_url
 
     def _resolve_local_operator_url(self) -> QtCore.QUrl | None:
         try:
