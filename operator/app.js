@@ -26,6 +26,10 @@
   const RTT_UPGRADE = 180;
   const PROFILE_HEIGHT_DOWN_SCALE = 0.92;
   const PROFILE_HEIGHT_UP_SCALE = 1.15;
+  const SCREEN_LAYOUT_DEBOUNCE_MS = 120;
+  const ASPECT_CHANGE_THRESHOLD = 0.02;
+  const ASPECT_CHANGE_SOFT_THRESHOLD = 0.006;
+  const ASPECT_UPDATE_COOLDOWN_MS = 1200;
   const SIGNALING_PING_INTERVAL_MS = 20000;
   const RECONNECT_BASE_DELAY_MS = 2000;
   const RECONNECT_MAX_DELAY_MS = 20000;
@@ -148,11 +152,13 @@
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
+    lastAspectUpdateAt: 0,
     storageOnly: false,
     remoteCursorVisible: true,
     lastRenderSize: null,
     lastFrameBounds: null,
-    metricsCache: null
+    metricsCache: null,
+    layoutTimer: null
   };
 
   const dom = {
@@ -809,15 +815,50 @@
     return metrics;
   }
 
+  function updateScreenAspect(nextAspect) {
+    if (!nextAspect || !Number.isFinite(nextAspect)) {
+      return;
+    }
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (!state.screenAspect) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+      return;
+    }
+    const diff = Math.abs(state.screenAspect - nextAspect);
+    const ratio = diff / state.screenAspect;
+    if (ratio >= ASPECT_CHANGE_THRESHOLD) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+      return;
+    }
+    if (now - state.lastAspectUpdateAt >= ASPECT_UPDATE_COOLDOWN_MS && ratio >= ASPECT_CHANGE_SOFT_THRESHOLD) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+    }
+  }
+
+  function scheduleScreenLayout(urgent = false) {
+    if (state.layoutTimer) {
+      if (!urgent) {
+        return;
+      }
+      clearTimeout(state.layoutTimer);
+      state.layoutTimer = null;
+    }
+    const delay = urgent ? 0 : SCREEN_LAYOUT_DEBOUNCE_MS;
+    state.layoutTimer = setTimeout(() => {
+      state.layoutTimer = null;
+      updateScreenLayout();
+    }, delay);
+  }
+
   function updateScreenLayout() {
     state.metricsCache = null;
     const videoWidth = dom.screenEl.videoWidth;
     const videoHeight = dom.screenEl.videoHeight;
     if (videoWidth && videoHeight) {
-      const nextAspect = videoWidth / videoHeight;
-      if (!state.screenAspect || Math.abs(state.screenAspect - nextAspect) > 0.002) {
-        state.screenAspect = nextAspect;
-      }
+      updateScreenAspect(videoWidth / videoHeight);
     }
     updateScreenFrameBounds();
     const metrics = getVideoMetrics();
@@ -1337,10 +1378,7 @@
     const videoWidth = dom.screenEl.videoWidth;
     const videoHeight = dom.screenEl.videoHeight;
     if (videoWidth && videoHeight) {
-      const nextAspect = videoWidth / videoHeight;
-      if (!state.screenAspect || Math.abs(state.screenAspect - nextAspect) > 0.002) {
-        state.screenAspect = nextAspect;
-      }
+      updateScreenAspect(videoWidth / videoHeight);
     }
     updateCursorOverlayPosition();
   }
@@ -3025,7 +3063,7 @@
 
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
-    window.addEventListener("resize", updateScreenFrameBounds);
+    window.addEventListener("resize", () => scheduleScreenLayout());
     document.addEventListener("pointerlockchange", handlePointerLockChange);
     document.addEventListener("pointerlockerror", () => {
       state.cursorLocked = false;
@@ -3041,11 +3079,11 @@
       updateScreenLayout();
     });
     dom.screenEl.addEventListener("loadedmetadata", () => {
-      updateScreenLayout();
+      scheduleScreenLayout(true);
       updateCursorBounds();
     });
     dom.screenEl.addEventListener("resize", () => {
-      updateScreenLayout();
+      scheduleScreenLayout();
       updateCursorBounds();
     });
     if (dom.streamProfile) {
@@ -3135,10 +3173,10 @@
     });
 
     window.addEventListener("resize", updateDrawerOffset);
-    window.addEventListener("resize", updateScreenLayout);
+    window.addEventListener("resize", () => scheduleScreenLayout());
     if (typeof ResizeObserver !== "undefined") {
       const resizeObserver = new ResizeObserver(() => {
-        updateScreenLayout();
+        scheduleScreenLayout();
       });
       resizeObserver.observe(dom.screenFrame);
     }
