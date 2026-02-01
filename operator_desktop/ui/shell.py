@@ -442,7 +442,7 @@ class MainShell(QtWidgets.QWidget):
                 flags=flags or None,
                 auto_connect=True,
                 open_storage=open_storage,
-                manage_mode=False,
+                manage_mode=True,
                 storage_only=False,
             )
             window.raise_()
@@ -454,7 +454,7 @@ class MainShell(QtWidgets.QWidget):
             client_id,
             token,
             open_storage=open_storage,
-            mode="view",
+            mode="manage",
             storage_only=False,
             region=region or None,
             country=country or None,
@@ -476,7 +476,7 @@ class MainShell(QtWidgets.QWidget):
             base_url,
             token,
             open_storage,
-            manage_mode=False,
+            manage_mode=True,
             storage_only=False,
             show_window=True,
             region=region or None,
