@@ -78,6 +78,15 @@ def _parse_bool(value: Any, default: bool = True) -> bool:
     return default
 
 
+def _normalize_session_mode(mode: Any) -> str:
+    if not mode:
+        return "manage"
+    value = str(mode).strip().lower()
+    if value in {"view", "viewer", "readonly"}:
+        return "view"
+    return "manage"
+
+
 SIGNALING_PING_INTERVAL = max(0.0, _read_env_float("RC_SIGNALING_PING_INTERVAL", 20.0))
 DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 10.0))
 RECONNECT_BASE_DELAY = max(0.5, _read_env_float("RC_RECONNECT_DELAY", 2.0))
@@ -182,6 +191,7 @@ class WebRTCClient:
         self._e2ee = e2ee
         self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
         self._pending_offer: dict[str, Any] | None = None
+        self._current_mode: str = "manage"
 
     async def run_forever(self) -> None:
         """Reconnect in a loop, keeping the client available."""
@@ -357,7 +367,8 @@ class WebRTCClient:
             if offer_payload is None:
                 return
             operator_id_holder["value"] = offer_payload.get("operator_id")
-            session_mode = offer_payload.get("mode")
+            session_mode = _normalize_session_mode(offer_payload.get("mode"))
+            self._current_mode = session_mode
             resources = self._session_factory(session_mode)
             if isinstance(resources, tuple):
                 control_handler, media_tracks = resources
@@ -452,8 +463,8 @@ class WebRTCClient:
             message_type = message.get("type")
             if message_type == "offer":
                 if peer_connection.connectionState in {"connecting", "connected"}:
-                    offer_mode = str(message.get("mode") or "").lower()
-                    if offer_mode == "view":
+                    offer_mode = _normalize_session_mode(message.get("mode"))
+                    if self._current_mode == "manage" and offer_mode == "view":
                         continue
                 self._pending_offer = message
                 return
