@@ -681,8 +681,20 @@
     }
   }
 
+  function syncInteractionToggle() {
+    if (!dom.interactionToggle) {
+      return;
+    }
+    const wrapper = dom.interactionToggle.closest(".switch");
+    if (!wrapper) {
+      return;
+    }
+    wrapper.classList.toggle("is-on", dom.interactionToggle.checked);
+  }
+
   function updateInteractionMode() {
     state.controlEnabled = dom.interactionToggle.checked;
+    syncInteractionToggle();
     const label = state.controlEnabled ? "Managing" : "Viewing";
     dom.interactionState.textContent = label;
     dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";
