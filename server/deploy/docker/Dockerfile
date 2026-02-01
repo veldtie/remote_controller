@@ -8,8 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY app/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app/signaling_server.py ./
-COPY app/healthcheck.py ./
+COPY app/*.py ./
 
 EXPOSE 8000
 
