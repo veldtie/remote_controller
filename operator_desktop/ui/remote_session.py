@@ -149,9 +149,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._window_controls = self._build_window_controls()
-        layout.addWidget(self._window_controls, 0)
-        self._refresh_top_info()
+        self._window_controls = None
 
         self.view = QWebEngineView()
         if QWebEngineProfile is not None:
