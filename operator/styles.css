@@ -14,12 +14,13 @@
   --bad: #e06b6b;
   --shadow: 0 22px 60px rgba(4, 8, 14, 0.6);
   --edge-gap: 16px;
-  --topbar-height: 56px;
-  --panel-width: 320px;
-  --panel-gap: 14px;
+  --topbar-height: 0px;
+  --screen-offset-top: 28px;
+  --panel-width: 300px;
+  --panel-gap: 12px;
   --manage-panel-height: 380px;
   --view-panel-height: 200px;
-  --workspace-top: calc(var(--edge-gap) + var(--topbar-height));
+  --workspace-top: calc(var(--edge-gap) + var(--topbar-height) + var(--screen-offset-top));
   --workspace-left: calc(var(--edge-gap) + var(--panel-width) + var(--panel-gap));
   --workspace-bottom: 0px;
   --radius-xl: 22px;
@@ -356,7 +357,7 @@ body.view-mode #screenFrame {
   width: var(--panel-width);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   z-index: 9;
   overflow: auto;
   padding-right: 2px;
@@ -421,7 +422,7 @@ body.view-mode #screenFrame {
 .panel-card,
 #interactionMenu,
 #hud {
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
