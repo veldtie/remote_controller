@@ -1,33 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
-project_root = Path(__file__).resolve().parent
-entrypoint = project_root / "client.py"
-
-# Add custom config files to datas if needed, for example:
-# datas += [(str(project_root / "remote_client" / "rc_server.json"), "remote_client")]
-
-datas = []
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
-hiddenimports = [
-    "cryptography",
-    "win32crypt",
-    "pynput",
-    "pynput.mouse",
-    "pynput.keyboard",
-]
-
-for package in ("av", "aiortc", "sounddevice", "mss", "numpy", "pynput"):
-    tmp_datas, tmp_binaries, tmp_hidden = collect_all(package)
-    datas += tmp_datas
-    binaries += tmp_binaries
-    hiddenimports += tmp_hidden
+hiddenimports = ['cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
+tmp_ret = collect_all('pynput')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    [str(entrypoint)],
-    pathex=[str(project_root)],
+    ['C:\\Users\\abdul\\PycharmProjects\\remote_controller\\client\\client.py'],
+    pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -46,7 +29,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="RemoteControllerClient",
+    name='RemoteControllerClient',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

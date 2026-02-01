@@ -373,7 +373,10 @@
     return [primary, fallback];
   }
 
-  async function loadIceConfig(apiBase, authToken) {
+  async function loadIceConfig(apiBase, authToken, preset) {
+    if (Array.isArray(preset)) {
+      return { iceServers: preset };
+    }
     if (window.location.protocol === "file:") {
       return { iceServers: DEFAULT_ICE_SERVERS };
     }
@@ -397,7 +400,7 @@
           throw new Error("Failed to load ICE config");
         }
         const payload = await response.json();
-        if (payload && Array.isArray(payload.iceServers) && payload.iceServers.length) {
+        if (payload && Array.isArray(payload.iceServers)) {
           return { iceServers: payload.iceServers };
         }
       } catch (error) {
@@ -508,9 +511,10 @@
       return;
     }
 
+    const presetIce = state.iceServersPresetSet ? state.iceServersPreset : null;
     state.rtcConfig = options.disableIce
       ? { iceServers: [] }
-      : await loadIceConfig(apiBase, authToken);
+      : await loadIceConfig(apiBase, authToken, presetIce);
     const wsUrls = buildSignalingUrls(apiBase, sessionId, state.operatorId, authToken);
     const wsUrl = options.wsOverride || wsUrls[0];
     const fallbackWsUrl = options.wsOverride ? null : wsUrls[1] || null;

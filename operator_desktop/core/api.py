@@ -57,6 +57,13 @@ class RemoteControllerApi:
         response.raise_for_status()
         return response.content
 
+    def fetch_ice_servers(self) -> list[dict[str, Any]]:
+        payload = self._request("GET", "/ice-config") or {}
+        servers = payload.get("iceServers", [])
+        if isinstance(servers, list):
+            return servers
+        return []
+
     def authenticate_operator(self, account_id: str, password: str) -> dict[str, Any]:
         payload = self._request(
             "POST",

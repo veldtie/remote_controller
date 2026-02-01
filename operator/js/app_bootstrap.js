@@ -210,6 +210,15 @@
     if (payload.flags || payload.countries) {
       state.flagCodes = remdesk.parseFlagList(payload.flags || payload.countries);
     }
+    if (Object.prototype.hasOwnProperty.call(payload, "iceServers")) {
+      if (Array.isArray(payload.iceServers)) {
+        state.iceServersPreset = payload.iceServers;
+        state.iceServersPresetSet = true;
+      } else {
+        state.iceServersPreset = null;
+        state.iceServersPresetSet = false;
+      }
+    }
     remdesk.updateTopBar();
     if (payload.stream && dom.streamProfile) {
       remdesk.applyStreamProfile(payload.stream, false);

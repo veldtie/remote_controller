@@ -177,6 +177,8 @@
     netTargetFps: null,
     netLastAdaptAt: 0,
     networkHint: { height: null, fps: null },
+    iceServersPreset: null,
+    iceServersPresetSet: false,
     iceErrorCount: 0,
     iceFallbackTried: false,
     signalingPingTimer: null,

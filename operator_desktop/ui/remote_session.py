@@ -102,6 +102,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         token: str | None,
         open_storage: bool = False,
         manage_mode: bool = True,
+        ice_servers: list[dict[str, object]] | None = None,
         storage_only: bool = False,
         show_window: bool = True,
         region: str | None = None,
@@ -122,6 +123,9 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.flags = list(flags or [])
         self._open_storage_on_load = open_storage
         self._manage_mode = manage_mode
+        self._ice_servers: list[dict[str, object]] | None = (
+            list(ice_servers) if ice_servers is not None else None
+        )
         self._storage_only = storage_only
         self._page_ready = False
         self._session_chip: QtWidgets.QLabel | None = None
@@ -241,6 +245,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         auto_connect: bool = True,
         open_storage: bool = False,
         manage_mode: bool | None = None,
+        ice_servers: list[dict[str, object]] | None = None,
         storage_only: bool | None = None,
     ) -> None:
         if server_url is not None:
@@ -251,6 +256,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.session_id = session_id
         if manage_mode is not None:
             self._manage_mode = manage_mode
+        if ice_servers is not None:
+            self._ice_servers = list(ice_servers)
         if storage_only is not None:
             self._storage_only = storage_only
         if region is not None:
@@ -626,6 +633,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
                 "country": self.country,
                 "country_code": self.country_code,
                 "flags": self.flags,
+                "iceServers": self._ice_servers,
                 "autoConnect": auto_connect,
                 "openStorage": open_storage,
                 "desktop": True,

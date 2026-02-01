@@ -38,6 +38,7 @@ class MainShell(QtWidgets.QWidget):
         self._session_windows: Dict[str, RemoteSessionDialog] = {}
         self._storage_windows: Dict[str, RemoteSessionDialog] = {}
         self._utility_sessions: Dict[str, RemoteSessionDialog] = {}
+        self._ice_servers_cache: list[dict[str, object]] | None = None
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -403,6 +404,18 @@ class MainShell(QtWidgets.QWidget):
             token = DEFAULT_API_TOKEN
         return token
 
+    def _resolve_ice_servers(self) -> list[dict[str, object]] | None:
+        if self._ice_servers_cache is not None:
+            return self._ice_servers_cache
+        if not self.api:
+            return None
+        try:
+            servers = self.api.fetch_ice_servers()
+        except Exception:
+            servers = None
+        self._ice_servers_cache = servers
+        return servers
+
     def _open_session(self, client_id: str, open_storage: bool = False) -> bool:
         if not client_id:
             QtWidgets.QMessageBox.warning(
@@ -414,6 +427,7 @@ class MainShell(QtWidgets.QWidget):
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
+        ice_servers = self._resolve_ice_servers()
         region = ""
         country = ""
         country_code = ""
@@ -443,6 +457,7 @@ class MainShell(QtWidgets.QWidget):
                 auto_connect=True,
                 open_storage=open_storage,
                 manage_mode=False,
+                ice_servers=ice_servers,
                 storage_only=False,
             )
             window.raise_()
@@ -477,6 +492,7 @@ class MainShell(QtWidgets.QWidget):
             token,
             open_storage,
             manage_mode=False,
+            ice_servers=ice_servers,
             storage_only=False,
             show_window=True,
             region=region or None,
@@ -500,6 +516,7 @@ class MainShell(QtWidgets.QWidget):
             return False
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
+        ice_servers = self._resolve_ice_servers()
         if client_id in self._storage_windows:
             window = self._storage_windows[client_id]
             window.apply_context(
@@ -509,6 +526,7 @@ class MainShell(QtWidgets.QWidget):
                 auto_connect=True,
                 open_storage=True,
                 manage_mode=False,
+                ice_servers=ice_servers,
                 storage_only=True,
             )
             window.raise_()
@@ -539,6 +557,7 @@ class MainShell(QtWidgets.QWidget):
             token,
             True,
             manage_mode=False,
+            ice_servers=ice_servers,
             storage_only=True,
             show_window=True,
             parent=self,
@@ -558,6 +577,7 @@ class MainShell(QtWidgets.QWidget):
             return None
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
+        ice_servers = self._resolve_ice_servers()
         if client_id in self._utility_sessions:
             window = self._utility_sessions[client_id]
             window.apply_context(
@@ -567,6 +587,7 @@ class MainShell(QtWidgets.QWidget):
                 auto_connect=True,
                 open_storage=False,
                 manage_mode=False,
+                ice_servers=ice_servers,
                 storage_only=False,
             )
             return window
@@ -595,6 +616,7 @@ class MainShell(QtWidgets.QWidget):
             token,
             False,
             manage_mode=False,
+            ice_servers=ice_servers,
             storage_only=False,
             show_window=False,
             parent=self,
