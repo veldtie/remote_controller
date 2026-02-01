@@ -119,7 +119,7 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 )
 
     controller = InputController()
-    screen_track = ScreenTrack(draw_cursor=False)
+    screen_track = ScreenTrack(draw_cursor=True)
     control_handler = _build_control_handler(controller)
     media_tracks: list[Any] = [screen_track, AudioTrack()]
 
