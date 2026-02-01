@@ -31,6 +31,8 @@
   const RECONNECT_MAX_DELAY_MS = 20000;
   const RECONNECT_JITTER_MS = 1000;
   const CONNECTION_READY_TIMEOUT_MS = 20000;
+  const CONNECTION_DROP_GRACE_MS = 8000;
+  const PENDING_CLICK_TTL_MS = 5000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -143,6 +145,8 @@
     reconnectAttempt: 0,
     connectReadyTimer: null,
     hadConnection: false,
+    connectionDropTimer: null,
+    pendingClick: null,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -1610,6 +1614,43 @@
     }
   }
 
+  function clearConnectionDropTimer() {
+    if (state.connectionDropTimer) {
+      clearTimeout(state.connectionDropTimer);
+      state.connectionDropTimer = null;
+    }
+  }
+
+  function scheduleConnectionDrop(reason) {
+    if (state.connectionDropTimer) {
+      return;
+    }
+    state.connectionDropTimer = setTimeout(() => {
+      state.connectionDropTimer = null;
+      const pc = state.peerConnection;
+      const channel = state.controlChannel;
+      if (pc) {
+        const connectionState = pc.connectionState;
+        const iceState = pc.iceConnectionState;
+        if (connectionState === "connected" || connectionState === "connecting") {
+          return;
+        }
+        if (iceState === "connected" || iceState === "completed") {
+          return;
+        }
+      }
+      if (channel && channel.readyState === "open") {
+        return;
+      }
+      setStatus("Disconnected", "bad");
+      setConnected(false);
+      setModeLocked(false);
+      state.connecting = false;
+      cleanupConnection();
+      scheduleReconnect(reason);
+    }, CONNECTION_DROP_GRACE_MS);
+  }
+
   function scheduleConnectReadyTimeout(signalingSocket) {
     clearConnectReadyTimeout();
     state.connectReadyTimer = setTimeout(() => {
@@ -1803,6 +1844,7 @@
     clearConnectTimeout();
     clearOfferTimeout();
     clearConnectReadyTimeout();
+    clearConnectionDropTimer();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1996,6 +2038,7 @@
         }
         const connectionState = state.peerConnection.connectionState;
         if (connectionState === "failed") {
+          clearConnectionDropTimer();
           setStatus("Connection failed", "bad");
           setConnected(false);
           setModeLocked(false);
@@ -2003,12 +2046,14 @@
           cleanupConnection();
           scheduleReconnect("Connection failed");
         } else if (connectionState === "disconnected") {
-          setStatus("Disconnected", "bad");
-          setConnected(false);
-          setModeLocked(false);
-          state.connecting = false;
-          cleanupConnection();
-          scheduleReconnect("Disconnected");
+          setStatus("Connection unstable, waiting...", "warn");
+          scheduleConnectionDrop("Disconnected");
+        } else if (connectionState === "connected") {
+          clearConnectionDropTimer();
+          if (state.controlChannel && state.controlChannel.readyState === "open") {
+            const label = state.e2eeContext ? "Connected (E2EE)" : "Connected";
+            setStatus(label, "ok");
+          }
         }
       };
       if (signalingSocket.readyState === WebSocket.OPEN) {
@@ -2054,6 +2099,7 @@
         setConnected(true);
         setModeLocked(false);
         state.hadConnection = true;
+        clearConnectionDropTimer();
         resetReconnectBackoff();
         clearOfferTimeout();
         clearConnectReadyTimeout();
@@ -2070,13 +2116,28 @@
         if (dom.storageDrawer.classList.contains("open")) {
           void requestRemoteList(state.remoteCurrentPath);
         }
+        if (state.pendingClick) {
+          const click = state.pendingClick;
+          state.pendingClick = null;
+          const isFresh = !click.ts || Date.now() - click.ts <= PENDING_CLICK_TTL_MS;
+          if (isFresh) {
+            void sendControl({
+              type: CONTROL_TYPES.mouseClick,
+              x: click.x,
+              y: click.y,
+              button: click.button,
+              source_width: click.source_width,
+              source_height: click.source_height
+            });
+          }
+        }
       };
       state.controlChannel.onclose = () => {
         setStatus("Disconnected", "bad");
         setConnected(false);
         setModeLocked(false);
         clearConnectReadyTimeout();
-        scheduleReconnect("Disconnected");
+        scheduleConnectionDrop("Disconnected");
       };
       state.controlChannel.onmessage = (event) => {
         void handleIncomingData(event.data);
@@ -2152,8 +2213,29 @@
       }
       if (!state.controlEnabled) {
         if (dom.interactionToggle && !state.modeLocked) {
+          if (!state.cursorLocked && !state.softLock) {
+            setCursorFromAbsolute(event);
+          }
+          if (!state.cursorInitialized) {
+            updateCursorBounds();
+          }
+          const coords = getCursorPosition();
+          const metrics = getVideoMetrics();
+          const sourceWidth = metrics ? metrics.videoWidth : null;
+          const sourceHeight = metrics ? metrics.videoHeight : null;
+          state.pendingClick = coords
+            ? {
+                x: coords.x,
+                y: coords.y,
+                button: mapMouseButton(event.button),
+                source_width: sourceWidth || undefined,
+                source_height: sourceHeight || undefined,
+                ts: Date.now()
+              }
+            : null;
           dom.interactionToggle.checked = true;
           dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+          setStatus("Switching to manage mode...", "warn");
         }
         return;
       }

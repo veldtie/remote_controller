@@ -635,13 +635,26 @@ class DashboardPage(QtWidgets.QWidget):
         worker.start()
 
     def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
+        """Обработка списка клиентов от API (исправленная версия)."""
+        if not api_clients:
+            self.logger.warning("No clients fetched from API")
+            self.clients = []
+            self.refresh_view()
+            return
+
         merged = self._merge_clients(api_clients)
         self.clients = merged
         self.settings.set("clients", self.clients)
         self.settings.save()
         if self._server_online is None:
             self._set_server_online(True)
-        self._render_current_clients()
+        self.refresh_view()
+
+        for client in self.clients:
+            if client.get("connected"):
+                self._ensure_session_open(client["id"])
+
+        self.logger.info("Fetched %s clients from API", len(api_clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
         self._render_current_clients()
@@ -649,6 +662,11 @@ class DashboardPage(QtWidgets.QWidget):
     def _handle_client_fetch_finished(self) -> None:
         self._fetch_in_progress = False
         self._client_fetch_worker = None
+
+    def _ensure_session_open(self, client_id: str) -> None:
+        if not client_id:
+            return
+        self.connect_requested.emit(client_id, False)
 
     def _set_server_online(self, online: bool) -> None:
         if self._server_online is online:
