@@ -283,6 +283,10 @@ class InputController:
                 return
             self._execute_fallback(command)
             return
+        if self._fallback is not None and platform.system() == "Windows":
+            if isinstance(command, (MouseClick, MouseScroll)):
+                self._execute_fallback(command)
+                return
         if isinstance(command, MouseMove):
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height

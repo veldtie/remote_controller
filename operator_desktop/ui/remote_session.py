@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.parse import urlencode, urlsplit, urlunsplit
+from pathlib import Path
 
 import base64
 import json
@@ -17,6 +18,10 @@ try:
     from PyQt6.QtWebEngineCore import QWebEngineSettings
 except Exception:  # pragma: no cover - optional dependency
     QWebEngineSettings = None
+try:
+    from PyQt6.QtWebEngineCore import QWebEngineProfile
+except Exception:  # pragma: no cover - optional dependency
+    QWebEngineProfile = None
 try:
     from PyQt6.QtWebChannel import QWebChannel
 except Exception:  # pragma: no cover - optional dependency
@@ -128,6 +133,9 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._download_override_name: str | None = None
         self._web_channel: QWebChannel | None = None
         self._download_bridge: DownloadBridge | None = None
+        self._primary_url: QtCore.QUrl | None = None
+        self._fallback_url: QtCore.QUrl | None = None
+        self._fallback_attempted = False
         self._last_download_dir = QtCore.QStandardPaths.writableLocation(
             QtCore.QStandardPaths.StandardLocation.DownloadLocation
         )
@@ -146,10 +154,25 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._refresh_top_info()
 
         self.view = QWebEngineView()
+        if QWebEngineProfile is not None:
+            try:
+                profile = self.view.page().profile()
+                profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+                profile.clearHttpCache()
+            except Exception:
+                pass
         if QWebEngineSettings is not None:
             settings = self.view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
             settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+            if hasattr(QWebEngineSettings.WebAttribute, "LocalContentCanAccessRemoteUrls"):
+                settings.setAttribute(
+                    QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+                )
+            if hasattr(QWebEngineSettings.WebAttribute, "LocalContentCanAccessFileUrls"):
+                settings.setAttribute(
+                    QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True
+                )
             if hasattr(QWebEngineSettings.WebAttribute, "FullScreenSupportEnabled"):
                 settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
             if hasattr(QWebEngineSettings.WebAttribute, "PointerLockEnabled"):
@@ -164,7 +187,11 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         if hasattr(self.view.page(), "fullScreenRequested"):
             self.view.page().fullScreenRequested.connect(self._handle_fullscreen_request)
         self.view.loadFinished.connect(self._handle_load_finished)
-        self.view.setUrl(url)
+        self._prepare_urls(url)
+        if self._primary_url is not None:
+            self.view.setUrl(self._primary_url)
+        else:
+            self.view.setUrl(url)
         layout.addWidget(self.view, 1)
         QtCore.QTimer.singleShot(800, self._fallback_apply)
 
@@ -323,6 +350,11 @@ class RemoteSessionDialog(QtWidgets.QDialog):
 
     def _handle_load_finished(self, ok: bool) -> None:
         if not ok:
+            if self._fallback_url is not None and not self._fallback_attempted:
+                self._fallback_attempted = True
+                self.view.setUrl(self._fallback_url)
+                return
+            self._show_load_error()
             return
         self._page_ready = True
         self._apply_desktop_overrides(
@@ -334,6 +366,78 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._open_storage_on_load = False
         self._flush_cookie_requests()
         self._flush_proxy_requests()
+
+    def _prepare_urls(self, remote_url: QtCore.QUrl) -> None:
+        self._primary_url = remote_url
+        self._fallback_url = None
+        local_url = self._resolve_local_operator_url()
+        if local_url is None:
+            return
+        # Prefer local bundle when available to avoid server static mismatches.
+        self._primary_url = local_url
+        self._fallback_url = remote_url
+
+    def _resolve_local_operator_url(self) -> QtCore.QUrl | None:
+        try:
+            current = Path(__file__).resolve()
+        except Exception:
+            return None
+        candidates = [
+            current.parents[3] / "operator" / "index.html",
+            current.parents[2] / "operator" / "index.html",
+            Path.cwd() / "operator" / "index.html",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return QtCore.QUrl.fromLocalFile(str(candidate))
+        return None
+
+    def _show_load_error(self) -> None:
+        if not self.view:
+            return
+        url = self.view.url().toString()
+        html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {{
+      font-family: Segoe UI, sans-serif;
+      background: #0d1117;
+      color: #f0f3f6;
+      margin: 0;
+      padding: 24px;
+    }}
+    .card {{
+      max-width: 640px;
+      margin: 40px auto;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 20px 22px;
+    }}
+    h1 {{
+      font-size: 18px;
+      margin: 0 0 10px 0;
+    }}
+    p {{
+      margin: 6px 0;
+      color: #c9d1d9;
+      word-break: break-all;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Remote session UI failed to load</h1>
+    <p>URL: {url}</p>
+    <p>Check that the server is reachable and the operator UI is deployed.</p>
+  </div>
+</body>
+</html>
+"""
+        self.view.setHtml(html)
 
     def _fallback_apply(self) -> None:
         if not self.view:

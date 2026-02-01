@@ -30,8 +30,9 @@
   const RECONNECT_BASE_DELAY_MS = 2000;
   const RECONNECT_MAX_DELAY_MS = 20000;
   const RECONNECT_JITTER_MS = 1000;
-  const CONNECTION_READY_TIMEOUT_MS = 20000;
-  const CONNECTION_DROP_GRACE_MS = 8000;
+  const CONNECTION_READY_TIMEOUT_MS = 30000;
+  const DISCONNECT_GRACE_MS = 8000;
+  const CONNECTION_DROP_GRACE_MS = 20000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -43,6 +44,7 @@
   let qtScriptInjected = false;
   let connectTimeoutId = null;
   let offerTimeoutId = null;
+  let disconnectTimeoutId = null;
 
   function utf8Encode(value) {
     if (textEncoder) {
@@ -109,6 +111,7 @@
     pendingAppLaunch: null,
     pendingExport: null,
     pendingExportRetries: 0,
+    downloadChunkState: null,
     isConnected: false,
     e2eeContext: null,
     cursorX: 0,
@@ -683,15 +686,34 @@
     }
   }
 
-  function syncInteractionToggle() {
-    if (!dom.interactionToggle) {
+  function syncSwitchToggle(input) {
+    if (!input) {
       return;
     }
-    const wrapper = dom.interactionToggle.closest(".switch");
+    const wrapper = input.parentElement && input.parentElement.classList.contains("switch")
+      ? input.parentElement
+      : input.closest(".switch");
     if (!wrapper) {
       return;
     }
-    wrapper.classList.toggle("is-on", dom.interactionToggle.checked);
+    const isOn = input.checked;
+    wrapper.classList.toggle("is-on", isOn);
+    wrapper.setAttribute("aria-checked", isOn ? "true" : "false");
+    const slider = input.nextElementSibling && input.nextElementSibling.classList.contains("slider")
+      ? input.nextElementSibling
+      : wrapper.querySelector(".slider");
+    if (slider) {
+      slider.classList.toggle("is-on", isOn);
+    }
+    const thumb = slider ? slider.querySelector(".slider-thumb") : wrapper.querySelector(".slider-thumb");
+    if (thumb) {
+      thumb.style.transform = isOn ? "translateX(26px)" : "translateX(0)";
+      thumb.style.background = isOn ? "#dbfff2" : "#f7f0dc";
+    }
+  }
+
+  function syncInteractionToggle() {
+    syncSwitchToggle(dom.interactionToggle);
   }
 
   function updateInteractionMode() {
@@ -948,6 +970,7 @@
     const enabled = state.isConnected && state.controlEnabled;
     dom.cursorVisibilityToggle.disabled = !enabled;
     dom.cursorVisibilityToggle.setAttribute("aria-disabled", (!enabled).toString());
+    syncSwitchToggle(dom.cursorVisibilityToggle);
     if (!dom.cursorVisibilityHint) {
       return;
     }
@@ -970,6 +993,7 @@
     if (dom.cursorVisibilityToggle && dom.cursorVisibilityToggle.checked !== next) {
       dom.cursorVisibilityToggle.checked = next;
     }
+    syncSwitchToggle(dom.cursorVisibilityToggle);
     updateRemoteCursorVisibilityAvailability();
     if (shouldSend) {
       void sendControl({
@@ -1677,6 +1701,29 @@
     }
   }
 
+  function clearDisconnectTimeout() {
+    if (disconnectTimeoutId) {
+      clearTimeout(disconnectTimeoutId);
+      disconnectTimeoutId = null;
+    }
+  }
+
+  function scheduleDisconnectCleanup(reason = "Disconnected") {
+    clearDisconnectTimeout();
+    disconnectTimeoutId = setTimeout(() => {
+      disconnectTimeoutId = null;
+      if (!state.peerConnection || state.peerConnection.connectionState !== "disconnected") {
+        return;
+      }
+      setStatus(reason, "bad");
+      setConnected(false);
+      setModeLocked(false);
+      state.connecting = false;
+      cleanupConnection();
+      scheduleReconnect(reason);
+    }, DISCONNECT_GRACE_MS);
+  }
+
   function resetReconnectBackoff() {
     state.reconnectAttempt = 0;
     clearReconnectTimer();
@@ -1842,6 +1889,7 @@
     clearConnectTimeout();
     clearOfferTimeout();
     clearConnectReadyTimeout();
+    clearDisconnectTimeout();
     clearConnectionDropTimer();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
@@ -1951,7 +1999,7 @@
       } catch (error) {
         console.warn("Failed to close signaling socket", error);
       }
-    }, 8000);
+    }, 15000);
     signalingSocket.onclose = () => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
@@ -2146,7 +2194,7 @@
           }
           setStatus("Waiting for client response...", "warn");
           setModeLocked(false);
-        }, 12000);
+        }, 20000);
         scheduleConnectReadyTimeout(signalingSocket);
       }
     };
@@ -2841,6 +2889,10 @@
         handleError(parsed.error);
         return;
       }
+      if (parsed.action === "download_chunk") {
+        handleDownloadChunk(parsed);
+        return;
+      }
       if (parsed.action === "launch_app") {
         handleAppLaunchStatus(parsed);
         return;
@@ -2855,14 +2907,19 @@
       }
     }
 
+    finalizeDownloadPayload(message);
+  }
+
+  function finalizeDownloadPayload(payload) {
     if (!state.pendingDownload) {
       setDownloadStatus("Unexpected download payload", "warn");
+      state.downloadChunkState = null;
       return;
     }
     const isCookieDownload = state.pendingDownload.kind === "cookies";
     const completedKind = state.pendingDownload.kind;
     try {
-      saveBase64File(message, state.pendingDownload.name);
+      saveBase64File(payload, state.pendingDownload.name);
       addDownloadEntry(state.pendingDownload.name);
       setDownloadStatus(`Saved ${state.pendingDownload.name}`, "ok");
       if (isCookieDownload) {
@@ -2882,6 +2939,47 @@
         state.pendingExportRetries = 0;
       }
       state.pendingDownload = null;
+      state.downloadChunkState = null;
+    }
+  }
+
+  function handleDownloadChunk(payload) {
+    if (!state.pendingDownload) {
+      setDownloadStatus("Unexpected download payload", "warn");
+      return;
+    }
+    const transferId = String(payload.transfer_id || "");
+    const total = Number(payload.total);
+    const index = Number(payload.index);
+    const data = typeof payload.data === "string" ? payload.data : "";
+    if (!transferId || !Number.isFinite(total) || total <= 0 || !Number.isFinite(index)) {
+      return;
+    }
+    if (
+      !state.downloadChunkState ||
+      state.downloadChunkState.id !== transferId ||
+      state.downloadChunkState.total !== total
+    ) {
+      state.downloadChunkState = {
+        id: transferId,
+        total,
+        received: 0,
+        parts: new Array(total)
+      };
+    }
+    const chunkState = state.downloadChunkState;
+    if (index >= 0 && index < chunkState.total && !chunkState.parts[index]) {
+      chunkState.parts[index] = data;
+      chunkState.received += 1;
+      const pct = Math.round((chunkState.received / chunkState.total) * 100);
+      setDownloadStatus(`Receiving ${pct}%`, "warn");
+      if (state.pendingDownload.kind === "cookies") {
+        setCookieStatus(`Receiving ${pct}%`, "warn");
+      }
+    }
+    if (chunkState.received >= chunkState.total) {
+      const payloadBase64 = chunkState.parts.join("");
+      finalizeDownloadPayload(payloadBase64);
     }
   }
 

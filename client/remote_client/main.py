@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
+import tempfile
 
 from remote_client.config import (
     load_antifraud_config,
@@ -25,7 +27,26 @@ def _anti_fraud_disabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _configure_logging() -> None:
+    level_name = os.getenv("RC_LOG_LEVEL", "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    log_path = os.getenv("RC_LOG_PATH", "").strip()
+    if not log_path:
+        log_path = os.path.join(tempfile.gettempdir(), "remdesk_client.log")
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+    except OSError:
+        pass
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
 def main() -> None:
+    _configure_logging()
     ensure_dpi_awareness()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     proxy_settings = load_proxy_settings_from_env()

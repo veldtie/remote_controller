@@ -8,6 +8,7 @@ import inspect
 import json
 import os
 import logging
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -88,13 +89,15 @@ def _normalize_session_mode(mode: Any) -> str:
 
 
 SIGNALING_PING_INTERVAL = max(0.0, _read_env_float("RC_SIGNALING_PING_INTERVAL", 20.0))
-DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 10.0))
+DISCONNECT_GRACE_SECONDS = max(0.0, _read_env_float("RC_DISCONNECT_GRACE", 30.0))
 RECONNECT_BASE_DELAY = max(0.5, _read_env_float("RC_RECONNECT_DELAY", 2.0))
 RECONNECT_MAX_DELAY = max(RECONNECT_BASE_DELAY, _read_env_float("RC_RECONNECT_MAX_DELAY", 30.0))
 VIDEO_MAX_BITRATE_BPS = _resolve_bitrate_bps(
     os.getenv("RC_VIDEO_MAX_BITRATE"), 12_000_000
 )
 VIDEO_MAX_FPS = max(0, _read_env_int("RC_VIDEO_MAX_FPS", 0))
+DATA_CHUNK_SIZE = max(4096, _read_env_int("RC_DATA_CHUNK_SIZE", 48000))
+DATA_CHANNEL_BUFFER_LIMIT = max(64_000, _read_env_int("RC_DATA_CHANNEL_BUFFER", 2_000_000))
 
 
 def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
@@ -257,6 +260,7 @@ class WebRTCClient:
         session_cleanup: Callable[[], None] | None = None
         session_actions: SessionResources | None = None
         operator_id_holder: dict[str, str | None] = {"value": None}
+        had_connection = False
 
         def _cancel_disconnect_task() -> None:
             nonlocal disconnect_task
@@ -266,6 +270,8 @@ class WebRTCClient:
 
         async def _schedule_disconnect() -> None:
             nonlocal disconnect_task
+            if not had_connection:
+                return
             if DISCONNECT_GRACE_SECONDS <= 0:
                 connection_done.set()
                 return
@@ -287,6 +293,7 @@ class WebRTCClient:
 
         @peer_connection.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
+            nonlocal had_connection
             state = peer_connection.connectionState
             if state in {"failed", "closed"}:
                 connection_done.set()
@@ -294,10 +301,13 @@ class WebRTCClient:
             if state == "disconnected":
                 await _schedule_disconnect()
                 return
+            if state == "connected":
+                had_connection = True
             _cancel_disconnect_task()
 
         @peer_connection.on("iceconnectionstatechange")
         async def on_iceconnectionstatechange() -> None:
+            nonlocal had_connection
             state = peer_connection.iceConnectionState
             if state in {"failed", "closed"}:
                 connection_done.set()
@@ -306,6 +316,7 @@ class WebRTCClient:
                 await _schedule_disconnect()
                 return
             if state in {"connected", "completed"}:
+                had_connection = True
                 _cancel_disconnect_task()
 
         @peer_connection.on("datachannel")
@@ -579,7 +590,7 @@ class WebRTCClient:
                     "Cookie export failed.",
                 )
                 return
-            self._send_payload(data_channel, payload_base64)
+            await self._send_chunked_payload(data_channel, payload_base64, "cookies")
             return
 
         if action == "export_proxy":
@@ -593,7 +604,7 @@ class WebRTCClient:
                 return
             payload_text = await asyncio.to_thread(settings.to_text)
             payload_base64 = base64.b64encode(payload_text.encode("utf-8")).decode("ascii")
-            self._send_payload(data_channel, payload_base64)
+            await self._send_chunked_payload(data_channel, payload_base64, "proxy")
             return
 
         if action == "launch_app":
@@ -696,6 +707,62 @@ class WebRTCClient:
         if self._e2ee:
             message = self._e2ee.encrypt_text(message)
         data_channel.send(message)
+
+    async def _send_chunked_payload(self, data_channel, payload_base64: str, kind: str) -> None:
+        """Send large base64 payloads over the data channel in chunks."""
+        if not payload_base64:
+            self._send_payload(data_channel, payload_base64)
+            return
+        if len(payload_base64) <= DATA_CHUNK_SIZE:
+            self._send_payload(data_channel, payload_base64)
+            return
+        transfer_id = secrets.token_hex(8)
+        total = (len(payload_base64) + DATA_CHUNK_SIZE - 1) // DATA_CHUNK_SIZE
+        buffer_limit = DATA_CHANNEL_BUFFER_LIMIT
+        drain_target = max(DATA_CHUNK_SIZE * 2, buffer_limit // 2)
+        for index in range(total):
+            start = index * DATA_CHUNK_SIZE
+            end = start + DATA_CHUNK_SIZE
+            chunk = payload_base64[start:end]
+            self._send_payload(
+                data_channel,
+                {
+                    "action": "download_chunk",
+                    "kind": kind,
+                    "transfer_id": transfer_id,
+                    "index": index,
+                    "total": total,
+                    "data": chunk,
+                },
+            )
+            await asyncio.sleep(0)
+            await self._drain_data_channel(data_channel, buffer_limit, drain_target)
+
+    async def _drain_data_channel(
+        self,
+        data_channel,
+        buffer_limit: int,
+        drain_target: int,
+    ) -> None:
+        """Throttle sends when the data channel buffer grows too large."""
+        if not data_channel:
+            return
+        try:
+            buffered = int(getattr(data_channel, "bufferedAmount", 0) or 0)
+        except Exception:
+            buffered = 0
+        if buffered <= buffer_limit:
+            return
+        start = asyncio.get_event_loop().time()
+        while buffered > drain_target:
+            await asyncio.sleep(0.02)
+            try:
+                buffered = int(getattr(data_channel, "bufferedAmount", 0) or 0)
+            except Exception:
+                buffered = 0
+                break
+            if asyncio.get_event_loop().time() - start > 5.0:
+                break
 
     def _send_error(self, data_channel, code: str, message: str) -> None:
         """Send a structured error over the data channel."""
