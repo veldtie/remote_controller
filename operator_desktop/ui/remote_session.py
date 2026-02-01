@@ -143,6 +143,9 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         if not show_window:
             self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowMinimizeButtonHint, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowCloseButtonHint, True)
         self.resize(1200, 720)
 
         layout = QtWidgets.QVBoxLayout(self)
