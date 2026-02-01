@@ -233,6 +233,7 @@
     if (remdesk.updateRemoteCursorVisibilityAvailability) {
       remdesk.updateRemoteCursorVisibilityAvailability();
     }
+    updateCursorOverlayVisibility();
     if (shouldSend) {
       void remdesk.sendControl({
         type: "toggle_virtual_cursor",

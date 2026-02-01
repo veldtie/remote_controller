@@ -374,6 +374,9 @@
   }
 
   async function loadIceConfig(apiBase, authToken) {
+    if (window.location.protocol === "file:") {
+      return { iceServers: DEFAULT_ICE_SERVERS };
+    }
     const headers = authToken ? { "x-rc-token": authToken } : {};
     const candidates = buildBaseCandidates(apiBase);
     for (const base of candidates) {
