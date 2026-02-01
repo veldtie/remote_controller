@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import sys
 import time
 from datetime import datetime
@@ -15,6 +16,8 @@ from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import load_icon, make_button
+
+logger = logging.getLogger(__name__)
 
 
 class ClientFetchWorker(QtCore.QThread):
@@ -635,13 +638,22 @@ class DashboardPage(QtWidgets.QWidget):
         worker.start()
 
     def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
+        """Обработка списка клиентов от API (исправленная версия)."""
+        if not api_clients:
+            logger.warning("No clients fetched from API")
+            self.clients = []
+            self.refresh_view()
+            return
+
         merged = self._merge_clients(api_clients)
         self.clients = merged
         self.settings.set("clients", self.clients)
         self.settings.save()
         if self._server_online is None:
             self._set_server_online(True)
-        self._render_current_clients()
+        self.refresh_view()
+
+        logger.info("Fetched %s clients from API", len(api_clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
         self._render_current_clients()
@@ -948,20 +960,23 @@ class DashboardPage(QtWidgets.QWidget):
             "team": (1.6, 130),
             "operator": (1.8, 150),
             "status": (2.1, 160),
-            "last_seen": (1.4, 130),
+            "last_seen": (1.8, 180),
             "region": (1.3, 100),
             "flags": (1.1, 90),
             "ip": (1.3, 100),
             "storage": (1.3, 110),
             "connect": (1.6, 140),
-            "more": (0.8, 60),
-            "delete": (0.8, 60),
+            "more": (1.4, 130),
+            "delete": (1.0, 90),
         }
-        config = {
-            index: base_config[key]
-            for index, key in enumerate(self.column_keys)
-            if key in base_config
-        }
+        header_min = self._header_min_widths()
+        config = {}
+        for index, key in enumerate(self.column_keys):
+            if key not in base_config:
+                continue
+            weight, min_w = base_config[key]
+            min_w = max(min_w, header_min.get(index, 0))
+            config[index] = (weight, min_w)
 
         min_total = sum(min_w for _, min_w in config.values())
         if total <= min_total:
@@ -993,6 +1008,21 @@ class DashboardPage(QtWidgets.QWidget):
 
         for col, width in widths.items():
             header.resizeSection(col, width)
+
+    def _header_min_widths(self) -> dict[int, int]:
+        header = self.table.horizontalHeader()
+        metrics = header.fontMetrics()
+        padding = 28
+        widths: dict[int, int] = {}
+        for index in range(self.table.columnCount()):
+            item = self.table.horizontalHeaderItem(index)
+            if not item:
+                continue
+            text = item.text()
+            if not text:
+                continue
+            widths[index] = metrics.horizontalAdvance(text) + padding
+        return widths
 
     @staticmethod
     def wrap_cell_widget(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:

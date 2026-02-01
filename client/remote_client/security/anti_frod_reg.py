@@ -108,6 +108,15 @@ class RegionFraudResult:
     indicators: tuple[str, ...]
 
 
+def _hidden_subprocess_kwargs() -> dict[str, object]:
+    if platform.system() != "Windows":
+        return {}
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0
+    return {"startupinfo": startup, "creationflags": subprocess.CREATE_NO_WINDOW}
+
+
 def _split_locale(value: str | None) -> tuple[str | None, str | None]:
     if not value:
         return None, None
@@ -160,6 +169,7 @@ def _get_timezone_name() -> str | None:
             ["tzutil", "/g"],
             text=True,
             stderr=subprocess.DEVNULL,
+            **_hidden_subprocess_kwargs(),
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None

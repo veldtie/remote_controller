@@ -155,6 +155,17 @@ def _build_default_ice_servers() -> list[dict[str, object]]:
 ICE_SERVERS = _load_ice_servers() or _build_default_ice_servers()
 SIGNALING_TOKEN = _load_signaling_token()
 
+
+def _is_valid_signaling_token(provided_token: str | None) -> bool:
+    """Accept the signaling token or the API token when signaling auth is enabled."""
+    if not SIGNALING_TOKEN:
+        return True
+    if provided_token == SIGNALING_TOKEN:
+        return True
+    if API_TOKEN and provided_token == API_TOKEN:
+        return True
+    return False
+
 DEVICE_REGISTRY_SCHEMA = [
     """
     CREATE TABLE IF NOT EXISTS device_registry (
@@ -658,7 +669,7 @@ async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
     """Return ICE server configuration when a token is valid."""
     if SIGNALING_TOKEN:
         provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
-        if not provided_token or provided_token != SIGNALING_TOKEN:
+        if not _is_valid_signaling_token(provided_token):
             raise HTTPException(status_code=403, detail="Invalid token")
     return {"iceServers": ICE_SERVERS}
 
@@ -1005,7 +1016,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
     operator_id = websocket.query_params.get("operator_id") if role == "browser" else None
     if SIGNALING_TOKEN:
         provided_token = websocket.query_params.get("token") or websocket.headers.get("x-rc-token")
-        if not provided_token or provided_token != SIGNALING_TOKEN:
+        if not _is_valid_signaling_token(provided_token):
             logger.warning("Rejected connection with invalid token from %s", _client_label(websocket))
             await websocket.close(code=1008)
             return

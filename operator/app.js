@@ -26,10 +26,16 @@
   const RTT_UPGRADE = 180;
   const PROFILE_HEIGHT_DOWN_SCALE = 0.92;
   const PROFILE_HEIGHT_UP_SCALE = 1.15;
+  const SCREEN_LAYOUT_DEBOUNCE_MS = 120;
+  const ASPECT_CHANGE_THRESHOLD = 0.02;
+  const ASPECT_CHANGE_SOFT_THRESHOLD = 0.006;
+  const ASPECT_UPDATE_COOLDOWN_MS = 1200;
   const SIGNALING_PING_INTERVAL_MS = 20000;
   const RECONNECT_BASE_DELAY_MS = 2000;
   const RECONNECT_MAX_DELAY_MS = 20000;
   const RECONNECT_JITTER_MS = 1000;
+  const CONNECTION_READY_TIMEOUT_MS = 20000;
+  const CONNECTION_DROP_GRACE_MS = 8000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -140,11 +146,19 @@
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
+    connectReadyTimer: null,
+    hadConnection: false,
+    connectionDropTimer: null,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
+    lastAspectUpdateAt: 0,
     storageOnly: false,
-    remoteCursorVisible: true
+    remoteCursorVisible: true,
+    lastRenderSize: null,
+    lastFrameBounds: null,
+    metricsCache: null,
+    layoutTimer: null
   };
 
   const dom = {
@@ -652,6 +666,9 @@
       stopStatsMonitor();
       stopMovePump();
       setSoftLock(false);
+      state.lastRenderSize = null;
+      state.lastFrameBounds = null;
+      state.metricsCache = null;
     }
     updateAppLaunchAvailability();
     updateCookieAvailability();
@@ -678,8 +695,20 @@
     }
   }
 
+  function syncInteractionToggle() {
+    if (!dom.interactionToggle) {
+      return;
+    }
+    const wrapper = dom.interactionToggle.closest(".switch");
+    if (!wrapper) {
+      return;
+    }
+    wrapper.classList.toggle("is-on", dom.interactionToggle.checked);
+  }
+
   function updateInteractionMode() {
     state.controlEnabled = dom.interactionToggle.checked;
+    syncInteractionToggle();
     const label = state.controlEnabled ? "Managing" : "Viewing";
     dom.interactionState.textContent = label;
     dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";
@@ -748,6 +777,20 @@
   }
 
   function getVideoMetrics() {
+    if (state.metricsCache) {
+      const cached = state.metricsCache;
+      const currentWidth = dom.screenEl.videoWidth;
+      const currentHeight = dom.screenEl.videoHeight;
+      if (
+        currentWidth &&
+        currentHeight &&
+        (cached.videoWidth !== currentWidth || cached.videoHeight !== currentHeight)
+      ) {
+        state.metricsCache = null;
+      } else {
+        return cached;
+      }
+    }
     const rect = dom.screenFrame.getBoundingClientRect();
     const videoWidth = dom.screenEl.videoWidth || rect.width;
     const videoHeight = dom.screenEl.videoHeight || rect.height;
@@ -759,7 +802,7 @@
     const renderHeight = videoHeight * scale;
     const offsetX = (rect.width - renderWidth) / 2;
     const offsetY = (rect.height - renderHeight) / 2;
-    return {
+    const metrics = {
       rect,
       videoWidth,
       videoHeight,
@@ -768,20 +811,74 @@
       offsetX,
       offsetY
     };
+    state.metricsCache = metrics;
+    return metrics;
+  }
+
+  function updateScreenAspect(nextAspect) {
+    if (!nextAspect || !Number.isFinite(nextAspect)) {
+      return;
+    }
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (!state.screenAspect) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+      return;
+    }
+    const diff = Math.abs(state.screenAspect - nextAspect);
+    const ratio = diff / state.screenAspect;
+    if (ratio >= ASPECT_CHANGE_THRESHOLD) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+      return;
+    }
+    if (now - state.lastAspectUpdateAt >= ASPECT_UPDATE_COOLDOWN_MS && ratio >= ASPECT_CHANGE_SOFT_THRESHOLD) {
+      state.screenAspect = nextAspect;
+      state.lastAspectUpdateAt = now;
+    }
+  }
+
+  function scheduleScreenLayout(urgent = false) {
+    if (state.layoutTimer) {
+      if (!urgent) {
+        return;
+      }
+      clearTimeout(state.layoutTimer);
+      state.layoutTimer = null;
+    }
+    const delay = urgent ? 0 : SCREEN_LAYOUT_DEBOUNCE_MS;
+    state.layoutTimer = setTimeout(() => {
+      state.layoutTimer = null;
+      updateScreenLayout();
+    }, delay);
   }
 
   function updateScreenLayout() {
+    state.metricsCache = null;
+    const videoWidth = dom.screenEl.videoWidth;
+    const videoHeight = dom.screenEl.videoHeight;
+    if (videoWidth && videoHeight) {
+      updateScreenAspect(videoWidth / videoHeight);
+    }
     updateScreenFrameBounds();
     const metrics = getVideoMetrics();
     if (!metrics) {
       dom.screenEl.style.width = "100%";
       dom.screenEl.style.height = "100%";
+      state.lastRenderSize = null;
       return;
     }
-    dom.screenEl.style.width = `${Math.floor(metrics.renderWidth)}px`;
-    dom.screenEl.style.height = `${Math.floor(metrics.renderHeight)}px`;
+    const nextWidth = Math.floor(metrics.renderWidth);
+    const nextHeight = Math.floor(metrics.renderHeight);
+    const last = state.lastRenderSize;
+    const sizeChanged = !last || last.width !== nextWidth || last.height !== nextHeight;
+    if (sizeChanged) {
+      dom.screenEl.style.width = `${nextWidth}px`;
+      dom.screenEl.style.height = `${nextHeight}px`;
+      state.lastRenderSize = { width: nextWidth, height: nextHeight };
+      scheduleStreamHint();
+    }
     updateCursorOverlayPosition();
-    scheduleStreamHint();
   }
 
   function getWorkspaceBounds() {
@@ -810,12 +907,16 @@
       return;
     }
     if (document.fullscreenElement === dom.screenFrame) {
-      dom.screenFrame.style.left = "0px";
-      dom.screenFrame.style.top = "0px";
-      dom.screenFrame.style.width = "100%";
-      dom.screenFrame.style.height = "100%";
-      dom.screenFrame.style.right = "0px";
-      dom.screenFrame.style.bottom = "0px";
+      if (!state.lastFrameBounds || !state.lastFrameBounds.fullscreen) {
+        state.lastFrameBounds = { fullscreen: true };
+        state.metricsCache = null;
+        dom.screenFrame.style.left = "0px";
+        dom.screenFrame.style.top = "0px";
+        dom.screenFrame.style.width = "100%";
+        dom.screenFrame.style.height = "100%";
+        dom.screenFrame.style.right = "0px";
+        dom.screenFrame.style.bottom = "0px";
+      }
       return;
     }
     const { edgeGap, workspaceLeft, availableWidth, availableHeight } =
@@ -832,10 +933,30 @@
     }
     const left = workspaceLeft + (availableWidth - width) / 2;
     const top = edgeGap + (availableHeight - height) / 2;
-    dom.screenFrame.style.left = `${Math.round(left)}px`;
-    dom.screenFrame.style.top = `${Math.round(top)}px`;
-    dom.screenFrame.style.width = `${Math.round(width)}px`;
-    dom.screenFrame.style.height = `${Math.round(height)}px`;
+    const nextBounds = {
+      fullscreen: false,
+      left: Math.round(left),
+      top: Math.round(top),
+      width: Math.round(width),
+      height: Math.round(height)
+    };
+    const last = state.lastFrameBounds;
+    if (
+      last &&
+      !last.fullscreen &&
+      last.left === nextBounds.left &&
+      last.top === nextBounds.top &&
+      last.width === nextBounds.width &&
+      last.height === nextBounds.height
+    ) {
+      return;
+    }
+    state.lastFrameBounds = nextBounds;
+    state.metricsCache = null;
+    dom.screenFrame.style.left = `${nextBounds.left}px`;
+    dom.screenFrame.style.top = `${nextBounds.top}px`;
+    dom.screenFrame.style.width = `${nextBounds.width}px`;
+    dom.screenFrame.style.height = `${nextBounds.height}px`;
     dom.screenFrame.style.right = "auto";
     dom.screenFrame.style.bottom = "auto";
   }
@@ -1254,9 +1375,10 @@
       state.cursorY = metrics.videoHeight / 2;
       state.cursorInitialized = true;
     }
-    if (metrics.videoWidth && metrics.videoHeight) {
-      state.screenAspect = metrics.videoWidth / metrics.videoHeight;
-      updateScreenFrameBounds();
+    const videoWidth = dom.screenEl.videoWidth;
+    const videoHeight = dom.screenEl.videoHeight;
+    if (videoWidth && videoHeight) {
+      updateScreenAspect(videoWidth / videoHeight);
     }
     updateCursorOverlayPosition();
   }
@@ -1336,9 +1458,16 @@
     state.cursorLocked = document.pointerLockElement === dom.screenFrame;
     if (!state.cursorLocked) {
       updateCursorBounds();
+      if (state.softLock) {
+        setSoftLock(false);
+      }
     }
     updateCursorLockState();
     updateCursorOverlayVisibility();
+  }
+
+  function shouldUsePointerLock() {
+    return !document.body.classList.contains("desktop-mode");
   }
 
   function updateCursorLockState() {
@@ -1588,6 +1717,71 @@
     }
   }
 
+  function clearConnectReadyTimeout() {
+    if (state.connectReadyTimer) {
+      clearTimeout(state.connectReadyTimer);
+      state.connectReadyTimer = null;
+    }
+  }
+
+  function clearConnectionDropTimer() {
+    if (state.connectionDropTimer) {
+      clearTimeout(state.connectionDropTimer);
+      state.connectionDropTimer = null;
+    }
+  }
+
+  function scheduleConnectionDrop(reason) {
+    if (state.connectionDropTimer) {
+      return;
+    }
+    state.connectionDropTimer = setTimeout(() => {
+      state.connectionDropTimer = null;
+      const pc = state.peerConnection;
+      const channel = state.controlChannel;
+      if (pc) {
+        const connectionState = pc.connectionState;
+        const iceState = pc.iceConnectionState;
+        if (connectionState === "connected" || connectionState === "connecting") {
+          return;
+        }
+        if (iceState === "connected" || iceState === "completed") {
+          return;
+        }
+      }
+      if (channel && channel.readyState === "open") {
+        return;
+      }
+      setStatus("Disconnected", "bad");
+      setConnected(false);
+      setModeLocked(false);
+      state.connecting = false;
+      cleanupConnection();
+      scheduleReconnect(reason);
+    }, CONNECTION_DROP_GRACE_MS);
+  }
+
+  function scheduleConnectReadyTimeout(signalingSocket) {
+    clearConnectReadyTimeout();
+    state.connectReadyTimer = setTimeout(() => {
+      if (state.isConnected || state.connecting) {
+        return;
+      }
+      if (signalingSocket !== state.signalingWebSocket) {
+        return;
+      }
+      const shouldRetry = state.hadConnection;
+      setStatus(
+        shouldRetry ? "Client not responding, retrying..." : "Client not responding",
+        "warn"
+      );
+      cleanupConnection();
+      if (shouldRetry) {
+        scheduleReconnect("No response");
+      }
+    }, CONNECTION_READY_TIMEOUT_MS);
+  }
+
   function clearReconnectTimer() {
     if (state.reconnectTimer) {
       clearTimeout(state.reconnectTimer);
@@ -1600,7 +1794,10 @@
     clearReconnectTimer();
   }
 
-  function scheduleReconnect(reason = "") {
+  function scheduleReconnect(reason = "", allowWithoutConnection = false) {
+    if (!allowWithoutConnection && !state.hadConnection) {
+      return;
+    }
     if (state.connecting || state.isConnected) {
       return;
     }
@@ -1698,8 +1895,15 @@
       if (authToken) {
         iceUrl.searchParams.set("token", authToken);
       }
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller
+        ? setTimeout(() => controller.abort(), 4000)
+        : null;
       try {
-        const response = await fetch(iceUrl.toString(), { headers });
+        const response = await fetch(iceUrl.toString(), {
+          headers,
+          signal: controller ? controller.signal : undefined
+        });
         if (!response.ok) {
           throw new Error("Failed to load ICE config");
         }
@@ -1709,6 +1913,10 @@
         }
       } catch (error) {
         console.warn("ICE config unavailable, trying fallback.", error);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
     }
     return { iceServers: DEFAULT_ICE_SERVERS };
@@ -1745,6 +1953,8 @@
     stopMovePump();
     clearConnectTimeout();
     clearOfferTimeout();
+    clearConnectReadyTimeout();
+    clearConnectionDropTimer();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -1864,6 +2074,7 @@
       stopSignalingPing();
       clearConnectTimeout();
       clearOfferTimeout();
+      clearConnectReadyTimeout();
       setStatus("Disconnected", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1880,6 +2091,7 @@
       stopSignalingPing();
       clearConnectTimeout();
       clearOfferTimeout();
+      clearConnectReadyTimeout();
       setStatus("Connection failed", "bad");
       setConnected(false);
       setModeLocked(false);
@@ -1930,6 +2142,30 @@
       } else {
         state.peerConnection.onicecandidateerror = handleIceCandidateError;
       }
+      state.peerConnection.onconnectionstatechange = () => {
+        if (!state.peerConnection) {
+          return;
+        }
+        const connectionState = state.peerConnection.connectionState;
+        if (connectionState === "failed") {
+          clearConnectionDropTimer();
+          setStatus("Connection failed", "bad");
+          setConnected(false);
+          setModeLocked(false);
+          state.connecting = false;
+          cleanupConnection();
+          scheduleReconnect("Connection failed");
+        } else if (connectionState === "disconnected") {
+          setStatus("Connection unstable, waiting...", "warn");
+          scheduleConnectionDrop("Disconnected");
+        } else if (connectionState === "connected") {
+          clearConnectionDropTimer();
+          if (state.controlChannel && state.controlChannel.readyState === "open") {
+            const label = state.e2eeContext ? "Connected (E2EE)" : "Connected";
+            setStatus(label, "ok");
+          }
+        }
+      };
       if (signalingSocket.readyState === WebSocket.OPEN) {
         signalingSocket.send(
           JSON.stringify({
@@ -1972,8 +2208,11 @@
         setStatus(label, "ok");
         setConnected(true);
         setModeLocked(false);
+        state.hadConnection = true;
+        clearConnectionDropTimer();
         resetReconnectBackoff();
         clearOfferTimeout();
+        clearConnectReadyTimeout();
         applyStreamProfile(state.streamProfile, true);
         scheduleStreamHint();
         startStatsMonitor();
@@ -1992,7 +2231,8 @@
         setStatus("Disconnected", "bad");
         setConnected(false);
         setModeLocked(false);
-        scheduleReconnect("Disconnected");
+        clearConnectReadyTimeout();
+        scheduleConnectionDrop("Disconnected");
       };
       state.controlChannel.onmessage = (event) => {
         void handleIncomingData(event.data);
@@ -2019,6 +2259,7 @@
           setStatus("Waiting for client response...", "warn");
           setModeLocked(false);
         }, 12000);
+        scheduleConnectReadyTimeout(signalingSocket);
       }
     };
   }
@@ -2059,10 +2300,17 @@
       }
       state.lastLocalX = null;
       state.lastLocalY = null;
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     dom.screenFrame.addEventListener("mousedown", (event) => {
-      if (!state.controlEnabled || !state.isConnected) {
+      if (!state.isConnected) {
+        return;
+      }
+      if (!state.controlEnabled) {
+        setStatus("Switch to manage mode to control", "warn");
         return;
       }
       event.preventDefault();
@@ -2072,11 +2320,21 @@
       if (!state.cursorLocked && !state.softLock) {
         setCursorFromAbsolute(event);
       }
-      setSoftLock(true);
+      const allowPointerLock = shouldUsePointerLock();
+      if (allowPointerLock) {
+        setSoftLock(true);
+      } else {
+        if (state.cursorLocked) {
+          releasePointerLock();
+        }
+        if (state.softLock) {
+          setSoftLock(false);
+        }
+      }
       if (!state.cursorInitialized) {
         updateCursorBounds();
       }
-      if (!state.cursorLocked && dom.screenFrame.requestPointerLock) {
+      if (allowPointerLock && !state.cursorLocked && dom.screenFrame.requestPointerLock) {
         dom.screenFrame.requestPointerLock();
       }
       let coords = null;
@@ -2095,6 +2353,15 @@
         source_width: sourceWidth || undefined,
         source_height: sourceHeight || undefined
       });
+    });
+
+    dom.screenFrame.addEventListener("mouseup", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     dom.screenFrame.addEventListener(
@@ -2157,6 +2424,15 @@
         return;
       }
       applyRelativeMove(event);
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      if (!state.cursorLocked && state.softLock) {
+        setSoftLock(false);
+      }
     });
 
     window.addEventListener("keydown", (event) => {
@@ -2787,18 +3063,27 @@
 
   function bindEvents() {
     dom.interactionToggle.addEventListener("change", handleModeToggle);
-    window.addEventListener("resize", updateScreenFrameBounds);
+    window.addEventListener("resize", () => scheduleScreenLayout());
     document.addEventListener("pointerlockchange", handlePointerLockChange);
+    document.addEventListener("pointerlockerror", () => {
+      state.cursorLocked = false;
+      if (state.softLock) {
+        setSoftLock(false);
+      } else {
+        updateCursorLockState();
+      }
+      updateCursorOverlayVisibility();
+    });
     document.addEventListener("fullscreenchange", () => {
       updateFullscreenToggleLabel();
       updateScreenLayout();
     });
     dom.screenEl.addEventListener("loadedmetadata", () => {
-      updateScreenLayout();
+      scheduleScreenLayout(true);
       updateCursorBounds();
     });
     dom.screenEl.addEventListener("resize", () => {
-      updateScreenLayout();
+      scheduleScreenLayout();
       updateCursorBounds();
     });
     if (dom.streamProfile) {
@@ -2888,10 +3173,10 @@
     });
 
     window.addEventListener("resize", updateDrawerOffset);
-    window.addEventListener("resize", updateScreenLayout);
+    window.addEventListener("resize", () => scheduleScreenLayout());
     if (typeof ResizeObserver !== "undefined") {
       const resizeObserver = new ResizeObserver(() => {
-        updateScreenLayout();
+        scheduleScreenLayout();
       });
       resizeObserver.observe(dom.screenFrame);
     }

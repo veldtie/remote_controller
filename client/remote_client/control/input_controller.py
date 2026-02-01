@@ -234,6 +234,14 @@ class InputController:
         self._mouse_button = None
         self._keyboard_key = None
         self._fallback = None
+        if platform.system() == "Windows":
+            try:
+                self._fallback = _SendInputFallback()
+            except Exception as exc:  # pragma: no cover
+                logging.getLogger(__name__).warning(
+                    "SendInput fallback unavailable: %s", exc
+                )
+                self._fallback = None
         if platform.system() != "Windows" and not os.getenv("DISPLAY"):
             return
 
@@ -243,17 +251,14 @@ class InputController:
             spec = None
 
         if spec is None and "pynput" not in sys.modules:  # pragma: no cover
-            if platform.system() == "Windows":
-                try:
-                    self._fallback = _SendInputFallback()
-                    logging.getLogger(__name__).warning(
-                        "pynput is unavailable; falling back to SendInput."
-                    )
-                except Exception as exc:  # pragma: no cover
-                    logging.getLogger(__name__).warning(
-                        "pynput is unavailable; control commands will be ignored: %s",
-                        exc,
-                    )
+            if self._fallback is not None:
+                logging.getLogger(__name__).warning(
+                    "pynput is unavailable; falling back to SendInput."
+                )
+            else:
+                logging.getLogger(__name__).warning(
+                    "pynput is unavailable; control commands will be ignored."
+                )
             return
 
         try:
@@ -278,6 +283,10 @@ class InputController:
                 return
             self._execute_fallback(command)
             return
+        if self._fallback is not None and platform.system() == "Windows":
+            if isinstance(command, (MouseMove, MouseClick, MouseScroll)):
+                self._execute_fallback(command)
+                return
         if isinstance(command, MouseMove):
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height
@@ -285,6 +294,8 @@ class InputController:
             try:
                 self._mouse.position = (x, y)
             except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
                 return
         elif isinstance(command, MouseClick):
             x, y = self._scale_coordinates(
@@ -294,9 +305,11 @@ class InputController:
                 self._mouse.position = (x, y)
                 button = self._map_mouse_button(command.button)
                 if button is None:
-                    return
+                    raise RuntimeError("Mouse button unavailable")
                 self._mouse.click(button)
             except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
                 return
         elif isinstance(command, MouseScroll):
             x, y = self._scale_coordinates(
@@ -311,9 +324,15 @@ class InputController:
                 # pynput: positive dy scrolls up; browser deltaY is usually down.
                 self._mouse.scroll(delta_x, -delta_y)
             except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
                 return
         elif isinstance(command, KeyPress):
-            self._send_keypress(command.key)
+            try:
+                self._send_keypress(command.key)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
         elif isinstance(command, TextInput):
             text = command.text
             if not text:
@@ -321,6 +340,8 @@ class InputController:
             try:
                 self._keyboard.type(text)
             except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
                 return
 
     def _execute_fallback(self, command: ControlCommand) -> None:

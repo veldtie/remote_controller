@@ -102,7 +102,7 @@ class StabilizedControlHandler(ControlHandler):
 
     def handle(self, payload: dict[str, Any]) -> None:
         message_type = payload.get("type")
-        if message_type in {"mouse_move", "mouse_click", "mouse_scroll"} and self._stabilizer:
+        if message_type == "mouse_move" and self._stabilizer:
             handled = self._stabilizer.handle(payload)
             if handled:
                 return
