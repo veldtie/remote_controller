@@ -640,7 +640,6 @@ class DashboardPage(QtWidgets.QWidget):
     def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
         """Обработка списка клиентов от API (исправленная версия)."""
         if not api_clients:
-            logger.warning("No clients fetched from API")
             self.clients = []
             self.refresh_view()
             return
