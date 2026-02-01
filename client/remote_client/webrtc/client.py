@@ -502,9 +502,9 @@ class WebRTCClient:
                 return
             message_type = message.get("type")
             if message_type == "offer":
-                if peer_connection.connectionState in {"connecting", "connected", "disconnected"}:
-                    offer_mode = _normalize_session_mode(message.get("mode"))
-                    if offer_mode == "view":
+                offer_mode = _normalize_session_mode(message.get("mode"))
+                if peer_connection.connectionState in {"connecting", "connected"}:
+                    if offer_mode == "view" and self._current_mode == "manage":
                         continue
                 self._pending_offer = message
                 return
