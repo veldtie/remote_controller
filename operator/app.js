@@ -32,6 +32,7 @@
   const RECONNECT_JITTER_MS = 1000;
   const CONNECTION_READY_TIMEOUT_MS = 20000;
   const CONNECTION_DROP_GRACE_MS = 8000;
+  const RECONNECT_GRACE_AFTER_CONNECT_MS = 60000;
   const DEFAULT_ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
@@ -145,6 +146,7 @@
     connectReadyTimer: null,
     hadConnection: false,
     connectionDropTimer: null,
+    reconnectAllowedUntil: 0,
     panelCollapsed: false,
     textInputSupported: true,
     screenAspect: null,
@@ -1645,7 +1647,7 @@
       setModeLocked(false);
       state.connecting = false;
       cleanupConnection();
-      scheduleReconnect(reason);
+      scheduleReconnect(reason, true);
     }, CONNECTION_DROP_GRACE_MS);
   }
 
@@ -1658,14 +1660,15 @@
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
-      const shouldRetry = state.hadConnection;
+      const shouldRetry =
+        state.hadConnection || Date.now() <= state.reconnectAllowedUntil;
       setStatus(
         shouldRetry ? "Client not responding, retrying..." : "Client not responding",
         "warn"
       );
       cleanupConnection();
       if (shouldRetry) {
-        scheduleReconnect("No response");
+        scheduleReconnect("No response", true);
       }
     }, CONNECTION_READY_TIMEOUT_MS);
   }
@@ -1683,7 +1686,9 @@
   }
 
   function scheduleReconnect(reason = "", allowWithoutConnection = false) {
-    if (!allowWithoutConnection && !state.hadConnection) {
+    const now = Date.now();
+    const withinGrace = now <= state.reconnectAllowedUntil;
+    if (!allowWithoutConnection && !state.hadConnection && !withinGrace) {
       return;
     }
     if (state.connecting || state.isConnected) {
@@ -1881,6 +1886,7 @@
     }
     clearReconnectTimer();
     state.connecting = true;
+    state.reconnectAllowedUntil = Date.now() + RECONNECT_GRACE_AFTER_CONNECT_MS;
     setStatus("Connecting...", "warn");
     setConnected(false);
     setModeLocked(true);
@@ -1967,7 +1973,7 @@
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
-      scheduleReconnect("Disconnected");
+      scheduleReconnect("Disconnected", true);
     };
     signalingSocket.onerror = () => {
       if (signalingSocket !== state.signalingWebSocket) {
@@ -1984,7 +1990,7 @@
       setConnected(false);
       setModeLocked(false);
       state.connecting = false;
-      scheduleReconnect("Connection failed");
+      scheduleReconnect("Connection failed", true);
     };
     signalingSocket.onmessage = async (event) => {
       if (signalingSocket !== state.signalingWebSocket) {
@@ -2042,7 +2048,7 @@
           setModeLocked(false);
           state.connecting = false;
           cleanupConnection();
-          scheduleReconnect("Connection failed");
+          scheduleReconnect("Connection failed", true);
         } else if (connectionState === "disconnected") {
           setStatus("Connection unstable, waiting...", "warn");
           scheduleConnectionDrop("Disconnected");
