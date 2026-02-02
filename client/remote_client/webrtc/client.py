@@ -26,6 +26,7 @@ from remote_client.files.file_service import FileService, FileServiceError
 from remote_client.proxy.store import get_proxy_settings
 from remote_client.security.e2ee import E2EEContext, E2EEError
 from remote_client.config import resolve_ice_servers
+from remote_client import session_factory as session_factory_mod
 from remote_client.webrtc.signaling import WebSocketSignaling
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,8 @@ class WebRTCClient:
         self._pending_offer: dict[str, Any] | None = None
         self._current_mode: str = "manage"
         self._video_sender = None
+        self._cursor_mode_override: str | None = None
+        self._restart_event = asyncio.Event()
 
     def _build_rtc_configuration(self) -> RTCConfiguration:
         if self._force_host_only:
@@ -283,6 +286,7 @@ class WebRTCClient:
         """Run a single signaling and WebRTC session."""
         if self._force_host_only:
             logger.warning("Using host-only ICE (STUN/TURN disabled) for this session.")
+        self._restart_event.clear()
         peer_connection = RTCPeerConnection(self._build_rtc_configuration())
         self._video_sender = None
         connection_done = asyncio.Event()
@@ -586,10 +590,13 @@ class WebRTCClient:
                 self._signaling_loop(peer_connection, operator_id_holder, _apply_ice_candidate)
             )
             connection_task = asyncio.create_task(connection_done.wait())
+            restart_task = asyncio.create_task(self._restart_event.wait())
             done, pending = await asyncio.wait(
-                {signaling_task, connection_task},
+                {signaling_task, connection_task, restart_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if restart_task in done:
+                logger.info("Session restart requested by operator.")
             for task in pending:
                 task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -669,6 +676,56 @@ class WebRTCClient:
         action = payload.get("action")
         if not action:
             self._send_error(data_channel, "missing_action", "Message missing 'action'.")
+            return
+        if action == "session_config":
+            cursor_mode = payload.get("cursor_mode")
+            if cursor_mode is None:
+                self._send_error(
+                    data_channel,
+                    "missing_cursor_mode",
+                    "Session config missing 'cursor_mode'.",
+                )
+                return
+            normalized = str(cursor_mode).strip().lower()
+            if normalized in {"auto", "default"}:
+                normalized = ""
+            if normalized and normalized not in {
+                "independent",
+                "hidden",
+                "hidden_desktop",
+                "shared",
+                "visible",
+                "normal",
+                "desktop",
+            }:
+                self._send_error(
+                    data_channel,
+                    "invalid_cursor_mode",
+                    f"Unsupported cursor mode '{cursor_mode}'.",
+                )
+                return
+            desired = normalized or None
+            if desired != self._cursor_mode_override:
+                self._cursor_mode_override = desired
+                session_factory_mod.set_cursor_mode_override(desired)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": "session_config",
+                        "cursor_mode": desired or "auto",
+                        "status": "restarting",
+                    },
+                )
+                self._restart_event.set()
+            else:
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": "session_config",
+                        "cursor_mode": desired or "auto",
+                        "status": "ok",
+                    },
+                )
             return
         if action == "control":
             message_type = payload.get("type")
