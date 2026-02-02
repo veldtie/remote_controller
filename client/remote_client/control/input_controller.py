@@ -27,6 +27,25 @@ class MouseClick:
     x: int
     y: int
     button: MouseButton
+    count: int = 1
+    source_width: int | None = None
+    source_height: int | None = None
+
+
+@dataclass(frozen=True)
+class MouseDown:
+    x: int
+    y: int
+    button: MouseButton
+    source_width: int | None = None
+    source_height: int | None = None
+
+
+@dataclass(frozen=True)
+class MouseUp:
+    x: int
+    y: int
+    button: MouseButton
     source_width: int | None = None
     source_height: int | None = None
 
@@ -51,7 +70,7 @@ class TextInput:
     text: str
 
 
-ControlCommand = MouseMove | MouseClick | MouseScroll | KeyPress | TextInput
+ControlCommand = MouseMove | MouseClick | MouseDown | MouseUp | MouseScroll | KeyPress | TextInput
 
 
 class _SendInputFallback:
@@ -174,6 +193,34 @@ class _SendInputFallback:
                 self._mouse_input(0, 0, data, up),
             ]
         )
+
+    def press(self, button: str, screen_width: int, screen_height: int, x: int, y: int) -> None:
+        self.move(x, y, screen_width, screen_height)
+        if button == "right":
+            down, data = self.MOUSEEVENTF_RIGHTDOWN, 0
+        elif button == "middle":
+            down, data = self.MOUSEEVENTF_MIDDLEDOWN, 0
+        elif button == "x1":
+            down, data = self.MOUSEEVENTF_XDOWN, 1
+        elif button == "x2":
+            down, data = self.MOUSEEVENTF_XDOWN, 2
+        else:
+            down, data = self.MOUSEEVENTF_LEFTDOWN, 0
+        self._send([self._mouse_input(0, 0, data, down)])
+
+    def release(self, button: str, screen_width: int, screen_height: int, x: int, y: int) -> None:
+        self.move(x, y, screen_width, screen_height)
+        if button == "right":
+            up, data = self.MOUSEEVENTF_RIGHTUP, 0
+        elif button == "middle":
+            up, data = self.MOUSEEVENTF_MIDDLEUP, 0
+        elif button == "x1":
+            up, data = self.MOUSEEVENTF_XUP, 1
+        elif button == "x2":
+            up, data = self.MOUSEEVENTF_XUP, 2
+        else:
+            up, data = self.MOUSEEVENTF_LEFTUP, 0
+        self._send([self._mouse_input(0, 0, data, up)])
 
     def scroll(
         self,
@@ -314,7 +361,40 @@ class InputController:
                 button = self._map_mouse_button(command.button)
                 if button is None:
                     raise RuntimeError("Mouse button unavailable")
-                self._mouse.click(button)
+                count = int(command.count) if command.count else 1
+                if count < 1:
+                    count = 1
+                if count > 3:
+                    count = 3
+                self._mouse.click(button, count)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+                return
+        elif isinstance(command, MouseDown):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            try:
+                self._mouse.position = (x, y)
+                button = self._map_mouse_button(command.button)
+                if button is None:
+                    raise RuntimeError("Mouse button unavailable")
+                self._mouse.press(button)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+                return
+        elif isinstance(command, MouseUp):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            try:
+                self._mouse.position = (x, y)
+                button = self._map_mouse_button(command.button)
+                if button is None:
+                    raise RuntimeError("Mouse button unavailable")
+                self._mouse.release(button)
             except Exception:
                 if self._fallback:
                     self._execute_fallback(command)
@@ -366,7 +446,23 @@ class InputController:
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height
             )
-            self._fallback.click(command.button, screen_width, screen_height, x, y)
+            count = int(command.count) if command.count else 1
+            if count < 1:
+                count = 1
+            if count > 3:
+                count = 3
+            for _ in range(count):
+                self._fallback.click(command.button, screen_width, screen_height, x, y)
+        elif isinstance(command, MouseDown):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._fallback.press(command.button, screen_width, screen_height, x, y)
+        elif isinstance(command, MouseUp):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._fallback.release(command.button, screen_width, screen_height, x, y)
         elif isinstance(command, MouseScroll):
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height

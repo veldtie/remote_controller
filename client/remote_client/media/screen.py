@@ -67,6 +67,10 @@ class ScreenTrack(VideoStreamTrack):
         """Update stream scaling based on a named profile or dimensions."""
         self._profile.apply_profile(profile=profile, width=width, height=height, fps=fps)
 
+    def set_draw_cursor(self, enabled: bool) -> None:
+        """Toggle cursor rendering on the captured frame."""
+        self._draw_cursor_enabled = bool(enabled)
+
     def _maybe_adjust_profile(self, processing_time: float) -> None:
         self._profile.maybe_adjust(processing_time)
 

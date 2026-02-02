@@ -306,6 +306,7 @@ class HiddenDesktopCapture:
     def __init__(self, desktop_handle: wintypes.HANDLE, draw_cursor: bool = True, fps: int = 30) -> None:
         self._desktop_handle = desktop_handle
         self._draw_cursor = draw_cursor
+        self._cursor_lock = threading.Lock()
         self._interval_lock = threading.Lock()
         self._interval = 1.0 / max(1, fps)
         self._stop_event = threading.Event()
@@ -325,6 +326,11 @@ class HiddenDesktopCapture:
         with self._interval_lock:
             self._interval = 1.0 / max(1, fps)
 
+    def set_draw_cursor(self, enabled: bool) -> None:
+        with self._cursor_lock:
+            self._draw_cursor = bool(enabled)
+            self._cursor_drawer = _CursorDrawer() if self._draw_cursor else None
+
     def _get_interval(self) -> float:
         with self._interval_lock:
             return self._interval
@@ -334,8 +340,11 @@ class HiddenDesktopCapture:
             return
         while not self._stop_event.is_set():
             frame = _capture_frame(*self._frame_size)
-            if frame is not None and self._cursor_drawer:
-                self._cursor_drawer.draw(frame)
+            if frame is not None:
+                with self._cursor_lock:
+                    drawer = self._cursor_drawer
+                if drawer:
+                    drawer.draw(frame)
             if frame is not None:
                 self._put_latest(frame)
             if self._stop_event.wait(self._get_interval()):
@@ -390,6 +399,9 @@ class HiddenDesktopTrack(VideoStreamTrack):
         """Update stream scaling based on a named profile or dimensions."""
         self._profile.apply_profile(profile=profile, width=width, height=height, fps=fps)
         self._frame_source.set_fps(self._profile.target_fps)
+
+    def set_draw_cursor(self, enabled: bool) -> None:
+        self._frame_source.set_draw_cursor(enabled)
 
     def _maybe_adjust_profile(self, processing_time: float) -> None:
         fps_changed = self._profile.maybe_adjust(processing_time)
