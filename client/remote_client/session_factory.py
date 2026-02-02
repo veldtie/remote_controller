@@ -16,6 +16,17 @@ from remote_client.webrtc.client import SessionResources
 
 logger = logging.getLogger(__name__)
 
+_CURSOR_MODE_OVERRIDE: str | None = None
+
+
+def set_cursor_mode_override(value: str | None) -> None:
+    global _CURSOR_MODE_OVERRIDE
+    if value is None:
+        _CURSOR_MODE_OVERRIDE = None
+        return
+    cleaned = str(value).strip().lower()
+    _CURSOR_MODE_OVERRIDE = cleaned or None
+
 
 def _normalize_mode(mode: str | None) -> str:
     if not mode:
@@ -27,6 +38,11 @@ def _normalize_mode(mode: str | None) -> str:
 
 
 def _hidden_desktop_enabled() -> bool:
+    override = _CURSOR_MODE_OVERRIDE
+    if override in {"independent", "hidden", "hidden_desktop"}:
+        return True
+    if override in {"shared", "visible", "normal", "desktop"}:
+        return False
     cursor_mode = os.getenv("RC_CURSOR_MODE", "").strip().lower()
     if cursor_mode in {"independent", "hidden", "hidden_desktop"}:
         return True

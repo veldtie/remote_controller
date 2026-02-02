@@ -511,6 +511,9 @@
   function updateInteractionMode() {
     state.controlEnabled = dom.interactionToggle.checked;
     syncInteractionToggle();
+    if (!dom.cursorVisibilityToggle) {
+      state.remoteCursorVisible = !state.controlEnabled;
+    }
     const label = state.controlEnabled ? "Managing" : "Viewing";
     dom.interactionState.textContent = label;
     dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";

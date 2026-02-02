@@ -910,6 +910,11 @@
         remdesk.drainProxyQueue();
         void remdesk.retryPendingExport();
         remdesk.setRemoteCursorVisibility(state.remoteCursorVisible, true);
+        if (state.controlEnabled) {
+          void sendAction({ action: "session_config", cursor_mode: "independent" });
+        } else {
+          void sendAction({ action: "session_config", cursor_mode: "shared" });
+        }
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
           remdesk.toggleStorage(true);
         }
