@@ -624,9 +624,6 @@ class HiddenDesktopSession:
         )
         self._processes.append(process)
 
-    def get_capture_error(self) -> str | None:
-        return self._capture.get_last_error()
-
     def close(self) -> None:
         self._capture.close()
         self._input.close()
