@@ -52,7 +52,6 @@ DEFAULT_SETTINGS = {
         "mode": "onefile",
         "console": "hide",
     },
-    "cookie_download_dir": "",
 }
 
 

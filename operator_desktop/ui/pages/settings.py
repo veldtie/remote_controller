@@ -132,28 +132,6 @@ class SettingsPage(QtWidgets.QWidget):
         account_layout.addWidget(self.profile_status)
         content.addWidget(self.account_card)
 
-        self.data_card = QtWidgets.QFrame()
-        self.data_card.setObjectName("SettingsCard")
-        data_layout = QtWidgets.QVBoxLayout(self.data_card)
-        data_layout.setContentsMargins(14, 10, 14, 10)
-        data_layout.setSpacing(8)
-        self.data_title = QtWidgets.QLabel()
-        self.data_title.setStyleSheet("font-weight: 800;")
-        data_layout.addWidget(self.data_title)
-        self.cookies_folder_label = QtWidgets.QLabel()
-        cookies_row = QtWidgets.QHBoxLayout()
-        cookies_row.setSpacing(8)
-        cookies_row.addWidget(self.cookies_folder_label, 1)
-        self.cookies_folder_input = QtWidgets.QLineEdit()
-        self.cookies_folder_input.setMinimumWidth(240)
-        self.cookies_folder_input.editingFinished.connect(self._save_cookie_folder)
-        cookies_row.addWidget(self.cookies_folder_input)
-        self.cookies_folder_button = make_button("", "ghost")
-        self.cookies_folder_button.clicked.connect(self.pick_cookie_folder)
-        cookies_row.addWidget(self.cookies_folder_button)
-        data_layout.addLayout(cookies_row)
-        content.addWidget(self.data_card)
-
         actions_layout = QtWidgets.QHBoxLayout()
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(8)
@@ -223,9 +201,6 @@ class SettingsPage(QtWidgets.QWidget):
             self.role_combo.setCurrentIndex(role_index)
         self.name_input.setText(self._current_display_name())
         self.password_input.clear()
-        self.cookies_folder_input.setText(
-            str(self.settings.get("cookie_download_dir", "") or "")
-        )
         self._sync_profile_state()
         self._sync_moderator_controls()
 
@@ -256,7 +231,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.theme_light.setText(self.i18n.t("settings_theme_light"))
         self.language_label.setText(self.i18n.t("settings_language"))
         self.account_label.setText(self.i18n.t("settings_account"))
-        self.data_title.setText(self.i18n.t("settings_data"))
         self.role_combo.setItemText(0, self.i18n.t("settings_role_operator"))
         self.role_combo.setItemText(1, self.i18n.t("settings_role_administrator"))
         self.role_combo.setItemText(2, self.i18n.t("settings_role_moderator"))
@@ -264,11 +238,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.name_input.setPlaceholderText(self.i18n.t("settings_name_placeholder"))
         self.password_label.setText(self.i18n.t("settings_password"))
         self.password_input.setPlaceholderText(self.i18n.t("settings_password_placeholder"))
-        self.cookies_folder_label.setText(self.i18n.t("settings_cookies_folder"))
-        self.cookies_folder_input.setPlaceholderText(
-            self.i18n.t("settings_cookies_folder_placeholder")
-        )
-        self.cookies_folder_button.setText(self.i18n.t("settings_browse"))
         self.save_profile_button.setText(self.i18n.t("settings_save"))
         self.error_log_button.setText(self.i18n.t("settings_error_log_download"))
         self.about_label.setText(self.i18n.t("settings_about"))
@@ -279,23 +248,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.data_button.setText(self.i18n.t("settings_clear"))
         self._sync_profile_state()
         self._sync_moderator_controls()
-
-    def pick_cookie_folder(self) -> None:
-        current = self.cookies_folder_input.text().strip()
-        path = QtWidgets.QFileDialog.getExistingDirectory(
-            self,
-            self.i18n.t("settings_cookies_folder"),
-            current,
-        )
-        if not path:
-            return
-        self.cookies_folder_input.setText(path)
-        self._save_cookie_folder()
-
-    def _save_cookie_folder(self) -> None:
-        path = self.cookies_folder_input.text().strip()
-        self.settings.set("cookie_download_dir", path)
-        self.settings.save()
 
     def _set_profile_status(self, message: str, status: str = "idle") -> None:
         self.profile_status.setText(message)

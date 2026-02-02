@@ -156,7 +156,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
-        cookie_download_dir: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -183,7 +182,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._pending_proxy_requests: list[dict[str, object]] = []
         self._download_override_dir: str | None = None
         self._download_override_name: str | None = None
-        self._cookie_download_dir = (cookie_download_dir or "").strip()
         self._web_channel: QWebChannel | None = None
         self._download_bridge: DownloadBridge | None = None
         self._primary_url: QtCore.QUrl | None = None
@@ -344,8 +342,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self._download_override_dir = None
             self._download_override_name = None
         is_cookie_download = filename.lower().startswith("cookies_")
-        if not directory and is_cookie_download and self._cookie_download_dir:
-            directory = self._cookie_download_dir
         if not directory and is_cookie_download:
             start_dir = self._last_download_dir or ""
             folder = QtWidgets.QFileDialog.getExistingDirectory(
@@ -394,8 +390,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self._download_override_name = None
         else:
             is_cookie_download = name.lower().startswith("cookies_")
-            if is_cookie_download and self._cookie_download_dir:
-                directory = self._cookie_download_dir
             if (
                 is_cookie_download
                 and self.isVisible()
