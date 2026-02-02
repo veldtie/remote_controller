@@ -33,7 +33,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python -m pip install -r requirements-client.txt >> "%LOG_PATH%" 2>&1
+set "REQ_FILE=%SCRIPT_DIR%..\\requirements.txt"
+if exist "%REQ_FILE%" (
+    python -m pip install -r "%REQ_FILE%" >> "%LOG_PATH%" 2>&1
+) else (
+    python -m pip install -r requirements-client.txt >> "%LOG_PATH%" 2>&1
+)
 if errorlevel 1 (
     echo Ошибка установки зависимостей. См. %LOG_PATH%
     popd

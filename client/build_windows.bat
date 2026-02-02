@@ -25,8 +25,14 @@ call .venv\\Scripts\\activate.bat
 echo Обновляем pip/setuptools/wheel...
 python -m pip install --upgrade pip setuptools wheel
 
-echo Устанавливаем зависимости клиента...
-python -m pip install -r requirements-client.txt
+set "REQ_FILE=%SCRIPT_DIR%..\\requirements.txt"
+if exist "%REQ_FILE%" (
+    echo Устанавливаем общие зависимости проекта...
+    python -m pip install -r "%REQ_FILE%"
+) else (
+    echo Устанавливаем зависимости клиента...
+    python -m pip install -r requirements-client.txt
+)
 if errorlevel 1 (
     echo Установка зависимостей завершилась с ошибкой.
     popd

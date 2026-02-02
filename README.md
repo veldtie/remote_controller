@@ -30,13 +30,26 @@ docker compose --project-directory server -f server/deploy/docker/docker-compose
 
 ## Быстрый старт (ручной запуск)
 
+### Общие зависимости (единый файл)
+
+Самый простой способ — установить все зависимости сразу:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Далее запускайте нужные компоненты из этой же среды.
+
+> Примечание: в папках компонентов остаются локальные `requirements*.txt` для минимальных установок,
+> но для стабильной работы всего проекта достаточно `requirements.txt` в корне.
+
 ### 1) Сервер (FastAPI)
 
 ```bash
 cd server/app
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r ../../requirements.txt
 python signaling_server.py
 ```
 
@@ -44,9 +57,7 @@ python signaling_server.py
 
 ```bash
 cd client
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements-client.txt
+pip install -r ../requirements.txt
 python client.py
 ```
 
@@ -58,9 +69,7 @@ python client.py
 
 ```bash
 cd operator_desktop
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 python -m operator_desktop
 ```
 

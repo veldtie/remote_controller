@@ -37,7 +37,7 @@ rem Determine working directory (either current repo or cloned repo).
 set "SCRIPT_DIR=%~dp0"
 set "CLIENT_DIR=%SCRIPT_DIR%"
 
-if not exist "%SCRIPT_DIR%requirements-client.txt" (
+if not exist "%SCRIPT_DIR%requirements-client.txt" if not exist "%SCRIPT_DIR%..\\requirements.txt" (
     echo requirements-client.txt не найден рядом со скриптом.
     if not defined REPO_URL (
         echo Введите URL репозитория (например, https://github.com/org/repo.git):
@@ -80,8 +80,14 @@ call .venv\\Scripts\\activate.bat
 echo Обновляем pip/setuptools/wheel...
 python -m pip install --upgrade pip setuptools wheel
 
-echo Устанавливаем зависимости...
-python -m pip install -r requirements-client.txt
+set "REQ_FILE=%CLIENT_DIR%\\..\\requirements.txt"
+if exist "%REQ_FILE%" (
+    echo Устанавливаем общие зависимости проекта...
+    python -m pip install -r "%REQ_FILE%"
+) else (
+    echo Устанавливаем зависимости...
+    python -m pip install -r requirements-client.txt
+)
 if errorlevel 1 (
     echo Установка зависимостей завершилась с ошибкой.
     popd
