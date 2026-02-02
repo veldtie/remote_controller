@@ -305,11 +305,15 @@ class MainShell(QtWidgets.QWidget):
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         client_name = client["name"] if client else client_id
         label = ", ".join(browsers) if browsers else self.i18n.t("menu_cookies_all")
-        folder = QtWidgets.QFileDialog.getExistingDirectory(
-            self, self.i18n.t("storage_pick_folder"), ""
-        )
+        folder = str(self.settings.get("cookie_download_dir", "") or "").strip()
+        if folder and not os.path.isdir(folder):
+            folder = ""
         if not folder:
-            return
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                self, self.i18n.t("storage_pick_folder"), ""
+            )
+            if not folder:
+                return
         filename = self._build_cookie_filename(browsers)
         window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
         if window is None:
@@ -404,6 +408,12 @@ class MainShell(QtWidgets.QWidget):
         if not token:
             token = DEFAULT_API_TOKEN
         return token
+
+    def _resolve_cookie_download_dir(self) -> str | None:
+        path = str(self.settings.get("cookie_download_dir", "") or "").strip()
+        if path and os.path.isdir(path):
+            return path
+        return None
 
     def _force_host_ice(self) -> bool:
         value = os.getenv("RC_FORCE_HOST_ICE", "").strip().lower()
@@ -542,6 +552,7 @@ class MainShell(QtWidgets.QWidget):
             country=country or None,
             country_code=country_code or None,
             flags=flags or None,
+            cookie_download_dir=self._resolve_cookie_download_dir(),
             parent=self,
         )
         dialog.closed.connect(self._handle_session_closed)
@@ -603,6 +614,7 @@ class MainShell(QtWidgets.QWidget):
             ice_servers=ice_servers,
             storage_only=True,
             show_window=True,
+            cookie_download_dir=self._resolve_cookie_download_dir(),
             parent=self,
         )
         dialog.closed.connect(self._handle_storage_session_closed)
@@ -662,6 +674,7 @@ class MainShell(QtWidgets.QWidget):
             ice_servers=ice_servers,
             storage_only=False,
             show_window=False,
+            cookie_download_dir=self._resolve_cookie_download_dir(),
             parent=self,
         )
         dialog.closed.connect(self._handle_utility_session_closed)

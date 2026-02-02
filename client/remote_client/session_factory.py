@@ -34,7 +34,7 @@ def _hidden_desktop_enabled() -> bool:
         return False
     value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP")
     if value is None or value.strip() == "":
-        return True
+        return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
