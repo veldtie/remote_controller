@@ -170,15 +170,18 @@
       Number.parseFloat(style.getPropertyValue("--workspace-left")) || 320;
     const workspaceBottom =
       Number.parseFloat(style.getPropertyValue("--workspace-bottom")) || 120;
+    const workspaceTop =
+      Number.parseFloat(style.getPropertyValue("--workspace-top")) || edgeGap;
     const availableWidth = Math.max(0, window.innerWidth - workspaceLeft - edgeGap);
     const availableHeight = Math.max(
       0,
-      window.innerHeight - workspaceBottom - edgeGap * 2
+      window.innerHeight - workspaceTop - workspaceBottom - edgeGap
     );
     return {
       edgeGap,
       workspaceLeft,
       workspaceBottom,
+      workspaceTop,
       availableWidth,
       availableHeight
     };
@@ -195,9 +198,9 @@
       dom.screenFrame.style.removeProperty("height");
       return;
     }
-    const { edgeGap, workspaceLeft, workspaceBottom, availableWidth, availableHeight } =
+    const { edgeGap, workspaceLeft, workspaceBottom, workspaceTop, availableWidth, availableHeight } =
       getWorkspaceBounds();
-    dom.screenFrame.style.top = `${edgeGap}px`;
+    dom.screenFrame.style.top = `${workspaceTop}px`;
     dom.screenFrame.style.left = `${workspaceLeft}px`;
     dom.screenFrame.style.width = `${availableWidth}px`;
     dom.screenFrame.style.height = `${availableHeight}px`;

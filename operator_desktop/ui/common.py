@@ -29,15 +29,15 @@ class BackgroundWidget(QtWidgets.QWidget):
         glow.setAlpha(60)
         painter.setBrush(glow)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.2), int(rect.height() * 0.1)), 220, 220)
+        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.2), int(rect.height() * 0.06)), 220, 220)
 
         accent = QtGui.QColor(self.theme.colors["accent"])
         accent.setAlpha(40)
         painter.setBrush(accent)
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.85), int(rect.height() * 0.2)), 180, 180)
+        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.85), int(rect.height() * 0.12)), 180, 180)
 
         painter.setBrush(QtGui.QColor(self.theme.colors["accent_soft"]))
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.7), int(rect.height() * 0.9)), 260, 260)
+        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.7), int(rect.height() * 0.72)), 260, 260)
 
         painter.end()
 
