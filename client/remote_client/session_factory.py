@@ -17,6 +17,7 @@ from remote_client.webrtc.client import SessionResources
 logger = logging.getLogger(__name__)
 
 _CURSOR_MODE_OVERRIDE: str | None = None
+_LAST_HIDDEN_DESKTOP_ERROR: str | None = None
 
 
 def set_cursor_mode_override(value: str | None) -> None:
@@ -26,6 +27,15 @@ def set_cursor_mode_override(value: str | None) -> None:
         return
     cleaned = str(value).strip().lower()
     _CURSOR_MODE_OVERRIDE = cleaned or None
+
+
+def _set_hidden_desktop_error(reason: str | None) -> None:
+    global _LAST_HIDDEN_DESKTOP_ERROR
+    _LAST_HIDDEN_DESKTOP_ERROR = reason
+
+
+def get_last_hidden_desktop_error() -> str | None:
+    return _LAST_HIDDEN_DESKTOP_ERROR
 
 
 def _normalize_mode(mode: str | None) -> str:
@@ -104,6 +114,7 @@ def _compose_close(
 
 def build_session_resources(mode: str | None) -> SessionResources:
     normalized = _normalize_mode(mode)
+    _set_hidden_desktop_error(None)
     if normalized == "view":
         cursor_controller = CursorVisibilityController()
         controller = NullInputController()
@@ -137,12 +148,16 @@ def build_session_resources(mode: str | None) -> SessionResources:
         try:
             from remote_client.windows.hidden_desktop import HiddenDesktopSession
         except Exception as exc:
-            logger.warning("Hidden desktop unavailable, falling back: %s", exc)
+            reason = f"Hidden desktop unavailable: {exc}"
+            _set_hidden_desktop_error(reason)
+            logger.warning("%s", reason)
         else:
             try:
                 session = HiddenDesktopSession()
             except Exception as exc:
-                logger.warning("Hidden desktop init failed, falling back: %s", exc)
+                reason = f"Hidden desktop init failed: {exc}"
+                _set_hidden_desktop_error(reason)
+                logger.warning("%s", reason)
             else:
                 control_handler = ControlHandler(session.input_controller)
                 media_tracks: list[Any] = [session.screen_track]
@@ -169,6 +184,11 @@ def build_session_resources(mode: str | None) -> SessionResources:
                         None, session.screen_track, False
                     ),
                 )
+    else:
+        if platform.system() != "Windows":
+            _set_hidden_desktop_error("Hidden desktop is only supported on Windows.")
+        elif not _hidden_desktop_enabled():
+            _set_hidden_desktop_error("Hidden desktop disabled by configuration.")
 
     cursor_controller = CursorVisibilityController()
     controller = InputController()

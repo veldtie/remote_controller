@@ -705,15 +705,20 @@ class WebRTCClient:
                 )
                 return
             desired = normalized or None
+            desired_hidden = desired in {"independent", "hidden", "hidden_desktop"}
+            current_hidden = bool(session_actions and session_actions.launch_app)
+            restart_needed = desired is not None and desired_hidden != current_hidden
             if desired != self._cursor_mode_override:
                 self._cursor_mode_override = desired
                 session_factory_mod.set_cursor_mode_override(desired)
+            if restart_needed:
                 self._send_payload(
                     data_channel,
                     {
                         "action": "session_config",
                         "cursor_mode": desired or "auto",
                         "status": "restarting",
+                        "hidden_active": current_hidden,
                     },
                 )
                 self._restart_event.set()
@@ -724,6 +729,7 @@ class WebRTCClient:
                         "action": "session_config",
                         "cursor_mode": desired or "auto",
                         "status": "ok",
+                        "hidden_active": current_hidden,
                     },
                 )
             return
@@ -825,10 +831,15 @@ class WebRTCClient:
                 self._send_error(data_channel, "missing_app", "Launch missing 'app'.")
                 return
             if not session_actions or not session_actions.launch_app:
+                reason = session_factory_mod.get_last_hidden_desktop_error()
+                if reason:
+                    message = f"Application launch is unavailable: {reason}"
+                else:
+                    message = "Application launch is unavailable for this session."
                 self._send_error(
                     data_channel,
                     "unsupported",
-                    "Application launch is unavailable for this session.",
+                    message,
                 )
                 return
             try:

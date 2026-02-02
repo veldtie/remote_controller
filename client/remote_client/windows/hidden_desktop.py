@@ -111,6 +111,7 @@ BI_RGB = 0
 
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
+UOI_NAME = 2
 
 
 if user32:
@@ -127,6 +128,15 @@ if user32:
     user32.CloseDesktop.restype = wintypes.BOOL
     user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
     user32.SetThreadDesktop.restype = wintypes.BOOL
+    user32.GetProcessWindowStation.restype = wintypes.HANDLE
+    user32.GetUserObjectInformationW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetUserObjectInformationW.restype = wintypes.BOOL
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -180,7 +190,8 @@ def _set_thread_desktop(handle: wintypes.HANDLE) -> bool:
     if not user32:
         return False
     if not user32.SetThreadDesktop(handle):
-        logger.warning("SetThreadDesktop failed: %s", ctypes.get_last_error())
+        error_code = ctypes.get_last_error()
+        logger.warning("SetThreadDesktop failed: %s", ctypes.WinError(error_code))
         return False
     return True
 
@@ -193,19 +204,56 @@ def _get_screen_size() -> tuple[int, int]:
     return int(width), int(height)
 
 
-def _capture_frame(width: int, height: int):
-    if not user32 or not gdi32:
+def _format_win_error(stage: str) -> str:
+    error_code = ctypes.get_last_error()
+    return f"{stage} failed (winerror={error_code}): {ctypes.WinError(error_code)}"
+
+
+def _get_window_station_name() -> str | None:
+    if not user32:
         return None
+    handle = user32.GetProcessWindowStation()
+    if not handle:
+        return None
+    needed = wintypes.DWORD()
+    user32.GetUserObjectInformationW(handle, UOI_NAME, None, 0, ctypes.byref(needed))
+    if needed.value == 0:
+        return None
+    buffer = ctypes.create_unicode_buffer(needed.value)
+    if not user32.GetUserObjectInformationW(
+        handle, UOI_NAME, buffer, needed, ctypes.byref(needed)
+    ):
+        return None
+    return buffer.value
+
+
+def _resolve_desktop_path(name: str) -> str:
+    winsta = _get_window_station_name()
+    if winsta:
+        return f"{winsta}\\{name}"
+    return f"WinSta0\\{name}"
+
+
+def _capture_frame(width: int, height: int) -> tuple[object | None, str | None]:
+    if not user32 or not gdi32:
+        return None, "win32_capture_unavailable"
+    if width <= 0 or height <= 0:
+        return None, f"invalid_frame_size {width}x{height}"
     hwnd = user32.GetDesktopWindow()
+    if not hwnd:
+        return None, _format_win_error("GetDesktopWindow")
     hdc = user32.GetDC(hwnd)
     if not hdc:
-        return None
+        return None, _format_win_error("GetDC")
     memdc = gdi32.CreateCompatibleDC(hdc)
+    if not memdc:
+        user32.ReleaseDC(hwnd, hdc)
+        return None, _format_win_error("CreateCompatibleDC")
     bmp = gdi32.CreateCompatibleBitmap(hdc, width, height)
     if not bmp:
         user32.ReleaseDC(hwnd, hdc)
         gdi32.DeleteDC(memdc)
-        return None
+        return None, _format_win_error("CreateCompatibleBitmap")
     gdi32.SelectObject(memdc, bmp)
     if not gdi32.BitBlt(
         memdc,
@@ -218,10 +266,11 @@ def _capture_frame(width: int, height: int):
         0,
         SRCCOPY | CAPTUREBLT,
     ):
+        err = _format_win_error("BitBlt")
         gdi32.DeleteObject(bmp)
         gdi32.DeleteDC(memdc)
         user32.ReleaseDC(hwnd, hdc)
-        return None
+        return None, err
 
     info = BITMAPINFO()
     info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -233,19 +282,23 @@ def _capture_frame(width: int, height: int):
     buffer_size = width * height * 4
     buffer = ctypes.create_string_buffer(buffer_size)
     if not gdi32.GetDIBits(memdc, bmp, 0, height, buffer, ctypes.byref(info), DIB_RGB_COLORS):
+        err = _format_win_error("GetDIBits")
         gdi32.DeleteObject(bmp)
         gdi32.DeleteDC(memdc)
         user32.ReleaseDC(hwnd, hdc)
-        return None
+        return None, err
 
     gdi32.DeleteObject(bmp)
     gdi32.DeleteDC(memdc)
     user32.ReleaseDC(hwnd, hdc)
 
-    import numpy as np
+    try:
+        import numpy as np
+    except Exception as exc:
+        return None, f"numpy_import_failed: {exc}"
 
     frame = np.frombuffer(buffer, dtype=np.uint8).reshape((height, width, 4))
-    return frame[:, :, :3]
+    return frame[:, :, :3], None
 
 
 class _CursorDrawer:
@@ -313,6 +366,10 @@ class HiddenDesktopCapture:
         self._queue: queue.Queue = queue.Queue(maxsize=1)
         self._frame_size = _get_screen_size()
         self._cursor_drawer = _CursorDrawer() if draw_cursor else None
+        self._last_error: str | None = None
+        self._failure_count = 0
+        self._last_error_log = 0.0
+        self._first_frame_logged = False
         self._thread = threading.Thread(target=self._run, name="HiddenDesktopCapture", daemon=True)
         self._thread.start()
 
@@ -337,16 +394,30 @@ class HiddenDesktopCapture:
 
     def _run(self) -> None:
         if not _set_thread_desktop(self._desktop_handle):
+            self._last_error = "SetThreadDesktop failed"
             return
         while not self._stop_event.is_set():
-            frame = _capture_frame(*self._frame_size)
+            frame, error = _capture_frame(*self._frame_size)
             if frame is not None:
                 with self._cursor_lock:
                     drawer = self._cursor_drawer
                 if drawer:
                     drawer.draw(frame)
             if frame is not None:
+                if not self._first_frame_logged:
+                    logger.info("Hidden desktop capture started (%sx%s).", *self._frame_size)
+                    self._first_frame_logged = True
+                self._failure_count = 0
+                self._last_error = None
                 self._put_latest(frame)
+            else:
+                self._failure_count += 1
+                if error:
+                    self._last_error = error
+                    now = time.monotonic()
+                    if self._failure_count == 1 or now - self._last_error_log > 5.0:
+                        logger.warning("Hidden desktop capture failed: %s", error)
+                        self._last_error_log = now
             if self._stop_event.wait(self._get_interval()):
                 break
 
@@ -368,6 +439,9 @@ class HiddenDesktopCapture:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
             return None
+
+    def get_last_error(self) -> str | None:
+        return self._last_error
 
     def close(self) -> None:
         self._stop_event.set()
@@ -470,7 +544,9 @@ class HiddenDesktopSession:
         if platform.system() != "Windows":
             raise RuntimeError("Hidden desktop is only supported on Windows.")
         self.name = name or f"rc_hidden_{uuid.uuid4().hex[:8]}"
+        self._desktop_path = _resolve_desktop_path(self.name)
         self._handle = _create_desktop(self.name)
+        logger.info("Hidden desktop created: %s", self._desktop_path)
         self._processes: list[subprocess.Popen] = []
         self._profile_dirs: dict[str, str] = {}
         if start_shell:
@@ -487,7 +563,7 @@ class HiddenDesktopSession:
     def _start_shell(self) -> None:
         try:
             startup = subprocess.STARTUPINFO()
-            startup.lpDesktop = self.name
+            startup.lpDesktop = self._desktop_path
             startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startup.wShowWindow = 1
             self._processes.append(subprocess.Popen("explorer.exe", startupinfo=startup))
@@ -495,7 +571,7 @@ class HiddenDesktopSession:
             logger.warning("Failed to start explorer on hidden desktop: %s", exc)
             try:
                 startup = subprocess.STARTUPINFO()
-                startup.lpDesktop = self.name
+                startup.lpDesktop = self._desktop_path
                 startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startup.wShowWindow = 1
                 self._processes.append(subprocess.Popen("cmd.exe", startupinfo=startup))
@@ -537,7 +613,7 @@ class HiddenDesktopSession:
                 "-no-remote",
             ]
         startup = subprocess.STARTUPINFO()
-        startup.lpDesktop = self.name
+        startup.lpDesktop = self._desktop_path
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 1
         process = subprocess.Popen(
