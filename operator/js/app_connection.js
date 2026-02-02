@@ -756,8 +756,21 @@
         try {
           await state.peerConnection.setRemoteDescription(payload);
         } catch (error) {
+          const errorName = error && error.name ? error.name : "";
+          const errorMessage = error && error.message ? error.message : "";
+          const signalingState = state.peerConnection.signalingState;
+          console.warn("Failed to set remote answer", {
+            name: errorName,
+            message: errorMessage,
+            signalingState
+          });
+          if (
+            errorName === "InvalidStateError" ||
+            /state|signaling|stable/i.test(errorMessage)
+          ) {
+            return;
+          }
           remdesk.setStatus("Connection failed", "bad");
-          console.warn("Failed to set remote answer", error);
           cleanupConnection();
           scheduleReconnect("Connection failed");
           return;
