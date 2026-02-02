@@ -375,6 +375,13 @@
     if (!url.startsWith("stun:") && !url.startsWith("turn:") && !url.startsWith("turns:")) {
       return;
     }
+    console.warn("ICE candidate error", {
+      url: event.url,
+      errorCode: event.errorCode,
+      errorText: event.errorText,
+      address: event.address,
+      port: event.port
+    });
     state.iceErrorCount += 1;
     if (state.iceFallbackTried || state.isConnected) {
       return;

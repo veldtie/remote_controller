@@ -182,6 +182,8 @@
     iceErrorCount: 0,
     iceFallbackTried: false,
     allowIceFallback: false,
+    pendingIce: [],
+    lastIceStatsAt: 0,
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,

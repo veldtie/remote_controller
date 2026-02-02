@@ -203,6 +203,82 @@
     }
   }
 
+  async function logIceStats(reason) {
+    const pc = state.peerConnection;
+    if (!pc || typeof pc.getStats !== "function") {
+      return;
+    }
+    const now = Date.now();
+    if (state.lastIceStatsAt && now - state.lastIceStatsAt < 2000) {
+      return;
+    }
+    state.lastIceStatsAt = now;
+    let stats;
+    try {
+      stats = await pc.getStats();
+    } catch (error) {
+      console.warn("Failed to read ICE stats", error);
+      return;
+    }
+    let localCount = 0;
+    let remoteCount = 0;
+    const candidatesById = {};
+    const pairs = [];
+    stats.forEach((report) => {
+      if (report.type === "local-candidate") {
+        localCount += 1;
+        candidatesById[report.id] = report;
+      } else if (report.type === "remote-candidate") {
+        remoteCount += 1;
+        candidatesById[report.id] = report;
+      } else if (report.type === "candidate-pair") {
+        pairs.push(report);
+      }
+    });
+    const pairStates = {};
+    for (const pair of pairs) {
+      const key = pair.state || "unknown";
+      pairStates[key] = (pairStates[key] || 0) + 1;
+    }
+    const selected = pairs.find((pair) => pair.nominated || pair.selected);
+    const selectedLocal = selected ? candidatesById[selected.localCandidateId] : null;
+    const selectedRemote = selected ? candidatesById[selected.remoteCandidateId] : null;
+    console.warn("ICE stats", {
+      reason,
+      signaling: pc.signalingState,
+      ice: pc.iceConnectionState,
+      connection: pc.connectionState,
+      localCandidates: localCount,
+      remoteCandidates: remoteCount,
+      candidatePairs: pairs.length,
+      pairStates,
+      selectedPair: selected
+        ? {
+            state: selected.state,
+            nominated: selected.nominated,
+            currentRoundTripTime: selected.currentRoundTripTime,
+            totalRoundTripTime: selected.totalRoundTripTime,
+            local: selectedLocal
+              ? {
+                  address: selectedLocal.address,
+                  port: selectedLocal.port,
+                  protocol: selectedLocal.protocol,
+                  candidateType: selectedLocal.candidateType
+                }
+              : null,
+            remote: selectedRemote
+              ? {
+                  address: selectedRemote.address,
+                  port: selectedRemote.port,
+                  protocol: selectedRemote.protocol,
+                  candidateType: selectedRemote.candidateType
+                }
+              : null
+          }
+        : null
+    });
+  }
+
   function scheduleConnectionDrop(reason) {
     if (state.connectionDropTimer) {
       return;
@@ -224,6 +300,7 @@
       if (channel && channel.readyState === "open") {
         return;
       }
+      void logIceStats(`connection_drop:${reason}`);
       remdesk.setStatus("Disconnected", "bad");
       remdesk.setConnected(false);
       remdesk.setModeLocked(false);
@@ -247,6 +324,7 @@
         shouldRetry ? "Client not responding, retrying..." : "Client not responding",
         "warn"
       );
+      void logIceStats("connect_ready_timeout");
       cleanupConnection();
       if (shouldRetry) {
         scheduleReconnect("No response");
@@ -478,8 +556,24 @@
     state.signalingWebSocket = null;
     state.pendingAppLaunch = null;
     state.textInputSupported = true;
+    state.pendingIce = [];
     if (remdesk.releasePointerLock) {
       remdesk.releasePointerLock();
+    }
+  }
+
+  async function flushPendingIce() {
+    if (!state.peerConnection || !state.pendingIce.length) {
+      return;
+    }
+    const pending = state.pendingIce.slice();
+    state.pendingIce.length = 0;
+    for (const candidate of pending) {
+      try {
+        await state.peerConnection.addIceCandidate(candidate);
+      } catch (error) {
+        console.warn("Failed to apply queued ICE candidate", error);
+      }
     }
   }
 
@@ -562,9 +656,16 @@
         console.warn("Failed to close signaling socket", error);
       }
     }, 8000);
-    signalingSocket.onclose = () => {
+    signalingSocket.onclose = (event) => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
+      }
+      if (event) {
+        console.warn("Signaling socket closed", {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean
+        });
       }
       if (attemptFallback("close")) {
         return;
@@ -579,10 +680,11 @@
       state.connecting = false;
       scheduleReconnect("Disconnected");
     };
-    signalingSocket.onerror = () => {
+    signalingSocket.onerror = (event) => {
       if (signalingSocket !== state.signalingWebSocket) {
         return;
       }
+      console.warn("Signaling socket error", event);
       if (attemptFallback("error")) {
         return;
       }
@@ -611,16 +713,26 @@
         return;
       }
       if (payload.type === "offer") {
+        console.info("Received offer", {
+          hasSdp: Boolean(payload.sdp),
+          session_id: payload.session_id,
+          operator_id: payload.operator_id
+        });
         try {
           await state.peerConnection.setRemoteDescription(payload);
         } catch (error) {
           remdesk.setStatus("Connection failed", "bad");
+          console.warn("Failed to set remote offer", error);
           cleanupConnection();
           scheduleReconnect("Connection failed");
           return;
         }
+        await flushPendingIce();
         const answer = await state.peerConnection.createAnswer();
         await state.peerConnection.setLocalDescription(answer);
+        console.info("Sending answer", {
+          hasSdp: Boolean(state.peerConnection.localDescription && state.peerConnection.localDescription.sdp)
+        });
         if (signalingSocket.readyState === WebSocket.OPEN) {
           signalingSocket.send(
             JSON.stringify({
@@ -635,12 +747,44 @@
         clearOfferTimeout();
         scheduleConnectReadyTimeout(signalingSocket);
         remdesk.registerControls();
+      } else if (payload.type === "answer") {
+        console.info("Received answer", {
+          hasSdp: Boolean(payload.sdp),
+          session_id: payload.session_id,
+          operator_id: payload.operator_id
+        });
+        try {
+          await state.peerConnection.setRemoteDescription(payload);
+        } catch (error) {
+          remdesk.setStatus("Connection failed", "bad");
+          console.warn("Failed to set remote answer", error);
+          cleanupConnection();
+          scheduleReconnect("Connection failed");
+          return;
+        }
+        await flushPendingIce();
+        clearOfferTimeout();
+        scheduleConnectReadyTimeout(signalingSocket);
+        remdesk.registerControls();
       } else if (payload.type === "ice" && payload.candidate) {
-        await state.peerConnection.addIceCandidate({
-          candidate: payload.candidate,
+        console.debug("Received ICE candidate", {
           sdpMid: payload.sdpMid,
           sdpMLineIndex: payload.sdpMLineIndex
         });
+        const candidate = {
+          candidate: payload.candidate,
+          sdpMid: payload.sdpMid,
+          sdpMLineIndex: payload.sdpMLineIndex
+        };
+        if (!state.peerConnection.remoteDescription) {
+          state.pendingIce.push(candidate);
+          return;
+        }
+        try {
+          await state.peerConnection.addIceCandidate(candidate);
+        } catch (error) {
+          console.warn("Failed to add ICE candidate", error);
+        }
       }
     };
 
@@ -661,8 +805,12 @@
           return;
         }
         const connectionState = state.peerConnection.connectionState;
-        console.info("WebRTC connection state:", connectionState);
+        console.info("WebRTC connection state:", connectionState, {
+          ice: state.peerConnection.iceConnectionState,
+          signaling: state.peerConnection.signalingState
+        });
         if (connectionState === "failed") {
+          void logIceStats("connection_failed");
           clearConnectionDropTimer();
           remdesk.setStatus("Connection failed", "bad");
           remdesk.setConnected(false);
@@ -686,6 +834,15 @@
           return;
         }
         console.info("ICE connection state:", state.peerConnection.iceConnectionState);
+        if (state.peerConnection.iceConnectionState === "failed") {
+          void logIceStats("ice_failed");
+        }
+      };
+      state.peerConnection.onicegatheringstatechange = () => {
+        if (!state.peerConnection) {
+          return;
+        }
+        console.info("ICE gathering state:", state.peerConnection.iceGatheringState);
       };
       state.peerConnection.onsignalingstatechange = () => {
         if (!state.peerConnection) {
@@ -713,6 +870,10 @@
       };
       state.peerConnection.onicecandidate = (event) => {
         if (event.candidate && signalingSocket.readyState === WebSocket.OPEN) {
+          console.debug("Sending ICE candidate", {
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex
+          });
           signalingSocket.send(
             JSON.stringify({
               type: "ice",
@@ -723,6 +884,8 @@
               sdpMLineIndex: event.candidate.sdpMLineIndex
             })
           );
+        } else if (!event.candidate) {
+          console.info("ICE gathering completed");
         }
       };
 
@@ -786,6 +949,7 @@
           return;
         }
         remdesk.setStatus("Client did not answer", "bad");
+        void logIceStats("offer_timeout");
         cleanupConnection();
         scheduleReconnect("No answer", true);
       }, 12000);

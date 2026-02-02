@@ -35,6 +35,10 @@ def _input_stabilizer_enabled() -> bool:
     value = os.getenv("RC_INPUT_STABILIZER", "1")
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
+def _audio_enabled() -> bool:
+    value = os.getenv("RC_DISABLE_AUDIO", "").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
+
 
 def _build_control_handler(controller: InputController) -> ControlHandler:
     if _input_stabilizer_enabled():
@@ -65,7 +69,9 @@ def build_session_resources(mode: str | None) -> SessionResources:
         controller = NullInputController()
         screen_track = ScreenTrack()
         control_handler = ControlHandler(controller)
-        media_tracks: list[Any] = [screen_track, AudioTrack()]
+        media_tracks: list[Any] = [screen_track]
+        if _audio_enabled():
+            media_tracks.append(AudioTrack())
 
         def _set_stream_profile(
             profile: str | None,
@@ -97,7 +103,9 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 logger.warning("Hidden desktop init failed, falling back: %s", exc)
             else:
                 control_handler = ControlHandler(session.input_controller)
-                media_tracks: list[Any] = [session.screen_track, AudioTrack()]
+                media_tracks: list[Any] = [session.screen_track]
+                if _audio_enabled():
+                    media_tracks.append(AudioTrack())
 
                 def _set_stream_profile(
                     profile: str | None,
@@ -121,7 +129,9 @@ def build_session_resources(mode: str | None) -> SessionResources:
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=True)
     control_handler = _build_control_handler(controller)
-    media_tracks: list[Any] = [screen_track, AudioTrack()]
+    media_tracks: list[Any] = [screen_track]
+    if _audio_enabled():
+        media_tracks.append(AudioTrack())
 
     def _set_stream_profile(
         profile: str | None,

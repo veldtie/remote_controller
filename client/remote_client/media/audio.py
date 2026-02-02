@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import ctypes.util
 import struct
+from fractions import Fraction
 
 from aiortc import MediaStreamTrack
 from av.audio.frame import AudioFrame
@@ -22,6 +23,8 @@ class AudioTrack(MediaStreamTrack):
             self._samplerate = 48000
             self._blocksize = 960
             self._stream = None
+            self._pts = 0
+            self._time_base = Fraction(1, self._samplerate)
             return
 
         import sounddevice as sd
@@ -31,6 +34,8 @@ class AudioTrack(MediaStreamTrack):
         self._samplerate = 48000
         self._blocksize = 960
         self._stream = None
+        self._pts = 0
+        self._time_base = Fraction(1, self._samplerate)
 
         def callback(indata, frames, time, status) -> None:
             self._queue.put_nowait(bytes(indata))
@@ -59,6 +64,9 @@ class AudioTrack(MediaStreamTrack):
         frame = AudioFrame(format="s16", layout="mono", samples=len(data) // 2)
         frame.planes[0].update(data)
         frame.sample_rate = self._samplerate
+        frame.pts = self._pts
+        frame.time_base = self._time_base
+        self._pts += frame.samples
         return frame
 
 

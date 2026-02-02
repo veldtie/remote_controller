@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_server.json', 'remote_client')]
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cbe8cgcb\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cbe8cgcb\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cbe8cgcb\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
 tmp_ret = collect_all('pynput')
@@ -27,7 +27,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['numpy.f2py.tests', 'pytest'],
     noarchive=False,
     optimize=0,
 )
