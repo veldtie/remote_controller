@@ -173,6 +173,7 @@ class SessionResources:
         [str | None, int | None, int | None, int | None], None
     ] | None = None
     set_cursor_visibility: Callable[[bool], None] | None = None
+    get_status: Callable[[], dict[str, Any]] | None = None
 
 
 SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
@@ -442,6 +443,18 @@ class WebRTCClient:
 
         @peer_connection.on("datachannel")
         def on_datachannel(data_channel):
+            @data_channel.on("open")
+            def on_open() -> None:
+                if session_actions and session_actions.get_status:
+                    try:
+                        status = session_actions.get_status() or {}
+                    except Exception as exc:
+                        status = {"hidden_error": f"status_failed: {exc}"}
+                    self._send_payload(
+                        data_channel,
+                        {"action": "session_status", **status},
+                    )
+
             @data_channel.on("close")
             def on_close() -> None:
                 connection_done.set()
@@ -731,6 +744,17 @@ class WebRTCClient:
                         "status": "ok",
                         "hidden_active": current_hidden,
                     },
+                )
+            return
+        if action == "session_status":
+            if session_actions and session_actions.get_status:
+                try:
+                    status = session_actions.get_status() or {}
+                except Exception as exc:
+                    status = {"hidden_error": f"status_failed: {exc}"}
+                self._send_payload(
+                    data_channel,
+                    {"action": "session_status", **status},
                 )
             return
         if action == "control":

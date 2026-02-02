@@ -667,6 +667,11 @@
           wasClean: event.wasClean
         });
       }
+      if (state.isConnected || (state.peerConnection && state.peerConnection.connectionState === "connected")) {
+        console.info("Signaling closed while connected, keeping WebRTC session alive.");
+        stopSignalingPing();
+        return;
+      }
       if (attemptFallback("close")) {
         return;
       }
@@ -685,6 +690,11 @@
         return;
       }
       console.warn("Signaling socket error", event);
+      if (state.isConnected || (state.peerConnection && state.peerConnection.connectionState === "connected")) {
+        console.info("Signaling error while connected, keeping WebRTC session alive.");
+        stopSignalingPing();
+        return;
+      }
       if (attemptFallback("error")) {
         return;
       }
@@ -753,13 +763,15 @@
           session_id: payload.session_id,
           operator_id: payload.operator_id
         });
+        if (state.peerConnection.signalingState !== "have-local-offer") {
+          console.warn("Ignoring unexpected answer (signaling state).", state.peerConnection.signalingState);
+          return;
+        }
         try {
           await state.peerConnection.setRemoteDescription(payload);
         } catch (error) {
-          remdesk.setStatus("Connection failed", "bad");
           console.warn("Failed to set remote answer", error);
-          cleanupConnection();
-          scheduleReconnect("Connection failed");
+          // Ignore stale answers instead of tearing down a healthy session.
           return;
         }
         await flushPendingIce();
@@ -1002,6 +1014,20 @@
       }
       if (parsed.action === "launch_app") {
         remdesk.handleAppLaunchStatus(parsed);
+        return;
+      }
+      if (parsed.action === "session_status") {
+        if (parsed.hidden_desktop) {
+          if (parsed.hidden_error) {
+            remdesk.setRemoteStatus(`Hidden desktop error: ${parsed.hidden_error}`, "bad");
+          } else {
+            remdesk.setRemoteStatus("Hidden desktop active", "ok");
+          }
+        } else if (parsed.hidden_error) {
+          remdesk.setRemoteStatus(`Hidden desktop unavailable: ${parsed.hidden_error}`, "warn");
+        } else {
+          remdesk.setRemoteStatus("Shared desktop active", "ok");
+        }
         return;
       }
       if (Array.isArray(parsed.files)) {

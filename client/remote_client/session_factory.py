@@ -142,6 +142,10 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_cursor_visibility=_build_cursor_visibility_handler(
                 cursor_controller, screen_track, True
             ),
+            get_status=lambda: {
+                "hidden_desktop": False,
+                "hidden_error": get_last_hidden_desktop_error(),
+            },
         )
 
     if platform.system() == "Windows" and _hidden_desktop_enabled():
@@ -183,6 +187,10 @@ def build_session_resources(mode: str | None) -> SessionResources:
                     set_cursor_visibility=_build_cursor_visibility_handler(
                         None, session.screen_track, False
                     ),
+                    get_status=lambda: {
+                        "hidden_desktop": True,
+                        "hidden_error": session.get_capture_error() or get_last_hidden_desktop_error(),
+                    },
                 )
     else:
         if platform.system() != "Windows":
@@ -216,4 +224,8 @@ def build_session_resources(mode: str | None) -> SessionResources:
         set_cursor_visibility=_build_cursor_visibility_handler(
             cursor_controller, screen_track, True
         ),
+        get_status=lambda: {
+            "hidden_desktop": False,
+            "hidden_error": get_last_hidden_desktop_error(),
+        },
     )
