@@ -10,8 +10,10 @@ from .input_controller import (
     InputController,
     KeyPress,
     MouseClick,
+    MouseDown,
     MouseMove,
     MouseScroll,
+    MouseUp,
     TextInput,
 )
 
@@ -21,7 +23,7 @@ class ControlMessageParser:
 
     def parse(
         self, payload: dict[str, Any]
-    ) -> MouseMove | MouseClick | MouseScroll | KeyPress | TextInput:
+    ) -> MouseMove | MouseClick | MouseDown | MouseUp | MouseScroll | KeyPress | TextInput:
         message_type = payload.get("type")
         source_width = payload.get("source_width")
         source_height = payload.get("source_height")
@@ -41,7 +43,31 @@ class ControlMessageParser:
                 source_height=source_height_value,
             )
         if message_type == "mouse_click":
+            raw_count = payload.get("count", 1)
+            try:
+                count_value = int(raw_count)
+            except (TypeError, ValueError):
+                count_value = 1
+            if count_value < 1:
+                count_value = 1
             return MouseClick(
+                x=int(payload["x"]),
+                y=int(payload["y"]),
+                button=payload.get("button", "left"),
+                count=count_value,
+                source_width=source_width_value,
+                source_height=source_height_value,
+            )
+        if message_type == "mouse_down":
+            return MouseDown(
+                x=int(payload["x"]),
+                y=int(payload["y"]),
+                button=payload.get("button", "left"),
+                source_width=source_width_value,
+                source_height=source_height_value,
+            )
+        if message_type == "mouse_up":
+            return MouseUp(
                 x=int(payload["x"]),
                 y=int(payload["y"]),
                 button=payload.get("button", "left"),

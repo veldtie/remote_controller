@@ -103,7 +103,8 @@ build_windows_silent.bat
 - `RC_DEVICE_TOKEN`, `RC_DEVICE_TOKEN_PATH` — токен устройства.
 - `RC_E2EE_PASSPHRASE` или `RC_E2EE_KEY` — включение E2EE.
 - `RC_ICE_SERVERS` — ICE‑серверы (JSON‑массив).
-- `RC_ENABLE_HIDDEN_DESKTOP` — скрытый desktop (Windows, manage‑сессии).
+- `RC_CURSOR_MODE` — режим курсора: `independent` (скрытый desktop) или `shared` (обычный).
+- `RC_ENABLE_HIDDEN_DESKTOP` — скрытый desktop (Windows, manage‑сессии), можно отключить через `0`.
 - `RC_INPUT_STABILIZER` — стабилизация мыши (по умолчанию включена).
 - `RC_PREFER_SENDINPUT` — предпочитать SendInput на Windows.
 
