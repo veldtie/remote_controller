@@ -181,6 +181,7 @@
     iceServersPresetSet: false,
     iceErrorCount: 0,
     iceFallbackTried: false,
+    allowIceFallback: false,
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,

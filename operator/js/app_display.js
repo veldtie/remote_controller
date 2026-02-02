@@ -372,18 +372,21 @@
       return;
     }
     const url = event.url || "";
-    if (!url.startsWith("stun:") && !url.startsWith("turn:")) {
+    if (!url.startsWith("stun:") && !url.startsWith("turn:") && !url.startsWith("turns:")) {
       return;
     }
     state.iceErrorCount += 1;
     if (state.iceFallbackTried || state.isConnected) {
       return;
     }
+    if (!state.allowIceFallback) {
+      return;
+    }
     if (state.iceErrorCount < 2) {
       return;
     }
     state.iceFallbackTried = true;
-    remdesk.setStatus("STUN failed, retrying without STUN", "warn");
+    remdesk.setStatus("ICE failed, retrying without ICE", "warn");
     void remdesk.connect({ disableIce: true });
   }
 

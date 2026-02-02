@@ -1,10 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_neuk96lw\\remote_client\\rc_server.json', 'remote_client')]
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_cf37qql5\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
-hiddenimports = ['cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
+hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
 tmp_ret = collect_all('pynput')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('av')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('aiortc')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('sounddevice')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('mss')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('numpy')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

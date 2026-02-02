@@ -1,5 +1,6 @@
 from typing import Dict, List
 from urllib.parse import urlsplit, urlunsplit
+import os
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -404,7 +405,18 @@ class MainShell(QtWidgets.QWidget):
             token = DEFAULT_API_TOKEN
         return token
 
+    def _force_host_ice(self) -> bool:
+        value = os.getenv("RC_FORCE_HOST_ICE", "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        value = os.getenv("RC_ICE_HOST_ONLY", "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        return False
+
     def _resolve_ice_servers(self) -> list[dict[str, object]] | None:
+        if self._force_host_ice():
+            return []
         if self._ice_servers_cache is not None:
             return self._ice_servers_cache
         if not self.api:

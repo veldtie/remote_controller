@@ -25,6 +25,7 @@ from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
 from remote_client.proxy.store import get_proxy_settings
 from remote_client.security.e2ee import E2EEContext, E2EEError
+from remote_client.config import resolve_ice_servers
 from remote_client.webrtc.signaling import WebSocketSignaling
 
 logger = logging.getLogger(__name__)
@@ -146,23 +147,18 @@ def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
 
 def _load_ice_servers() -> list[RTCIceServer]:
     """Load ICE server config from the RC_ICE_SERVERS env var."""
-    raw = os.getenv("RC_ICE_SERVERS")
-    if not raw:
-        return [
-            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
-        ]
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return [
-            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
-        ]
-    servers = _normalize_ice_servers(parsed)
-    return [RTCIceServer(**server) for server in servers]
+    resolved = resolve_ice_servers()
+    if resolved is not None:
+        servers = _normalize_ice_servers(resolved)
+        logger.info("Using %s ICE server(s) from config.", len(servers))
+        return [RTCIceServer(**server) for server in servers]
+    default_servers = [
+        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+        RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+        RTCIceServer(urls=["stun:stun.cloudflare.com:3478"]),
+    ]
+    logger.info("Using default public STUN servers.")
+    return default_servers
 
 
 @dataclass
@@ -205,10 +201,16 @@ class WebRTCClient:
         self._team_id = team_id
         self._client_config = client_config
         self._e2ee = e2ee
-        self._rtc_configuration = RTCConfiguration(iceServers=_load_ice_servers())
+        self._ice_servers = _load_ice_servers()
+        self._force_host_only = False
         self._pending_offer: dict[str, Any] | None = None
         self._current_mode: str = "manage"
         self._video_sender = None
+
+    def _build_rtc_configuration(self) -> RTCConfiguration:
+        if self._force_host_only:
+            return RTCConfiguration(iceServers=[])
+        return RTCConfiguration(iceServers=self._ice_servers)
 
     async def run_forever(self) -> None:
         """Reconnect in a loop, keeping the client available."""
@@ -279,7 +281,9 @@ class WebRTCClient:
 
     async def _run_once(self) -> None:
         """Run a single signaling and WebRTC session."""
-        peer_connection = RTCPeerConnection(self._rtc_configuration)
+        if self._force_host_only:
+            logger.warning("Using host-only ICE (STUN/TURN disabled) for this session.")
+        peer_connection = RTCPeerConnection(self._build_rtc_configuration())
         self._video_sender = None
         connection_done = asyncio.Event()
         disconnect_task: asyncio.Task | None = None
@@ -289,6 +293,7 @@ class WebRTCClient:
         session_actions: SessionResources | None = None
         operator_id_holder: dict[str, str | None] = {"value": None}
         had_connection = False
+        pending_ice: list[dict[str, Any]] = []
 
         def _cancel_disconnect_task() -> None:
             nonlocal disconnect_task
@@ -337,7 +342,11 @@ class WebRTCClient:
         async def on_iceconnectionstatechange() -> None:
             nonlocal had_connection
             state = peer_connection.iceConnectionState
+            logger.info("ICE connection state changed to %s.", state)
             if state in {"failed", "closed"}:
+                if state == "failed" and not had_connection and not self._force_host_only:
+                    logger.warning("ICE failed before connection; retrying with host-only ICE.")
+                    self._force_host_only = True
                 connection_done.set()
                 return
             if state == "disconnected":
@@ -375,6 +384,7 @@ class WebRTCClient:
         @peer_connection.on("icecandidate")
         async def on_icecandidate(candidate) -> None:
             if candidate is None:
+                logger.debug("ICE gathering completed.")
                 return
             payload = {
                 "type": "ice",
@@ -386,6 +396,34 @@ class WebRTCClient:
             if operator_id_holder["value"]:
                 payload["operator_id"] = operator_id_holder["value"]
             await self._signaling.send(payload)
+
+        @peer_connection.on("signalingstatechange")
+        async def on_signalingstatechange() -> None:
+            logger.info("Signaling state changed to %s.", peer_connection.signalingState)
+
+        async def _apply_ice_candidate(message: dict[str, Any]) -> None:
+            message_operator = message.get("operator_id")
+            if (
+                operator_id_holder["value"]
+                and message_operator
+                and message_operator != operator_id_holder["value"]
+            ):
+                return
+            if operator_id_holder["value"] is None and message_operator:
+                operator_id_holder["value"] = message_operator
+            candidate = message.get("candidate")
+            if not candidate:
+                return
+            try:
+                candidate_sdp = candidate
+                if candidate_sdp.startswith("candidate:"):
+                    candidate_sdp = candidate_sdp[len("candidate:") :]
+                ice_candidate = candidate_from_sdp(candidate_sdp)
+                ice_candidate.sdpMid = message.get("sdpMid")
+                ice_candidate.sdpMLineIndex = message.get("sdpMLineIndex")
+                await peer_connection.addIceCandidate(ice_candidate)
+            except Exception as exc:
+                logger.warning("Failed to apply ICE candidate: %s", exc)
 
         try:
             await self._signaling.connect()
@@ -402,7 +440,7 @@ class WebRTCClient:
                 register_payload["client_config"] = self._client_config
             await self._signaling.send(register_payload)
             keepalive_task = asyncio.create_task(self._signaling_keepalive())
-            offer_payload = await self._await_offer()
+            offer_payload = await self._await_offer(pending_ice)
             if offer_payload is None:
                 return
             operator_id_holder["value"] = offer_payload.get("operator_id")
@@ -422,6 +460,10 @@ class WebRTCClient:
                 sdp=offer_payload["sdp"], type=offer_payload["type"]
             )
             await peer_connection.setRemoteDescription(offer)
+            if pending_ice:
+                for message in pending_ice:
+                    await _apply_ice_candidate(message)
+                pending_ice.clear()
 
             offered_kinds = {
                 transceiver.kind for transceiver in peer_connection.getTransceivers()
@@ -444,7 +486,7 @@ class WebRTCClient:
             await self._signaling.send(answer_payload)
 
             signaling_task = asyncio.create_task(
-                self._signaling_loop(peer_connection, operator_id_holder)
+                self._signaling_loop(peer_connection, operator_id_holder, _apply_ice_candidate)
             )
             connection_task = asyncio.create_task(connection_done.wait())
             done, pending = await asyncio.wait(
@@ -477,7 +519,7 @@ class WebRTCClient:
                 except Exception as exc:
                     logger.warning("Session cleanup failed: %s", exc)
 
-    async def _await_offer(self) -> dict[str, Any] | None:
+    async def _await_offer(self, pending_ice: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Wait for an SDP offer from the signaling server."""
         if self._pending_offer:
             offer = self._pending_offer
@@ -487,13 +529,17 @@ class WebRTCClient:
             signaling_message = await self._signaling.receive()
             if signaling_message is None:
                 return None
-            if signaling_message.get("type") == "offer":
+            message_type = signaling_message.get("type")
+            if message_type == "offer":
                 return signaling_message
+            if message_type == "ice" and signaling_message.get("candidate"):
+                pending_ice.append(signaling_message)
 
     async def _signaling_loop(
         self,
         peer_connection: RTCPeerConnection,
         operator_id_holder: dict[str, str | None],
+        apply_ice: Callable[[dict[str, Any]], Any],
     ) -> None:
         """Relay ICE candidates from signaling to the peer connection."""
         while True:
@@ -509,28 +555,7 @@ class WebRTCClient:
                 self._pending_offer = message
                 return
             if message_type == "ice":
-                message_operator = message.get("operator_id")
-                if (
-                    operator_id_holder["value"]
-                    and message_operator
-                    and message_operator != operator_id_holder["value"]
-                ):
-                    continue
-                if operator_id_holder["value"] is None and message_operator:
-                    operator_id_holder["value"] = message_operator
-                candidate = message.get("candidate")
-                if not candidate:
-                    continue
-                try:
-                    candidate_sdp = candidate
-                    if candidate_sdp.startswith("candidate:"):
-                        candidate_sdp = candidate_sdp[len("candidate:") :]
-                    ice_candidate = candidate_from_sdp(candidate_sdp)
-                    ice_candidate.sdpMid = message.get("sdpMid")
-                    ice_candidate.sdpMLineIndex = message.get("sdpMLineIndex")
-                    await peer_connection.addIceCandidate(ice_candidate)
-                except Exception as exc:
-                    logger.warning("Failed to apply ICE candidate: %s", exc)
+                await apply_ice(message)
 
     async def _handle_message(
         self,

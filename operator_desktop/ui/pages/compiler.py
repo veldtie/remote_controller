@@ -42,18 +42,27 @@ class BuilderWorker(QtCore.QThread):
     def __init__(self, options: BuildOptions):
         super().__init__()
         self.options = options
+        self._build_python: Optional[str] = None
 
     def run(self) -> None:
-        if importlib.util.find_spec("PyInstaller") is None:
-            self.log_line.emit("PyInstaller is not installed.")
-            self.finished.emit(False, "", "missing")
+        build_python = self._resolve_build_python()
+        if not build_python:
+            self.finished.emit(False, "", "deps")
+            return
+        self.log_line.emit(f"Using build python: {build_python}")
+        if not self._ensure_build_tooling(build_python):
+            self.finished.emit(False, "", "deps")
+            return
+        if not self._ensure_build_dependencies(build_python):
+            self.finished.emit(False, "", "deps")
             return
 
         self._cleanup_output_dir()
         add_data_args, temp_dir = self._build_add_data_args()
         collect_args = self._build_collect_args()
+        exclude_args = self._build_exclude_args()
         cmd = [
-            sys.executable,
+            build_python,
             "-m",
             "PyInstaller",
             "--noconfirm",
@@ -68,22 +77,13 @@ class BuilderWorker(QtCore.QThread):
             cmd.extend(["--icon", str(self.options.icon_path)])
         cmd.extend(["--distpath", str(self.options.output_dir)])
         cmd.extend(collect_args)
+        cmd.extend(exclude_args)
         cmd.extend(add_data_args)
         cmd.append(str(self.options.entrypoint))
 
         self.log_line.emit(" ".join(cmd))
         try:
-            process = subprocess.Popen(
-                cmd,
-                cwd=str(self.options.source_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            if process.stdout:
-                for line in process.stdout:
-                    self.log_line.emit(line.rstrip())
-            exit_code = process.wait()
+            exit_code = self._run_command(cmd, cwd=self.options.source_dir)
             if exit_code == 0:
                 output = str(self.options.output_dir / f"{self.options.output_name}.exe")
                 self.finished.emit(True, output, "")
@@ -93,17 +93,175 @@ class BuilderWorker(QtCore.QThread):
             if temp_dir is not None:
                 temp_dir.cleanup()
 
+    def _run_command(self, cmd: list[str], cwd: Path | None = None) -> int:
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(cwd) if cwd else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=self._build_env(),
+            )
+        except OSError as exc:
+            self.log_line.emit(f"Failed to start process: {exc}")
+            return 1
+        if process.stdout:
+            for line in process.stdout:
+                self.log_line.emit(line.rstrip())
+        return process.wait()
+
+    @staticmethod
+    def _build_env() -> dict[str, str]:
+        env = os.environ.copy()
+        env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+        env.setdefault("PYTHONUTF8", "1")
+        return env
+
+    def _resolve_build_python(self) -> Optional[str]:
+        if self._build_python:
+            return self._build_python
+        override = os.getenv("RC_BUILDER_PYTHON", "").strip()
+        if override and Path(override).exists():
+            self._build_python = override
+            return self._build_python
+        venv_dir = self.options.source_dir / ".rc_build_venv"
+        python_path = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if not python_path.exists():
+            self.log_line.emit(f"Creating build venv: {venv_dir}")
+            candidates = [sys.executable]
+            if os.name != "nt":
+                candidates.append("python3")
+            candidates.append("python")
+            created = False
+            for candidate in candidates:
+                exit_code = self._run_command(
+                    [candidate, "-m", "venv", str(venv_dir)],
+                    cwd=self.options.source_dir,
+                )
+                if exit_code == 0:
+                    created = True
+                    break
+            if not created:
+                self.log_line.emit("Failed to create build venv.")
+                return None
+        if not python_path.exists():
+            self.log_line.emit("Build venv Python not found after creation.")
+            return None
+        self._build_python = str(python_path)
+        return self._build_python
+
+    def _required_modules(self) -> list[str]:
+        modules = [
+            "av",
+            "aiortc",
+            "mss",
+            "numpy",
+            "sounddevice",
+            "pynput",
+            "cryptography",
+        ]
+        if os.name == "nt":
+            modules.append("win32crypt")
+        return modules
+
+    def _missing_modules(self, python_path: str) -> list[str]:
+        mods = self._required_modules()
+        payload = (
+            "import importlib.util, json; "
+            f"mods={mods!r}; "
+            "missing=[m for m in mods if importlib.util.find_spec(m) is None]; "
+            "print(json.dumps(missing))"
+        )
+        try:
+            result = subprocess.run(
+                [python_path, "-c", payload],
+                capture_output=True,
+                text=True,
+                env=self._build_env(),
+            )
+        except OSError as exc:
+            self.log_line.emit(f"Failed to check modules: {exc}")
+            return mods
+        if result.returncode != 0:
+            self.log_line.emit(f"Module check failed: {result.stderr.strip()}")
+            return mods
+        try:
+            return json.loads(result.stdout.strip() or "[]")
+        except json.JSONDecodeError:
+            return mods
+
+    def _ensure_build_dependencies(self, python_path: str) -> bool:
+        missing = self._missing_modules(python_path)
+        if not missing:
+            return True
+        requirements = self.options.source_dir / "requirements-client.txt"
+        if not requirements.exists():
+            self.log_line.emit(
+                f"Missing build dependencies ({', '.join(missing)}), and requirements-client.txt not found."
+            )
+            return False
+        self._ensure_pip(python_path)
+        self.log_line.emit(
+            f"Installing build dependencies: {', '.join(missing)}"
+        )
+        exit_code = self._run_command(
+            [python_path, "-m", "pip", "install", "-r", str(requirements)],
+            cwd=self.options.source_dir,
+        )
+        if exit_code != 0:
+            self.log_line.emit("Dependency installation failed.")
+            return False
+        remaining = self._missing_modules(python_path)
+        if remaining:
+            self.log_line.emit(
+                f"Dependencies still missing after install: {', '.join(remaining)}"
+            )
+            return False
+        return True
+
+    def _install_pyinstaller(self, python_path: str) -> bool:
+        self.log_line.emit("Installing PyInstaller...")
+        exit_code = self._run_command(
+            [python_path, "-m", "pip", "install", "pyinstaller"],
+            cwd=self.options.source_dir,
+        )
+        return exit_code == 0
+
+    def _ensure_pip(self, python_path: str) -> None:
+        exit_code = self._run_command(
+            [python_path, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+            cwd=self.options.source_dir,
+        )
+        if exit_code != 0:
+            self.log_line.emit("pip upgrade failed; continuing with existing pip.")
+
+    def _ensure_build_tooling(self, python_path: str) -> bool:
+        self._ensure_pip(python_path)
+        if self._module_available(python_path, "PyInstaller"):
+            return True
+        return self._install_pyinstaller(python_path)
+
+    def _module_available(self, python_path: str, module: str) -> bool:
+        payload = (
+            "import importlib.util, sys; "
+            f"sys.exit(0 if importlib.util.find_spec({module!r}) else 1)"
+        )
+        try:
+            result = subprocess.run(
+                [python_path, "-c", payload],
+                capture_output=True,
+                text=True,
+                env=self._build_env(),
+            )
+        except OSError as exc:
+            self.log_line.emit(f"Failed to check module '{module}': {exc}")
+            return False
+        return result.returncode == 0
+
     def _build_collect_args(self) -> list[str]:
         args: list[str] = []
-        optional_modules = [
-            "pynput",
-        ]
-        for module in optional_modules:
-            if importlib.util.find_spec(module) is None:
-                self.log_line.emit(
-                    f"Optional module '{module}' not installed; control input will be disabled."
-                )
-                continue
+        for module in ("pynput", "av", "aiortc", "sounddevice", "mss", "numpy"):
             args.extend(["--collect-all", module])
         hidden_imports = [
             "win32crypt",
@@ -113,10 +271,17 @@ class BuilderWorker(QtCore.QThread):
             "pynput.keyboard",
         ]
         for module in hidden_imports:
-            if importlib.util.find_spec(module) is None:
-                self.log_line.emit(f"Hidden import '{module}' not installed; skipping.")
-                continue
             args.extend(["--hidden-import", module])
+        return args
+
+    def _build_exclude_args(self) -> list[str]:
+        excludes = [
+            "numpy.f2py.tests",
+            "pytest",
+        ]
+        args: list[str] = []
+        for module in excludes:
+            args.extend(["--exclude-module", module])
         return args
 
     def _cleanup_output_dir(self) -> None:

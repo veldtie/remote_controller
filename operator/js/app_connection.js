@@ -512,6 +512,7 @@
     }
 
     const presetIce = state.iceServersPresetSet ? state.iceServersPreset : null;
+    state.allowIceFallback = false;
     state.rtcConfig = options.disableIce
       ? { iceServers: [] }
       : await loadIceConfig(apiBase, authToken, presetIce);
@@ -660,6 +661,7 @@
           return;
         }
         const connectionState = state.peerConnection.connectionState;
+        console.info("WebRTC connection state:", connectionState);
         if (connectionState === "failed") {
           clearConnectionDropTimer();
           remdesk.setStatus("Connection failed", "bad");
@@ -678,6 +680,18 @@
             remdesk.setStatus(label, "ok");
           }
         }
+      };
+      state.peerConnection.oniceconnectionstatechange = () => {
+        if (!state.peerConnection) {
+          return;
+        }
+        console.info("ICE connection state:", state.peerConnection.iceConnectionState);
+      };
+      state.peerConnection.onsignalingstatechange = () => {
+        if (!state.peerConnection) {
+          return;
+        }
+        console.info("Signaling state:", state.peerConnection.signalingState);
       };
       if (signalingSocket.readyState === WebSocket.OPEN) {
         signalingSocket.send(

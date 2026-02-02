@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import uuid
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 TEAM_ID_FILENAME = "rc_team_id.txt"
@@ -30,6 +32,10 @@ DEFAULT_ANTIFRAUD_COUNTRIES = [
 
 DEFAULT_SERVER_URL = "http://79.137.194.213"
 DEFAULT_SIGNALING_TOKEN = "Gar8tEadNew0l-DNgY36moO3o_3xRsmF7yhrgRSOMIA"
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _candidate_config_dirs() -> list[str]:
@@ -105,6 +111,11 @@ def _read_server_config() -> dict | None:
     return None
 
 
+def read_server_config() -> dict | None:
+    """Public accessor for embedded server config."""
+    return _read_server_config()
+
+
 def load_antifraud_config() -> AntiFraudConfig:
     defaults = AntiFraudConfig(
         vm_enabled=True,
@@ -159,6 +170,63 @@ def resolve_signaling_token() -> str | None:
     if api_token:
         return api_token.strip()
     return DEFAULT_SIGNALING_TOKEN
+
+
+def _fetch_ice_servers_from_url(server_url: str, token: str | None) -> list[dict] | None:
+    if not server_url:
+        return None
+    if "://" not in server_url:
+        server_url = f"http://{server_url}"
+    parsed = urllib.parse.urlsplit(server_url)
+    ice_url = urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, "/ice-config", "", "")
+    )
+    headers: dict[str, str] = {}
+    if token:
+        headers["x-rc-token"] = token
+        ice_url = f"{ice_url}?token={urllib.parse.quote(token)}"
+    request = urllib.request.Request(ice_url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    servers = payload.get("iceServers")
+    if isinstance(servers, list):
+        return servers
+    return None
+
+
+def resolve_ice_servers() -> list[dict] | None:
+    """Resolve ICE servers from env, embedded config, or server endpoint."""
+    if _truthy_env("RC_FORCE_HOST_ICE") or _truthy_env("RC_ICE_HOST_ONLY"):
+        return []
+
+    raw = os.getenv("RC_ICE_SERVERS")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return [parsed]
+        if isinstance(parsed, list):
+            return parsed
+
+    raw_config = _read_server_config()
+    if raw_config:
+        servers = raw_config.get("ice_servers") or raw_config.get("iceServers")
+        if isinstance(servers, dict):
+            return [servers]
+        if isinstance(servers, list):
+            return servers
+
+    server_url = resolve_signaling_url()
+    token = resolve_signaling_token()
+    fetched = _fetch_ice_servers_from_url(server_url, token)
+    if fetched is not None:
+        return fetched
+    return None
 
 
 def resolve_team_id(team_id: str | None) -> str | None:
