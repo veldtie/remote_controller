@@ -4,7 +4,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
-from ..common import load_icon, make_button
+from ..common import GlassFrame, load_icon, make_button
 
 
 class ClientDetailsPage(QtWidgets.QWidget):
@@ -25,7 +25,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         layout.setSpacing(16)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        hero = QtWidgets.QFrame()
+        hero = GlassFrame(radius=24, tone="card_strong", tint_alpha=180, border_alpha=80)
         hero.setObjectName("HeroCard")
         hero_layout = QtWidgets.QVBoxLayout(hero)
         hero_layout.setContentsMargins(16, 16, 16, 16)
@@ -147,7 +147,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout(self.main_tab)
         layout.setSpacing(16)
 
-        self.client_info_card = QtWidgets.QFrame()
+        self.client_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.client_info_card.setObjectName("Card")
         client_layout = QtWidgets.QVBoxLayout(self.client_info_card)
         client_layout.setContentsMargins(14, 14, 14, 14)
@@ -159,7 +159,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.client_info_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         client_layout.addLayout(self.client_info_form)
 
-        self.system_info_card = QtWidgets.QFrame()
+        self.system_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.system_info_card.setObjectName("Card")
         system_layout = QtWidgets.QVBoxLayout(self.system_info_card)
         system_layout.setContentsMargins(14, 14, 14, 14)
@@ -177,7 +177,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _build_cookies_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.cookies_tab)
         layout.setSpacing(12)
-        self.cookies_card = QtWidgets.QFrame()
+        self.cookies_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.cookies_card.setObjectName("Card")
         card_layout = QtWidgets.QVBoxLayout(self.cookies_card)
         card_layout.setContentsMargins(14, 14, 14, 14)
@@ -201,7 +201,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _build_proxy_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.proxy_tab)
         layout.setSpacing(12)
-        self.proxy_card = QtWidgets.QFrame()
+        self.proxy_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.proxy_card.setObjectName("Card")
         card_layout = QtWidgets.QVBoxLayout(self.proxy_card)
         card_layout.setContentsMargins(14, 14, 14, 14)
@@ -220,7 +220,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _build_storage_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.storage_tab)
         layout.setSpacing(12)
-        self.storage_card = QtWidgets.QFrame()
+        self.storage_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.storage_card.setObjectName("Card")
         card_layout = QtWidgets.QVBoxLayout(self.storage_card)
         card_layout.setContentsMargins(14, 14, 14, 14)

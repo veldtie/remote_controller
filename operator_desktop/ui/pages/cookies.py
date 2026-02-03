@@ -4,7 +4,7 @@ from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
-from ..common import load_icon, make_button
+from ..common import GlassFrame, load_icon, make_button
 from .dashboard import ClientFetchWorker
 
 
@@ -30,7 +30,7 @@ class CookiesPage(QtWidgets.QWidget):
         layout.setSpacing(14)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        toolbar = QtWidgets.QFrame()
+        toolbar = GlassFrame(radius=18, tone="card_alt", tint_alpha=160, border_alpha=70)
         toolbar.setObjectName("ToolbarCard")
         toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(16, 14, 16, 14)
@@ -65,7 +65,7 @@ class CookiesPage(QtWidgets.QWidget):
 
         layout.addWidget(toolbar)
 
-        self.table_card = QtWidgets.QFrame()
+        self.table_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.table_card.setObjectName("Card")
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
         table_layout.setContentsMargins(12, 12, 12, 12)
@@ -84,7 +84,7 @@ class CookiesPage(QtWidgets.QWidget):
         header_view.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         table_layout.addWidget(self.table)
         layout.addWidget(self.table_card, 1)
@@ -159,7 +159,7 @@ class CookiesPage(QtWidgets.QWidget):
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setRowHeight(row, 44)
+            self.table.setRowHeight(row, 46)
             name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client.get("id"))
             id_item = QtWidgets.QTableWidgetItem(client.get("id", ""))

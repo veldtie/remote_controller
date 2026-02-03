@@ -3,7 +3,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.translations import LANGUAGE_NAMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 class LoginPage(QtWidgets.QWidget):
@@ -18,7 +18,7 @@ class LoginPage(QtWidgets.QWidget):
         layout.setContentsMargins(140, 80, 140, 80)
         layout.addStretch()
 
-        card = QtWidgets.QFrame()
+        card = GlassFrame(radius=24, tone="card_strong", tint_alpha=180, border_alpha=80)
         card.setObjectName("HeroCard")
         card_layout = QtWidgets.QVBoxLayout(card)
         card_layout.setContentsMargins(32, 32, 32, 32)
