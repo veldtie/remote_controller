@@ -535,6 +535,10 @@
       if (remdesk.setSoftLock) {
         remdesk.setSoftLock(false);
       }
+    } else {
+      if (remdesk.setRemoteCursorVisibility) {
+        remdesk.setRemoteCursorVisibility(false, state.isConnected);
+      }
     }
     if (remdesk.updateCursorOverlayVisibility) {
       remdesk.updateCursorOverlayVisibility();
