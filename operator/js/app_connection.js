@@ -171,6 +171,28 @@
     return decryptE2ee(envelope);
   }
 
+  function normalizeRemoteDescription(payload, expectedType = "") {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const type = payload.type;
+    if (!type || (expectedType && type !== expectedType)) {
+      return null;
+    }
+    let sdp = payload.sdp;
+    if (typeof sdp !== "string") {
+      return { type, sdp: "" };
+    }
+    sdp = sdp.trim();
+    if (!sdp) {
+      return { type, sdp: "" };
+    }
+    if (!sdp.includes("\r\n")) {
+      sdp = sdp.replace(/\r?\n/g, "\r\n");
+    }
+    return { type, sdp };
+  }
+
   function ensureChannelOpen() {
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
@@ -753,16 +775,34 @@
           session_id: payload.session_id,
           operator_id: payload.operator_id
         });
+        const normalized = normalizeRemoteDescription(payload, "answer");
+        if (!normalized || !normalized.sdp) {
+          console.warn("Answer missing SDP", {
+            type: payload && payload.type,
+            signalingState: state.peerConnection.signalingState
+          });
+          return;
+        }
+        if (state.peerConnection.signalingState !== "have-local-offer") {
+          console.warn("Ignoring answer in unexpected state", {
+            signalingState: state.peerConnection.signalingState
+          });
+          return;
+        }
         try {
-          await state.peerConnection.setRemoteDescription(payload);
+          await state.peerConnection.setRemoteDescription(normalized);
         } catch (error) {
           const errorName = error && error.name ? error.name : "";
           const errorMessage = error && error.message ? error.message : "";
           const signalingState = state.peerConnection.signalingState;
+          const sdpLength = normalized.sdp.length;
+          const sdpHead = normalized.sdp.split(/\r?\n/, 1)[0] || "";
           console.warn("Failed to set remote answer", {
             name: errorName,
             message: errorMessage,
-            signalingState
+            signalingState,
+            sdpLength,
+            sdpHead
           });
           if (
             errorName === "InvalidStateError" ||
