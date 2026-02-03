@@ -1,5 +1,6 @@
 import secrets
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request
@@ -54,9 +55,16 @@ async def download_error_log(request: Request) -> FileResponse:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=True)
         except Exception:
-            raise HTTPException(status_code=404, detail="Log file not found")
-    if not log_path.is_file():
-        raise HTTPException(status_code=404, detail="Log file not found")
+            log_path = None
+    if not log_path or not log_path.is_file():
+        with NamedTemporaryFile(delete=False, suffix=".log") as temp:
+            temp.write(b"No error log available.\n")
+            temp_path = Path(temp.name)
+        return FileResponse(
+            temp_path,
+            media_type="text/plain",
+            filename=temp_path.name,
+        )
     return FileResponse(log_path, media_type="text/plain", filename=log_path.name)
 
 

@@ -6,6 +6,7 @@ from typing import Any, Callable
 import logging
 import os
 
+from remote_client.apps.launcher import launch_app
 from remote_client.control.cursor_visibility import CursorVisibilityController
 from remote_client.control.handlers import ControlHandler, StabilizedControlHandler
 from remote_client.control.input_controller import InputController, NullInputController
@@ -33,6 +34,11 @@ def _input_stabilizer_enabled() -> bool:
 def _audio_enabled() -> bool:
     value = os.getenv("RC_DISABLE_AUDIO", "")
     return value.strip().lower() not in {"1", "true", "yes", "on"}
+
+
+def _launch_hidden_enabled() -> bool:
+    value = os.getenv("RC_LAUNCH_HIDDEN", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _build_control_handler(controller: InputController) -> ControlHandler:
@@ -93,6 +99,9 @@ def build_session_resources(mode: str | None) -> SessionResources:
     if _audio_enabled():
         media_tracks.append(AudioTrack())
 
+    def _launch_app(app_name: str) -> None:
+        launch_app(app_name, hidden=_launch_hidden_enabled())
+
     def _set_stream_profile(
         profile: str | None,
         width: int | None,
@@ -107,6 +116,7 @@ def build_session_resources(mode: str | None) -> SessionResources:
         control_handler,
         media_tracks,
         close=_compose_close(None, cursor_controller),
+        launch_app=_launch_app,
         set_stream_profile=_set_stream_profile,
         set_cursor_visibility=cursor_controller.set_visible,
     )

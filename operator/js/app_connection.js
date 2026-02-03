@@ -300,7 +300,11 @@
     }
     try {
       const message = await encodeOutgoing(payload);
-      state.controlChannel.send(message);
+      const channel = state.controlChannel;
+      if (!channel || channel.readyState !== "open") {
+        return;
+      }
+      channel.send(message);
     } catch (error) {
       remdesk.setStatus(`E2EE error: ${error.message}`, "bad");
     }
@@ -312,7 +316,11 @@
     }
     try {
       const message = await encodeOutgoing({ action: CONTROL_ACTION, ...payload });
-      state.controlChannel.send(message);
+      const channel = state.controlChannel;
+      if (!channel || channel.readyState !== "open") {
+        return;
+      }
+      channel.send(message);
     } catch (error) {
       remdesk.setStatus(`E2EE error: ${error.message}`, "bad");
     }
