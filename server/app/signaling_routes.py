@@ -49,7 +49,13 @@ async def download_error_log(request: Request) -> FileResponse:
     log_path = Path(config.ERROR_LOG_FILE)
     if not log_path.is_absolute():
         log_path = (Path.cwd() / log_path).resolve()
-    if not log_path.exists() or not log_path.is_file():
+    if not log_path.exists():
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.touch(exist_ok=True)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Log file not found")
+    if not log_path.is_file():
         raise HTTPException(status_code=404, detail="Log file not found")
     return FileResponse(log_path, media_type="text/plain", filename=log_path.name)
 

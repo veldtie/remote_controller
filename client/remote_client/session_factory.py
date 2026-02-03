@@ -5,7 +5,6 @@ from typing import Any, Callable
 
 import logging
 import os
-import platform
 
 from remote_client.control.cursor_visibility import CursorVisibilityController
 from remote_client.control.handlers import ControlHandler, StabilizedControlHandler
@@ -24,11 +23,6 @@ def _normalize_mode(mode: str | None) -> str:
     if value in {"view", "viewer", "readonly"}:
         return "view"
     return "manage"
-
-
-def _hidden_desktop_enabled() -> bool:
-    value = os.getenv("RC_ENABLE_HIDDEN_DESKTOP", "0")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _input_stabilizer_enabled() -> bool:
@@ -91,41 +85,6 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
-
-    if platform.system() == "Windows" and _hidden_desktop_enabled():
-        try:
-            from remote_client.windows.hidden_desktop import HiddenDesktopSession
-        except Exception as exc:
-            logger.warning("Hidden desktop unavailable, falling back: %s", exc)
-        else:
-            try:
-                session = HiddenDesktopSession()
-            except Exception as exc:
-                logger.warning("Hidden desktop init failed, falling back: %s", exc)
-            else:
-                control_handler = ControlHandler(session.input_controller)
-                media_tracks: list[Any] = [session.screen_track]
-                if _audio_enabled():
-                    media_tracks.append(AudioTrack())
-
-                def _set_stream_profile(
-                    profile: str | None,
-                    width: int | None,
-                    height: int | None,
-                    fps: int | None,
-                ) -> None:
-                    for track in media_tracks:
-                        if hasattr(track, "set_profile"):
-                            track.set_profile(profile, width, height, fps)
-
-                return SessionResources(
-                    control_handler,
-                    media_tracks,
-                    close=_compose_close(session.close, cursor_controller),
-                    launch_app=session.launch_application,
-                    set_stream_profile=_set_stream_profile,
-                    set_cursor_visibility=cursor_controller.set_visible,
-                )
 
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=True)

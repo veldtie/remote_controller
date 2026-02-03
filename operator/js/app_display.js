@@ -302,6 +302,8 @@
     return "left";
   }
 
+  const MODIFIER_KEYS = new Set(["ctrl", "shift", "alt", "meta"]);
+
   function normalizeKeyEvent(event) {
     if (!event || !event.key) {
       return null;
@@ -309,10 +311,57 @@
     if (KEY_MAP[event.key]) {
       return KEY_MAP[event.key];
     }
-    if (event.key.length === 1) {
-      return event.key;
+    const raw = event.key;
+    const lower = raw.toLowerCase();
+    if (lower === "control") {
+      return "ctrl";
     }
-    return event.key.toLowerCase();
+    if (lower === "shift") {
+      return "shift";
+    }
+    if (lower === "alt") {
+      return "alt";
+    }
+    if (lower === "meta") {
+      return "meta";
+    }
+    if (raw.length === 1) {
+      return raw.toLowerCase();
+    }
+    return lower;
+  }
+
+  function isModifierKey(key) {
+    return MODIFIER_KEYS.has(key);
+  }
+
+  function normalizeKeyCode(event) {
+    if (!event) {
+      return null;
+    }
+    const code = event.code || "";
+    if (code.startsWith("Key") && code.length === 4) {
+      return code.slice(3).toLowerCase();
+    }
+    if (code.startsWith("Digit") && code.length === 6) {
+      return code.slice(5);
+    }
+    if (code === "Space") {
+      return "space";
+    }
+    if (code === "ControlLeft" || code === "ControlRight") {
+      return "ctrl";
+    }
+    if (code === "ShiftLeft" || code === "ShiftRight") {
+      return "shift";
+    }
+    if (code === "AltLeft" || code === "AltRight") {
+      return "alt";
+    }
+    if (code === "MetaLeft" || code === "MetaRight") {
+      return "meta";
+    }
+    return normalizeKeyEvent(event);
   }
 
   function getStreamHintSize() {
@@ -715,12 +764,60 @@
     }
   }
 
+  function releasePressedInputs() {
+    if (!state.isConnected) {
+      state.mouseButtonsDown.clear();
+      state.pressedKeys.clear();
+      return;
+    }
+    const position = getCursorPosition();
+    if (state.mouseButtonsDown.size) {
+      state.mouseButtonsDown.forEach((button) => {
+        void remdesk.sendControl({
+          type: CONTROL_TYPES.mouseUp,
+          x: position.x,
+          y: position.y,
+          button
+        });
+      });
+      state.mouseButtonsDown.clear();
+    }
+    if (state.pressedKeys.size) {
+      state.pressedKeys.forEach((key) => {
+        void remdesk.sendControl({
+          type: CONTROL_TYPES.keyUp,
+          key
+        });
+      });
+      state.pressedKeys.clear();
+    }
+  }
+
   function registerControls() {
     if (state.controlsBound) {
       return;
     }
     state.controlsBound = true;
     dom.screenFrame.setAttribute("tabindex", "0");
+
+    const handleMouseUp = (event) => {
+      if (!state.controlEnabled || !state.isConnected) {
+        state.mouseButtonsDown.clear();
+        return;
+      }
+      const button = mapMouseButton(event.button);
+      if (!state.mouseButtonsDown.has(button)) {
+        return;
+      }
+      state.mouseButtonsDown.delete(button);
+      const position = getCursorPosition();
+      void remdesk.sendControl({
+        type: CONTROL_TYPES.mouseUp,
+        x: position.x,
+        y: position.y,
+        button
+      });
+    };
 
     dom.screenFrame.addEventListener("mousemove", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
@@ -744,34 +841,34 @@
       if (event.button === 0 && shouldUsePointerLock()) {
         dom.screenFrame.requestPointerLock();
       }
-    });
-
-    dom.screenFrame.addEventListener("click", (event) => {
-      if (!state.controlEnabled || !state.isConnected) {
+      if (event.button === 2) {
+        event.preventDefault();
+      }
+      if (!(state.cursorLocked || state.softLock)) {
+        setCursorFromAbsolute(event);
+        scheduleMoveSend();
+      }
+      const button = mapMouseButton(event.button);
+      if (state.mouseButtonsDown.has(button)) {
         return;
       }
+      state.mouseButtonsDown.add(button);
       const position = getCursorPosition();
-      const button = mapMouseButton(event.button);
       void remdesk.sendControl({
-        type: CONTROL_TYPES.mouseClick,
+        type: CONTROL_TYPES.mouseDown,
         x: position.x,
         y: position.y,
         button
       });
     });
 
+    window.addEventListener("mouseup", handleMouseUp);
+
     dom.screenFrame.addEventListener("contextmenu", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
       event.preventDefault();
-      const position = getCursorPosition();
-      void remdesk.sendControl({
-        type: CONTROL_TYPES.mouseClick,
-        x: position.x,
-        y: position.y,
-        button: "right"
-      });
     });
 
     dom.screenFrame.addEventListener("wheel", (event) => {
@@ -792,38 +889,66 @@
     }, { passive: false });
 
     dom.screenFrame.addEventListener("dblclick", (event) => {
-      if (!state.controlEnabled || !state.isConnected) {
+      if (!state.isConnected) {
+        return;
+      }
+      if (state.controlEnabled && !event.shiftKey) {
         return;
       }
       if (document.fullscreenElement === dom.screenFrame) {
         document.exitFullscreen();
         return;
       }
-      if (event.shiftKey) {
-        dom.screenFrame.requestFullscreen().catch(() => {
-          remdesk.setStatus("Fullscreen failed", "bad");
-        });
-      }
+      dom.screenFrame.requestFullscreen().catch(() => {
+        remdesk.setStatus("Fullscreen failed", "bad");
+      });
     });
 
     dom.screenFrame.addEventListener("keydown", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      const key = normalizeKeyEvent(event);
-      if (!key) {
-        return;
-      }
       event.preventDefault();
-      if (key.length === 1 && state.textInputSupported) {
+      const hasChord = event.ctrlKey || event.altKey || event.metaKey;
+      const isPrintable = event.key && event.key.length === 1;
+      if (isPrintable && !hasChord && state.textInputSupported) {
         void remdesk.sendControl({
           type: CONTROL_TYPES.text,
-          text: key
+          text: event.key
         });
         return;
       }
+      const key = normalizeKeyCode(event);
+      if (!key) {
+        return;
+      }
+      if (event.repeat && state.pressedKeys.has(key)) {
+        return;
+      }
+      if (!state.pressedKeys.has(key)) {
+        state.pressedKeys.add(key);
+        void remdesk.sendControl({
+          type: CONTROL_TYPES.keyDown,
+          key
+        });
+      }
+    });
+
+    dom.screenFrame.addEventListener("keyup", (event) => {
+      if (!state.controlEnabled || !state.isConnected) {
+        return;
+      }
+      event.preventDefault();
+      const key = normalizeKeyCode(event);
+      if (!key) {
+        return;
+      }
+      if (!state.pressedKeys.has(key)) {
+        return;
+      }
+      state.pressedKeys.delete(key);
       void remdesk.sendControl({
-        type: CONTROL_TYPES.keypress,
+        type: CONTROL_TYPES.keyUp,
         key
       });
     });
@@ -867,5 +992,6 @@
   remdesk.stopMovePump = stopMovePump;
   remdesk.scheduleMoveSend = scheduleMoveSend;
   remdesk.handleModeToggle = handleModeToggle;
+  remdesk.releasePressedInputs = releasePressedInputs;
   remdesk.registerControls = registerControls;
 })();

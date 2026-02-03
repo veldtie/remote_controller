@@ -7,8 +7,12 @@
   const CONTROL_TYPES = {
     mouseMove: "mouse_move",
     mouseClick: "mouse_click",
+    mouseDown: "mouse_down",
+    mouseUp: "mouse_up",
     mouseScroll: "mouse_scroll",
     keypress: "keypress",
+    keyDown: "key_down",
+    keyUp: "key_up",
     text: "text"
   };
   const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
@@ -163,6 +167,8 @@
     lastLocalX: null,
     lastLocalY: null,
     lastSentPosition: null,
+    mouseButtonsDown: new Set(),
+    pressedKeys: new Set(),
     regionLabel: "",
     countryLabel: "",
     countryCode: "",
@@ -496,7 +502,11 @@
   }
 
   function updateInteractionMode() {
-    state.controlEnabled = dom.interactionToggle.checked;
+    const nextEnabled = dom.interactionToggle.checked;
+    if (!nextEnabled && state.controlEnabled && remdesk.releasePressedInputs) {
+      remdesk.releasePressedInputs();
+    }
+    state.controlEnabled = nextEnabled;
     syncInteractionToggle();
     const label = state.controlEnabled ? "Managing" : "Viewing";
     dom.interactionState.textContent = label;

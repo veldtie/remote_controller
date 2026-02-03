@@ -6,8 +6,12 @@ from typing import Any, Mapping
 from remote_client.control.input_controller import (
     InputController,
     KeyPress,
+    KeyDown,
+    KeyUp,
     MouseClick,
+    MouseDown,
     MouseMove,
+    MouseUp,
     MouseScroll,
     TextInput,
 )
@@ -79,6 +83,22 @@ class ControlHandler:
                 source_width=_optional_int(payload, "source_width"),
                 source_height=_optional_int(payload, "source_height"),
             )
+        elif message_type == "mouse_down":
+            command = MouseDown(
+                x=_require_int(payload, "x"),
+                y=_require_int(payload, "y"),
+                button=_normalize_button(payload.get("button", "left")),
+                source_width=_optional_int(payload, "source_width"),
+                source_height=_optional_int(payload, "source_height"),
+            )
+        elif message_type == "mouse_up":
+            command = MouseUp(
+                x=_require_int(payload, "x"),
+                y=_require_int(payload, "y"),
+                button=_normalize_button(payload.get("button", "left")),
+                source_width=_optional_int(payload, "source_width"),
+                source_height=_optional_int(payload, "source_height"),
+            )
         elif message_type == "mouse_scroll":
             delta_x = _optional_int(payload, "delta_x")
             delta_y = _optional_int(payload, "delta_y")
@@ -95,6 +115,16 @@ class ControlHandler:
             if key is None:
                 raise ValueError("Missing key for keypress.")
             command = KeyPress(key=str(key))
+        elif message_type == "key_down":
+            key = payload.get("key")
+            if key is None:
+                raise ValueError("Missing key for key_down.")
+            command = KeyDown(key=str(key))
+        elif message_type == "key_up":
+            key = payload.get("key")
+            if key is None:
+                raise ValueError("Missing key for key_up.")
+            command = KeyUp(key=str(key))
         elif message_type in {"text", "text_input"}:
             text = payload.get("text")
             if text is None:
