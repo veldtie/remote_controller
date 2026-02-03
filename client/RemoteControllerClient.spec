@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_8c4e8d1x\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_8c4e8d1x\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_8c4e8d1x\\remote_client\\rc_server.json', 'remote_client')]
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_519v9ibt\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_519v9ibt\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_519v9ibt\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard']
 tmp_ret = collect_all('pynput')
@@ -19,7 +19,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['G:\\git\\remote_controller\\client\\remote_client\\main.py'],
+    ['C:\\Users\\abdul\\PycharmProjects\\remote_controller\\client\\client.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

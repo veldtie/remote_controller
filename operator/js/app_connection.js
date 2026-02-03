@@ -171,6 +171,120 @@
     return decryptE2ee(envelope);
   }
 
+  function normalizeRemoteDescription(payload, expectedType = "") {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const type = payload.type;
+    if (!type || (expectedType && type !== expectedType)) {
+      return null;
+    }
+    let sdp = payload.sdp;
+    if (typeof sdp !== "string") {
+      return { type, sdp: "" };
+    }
+    sdp = sdp.trim();
+    if (!sdp) {
+      return { type, sdp: "" };
+    }
+    sdp = sdp.replace(/\r?\n/g, "\r\n");
+    sdp = normalizeSetupLines(sdp);
+    return { type, sdp };
+  }
+
+  function normalizeSetupLines(sdp) {
+    if (!sdp || typeof sdp !== "string") {
+      return sdp;
+    }
+    const lines = sdp
+      .split("\r\n")
+      .map((line) => (typeof line === "string" ? line.trim() : line));
+    let firstMediaIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line && line.startsWith("m=")) {
+        firstMediaIndex = i;
+        break;
+      }
+    }
+    if (firstMediaIndex === -1) {
+      return lines.filter((line) => line !== null && line !== undefined && line !== "").join("\r\n");
+    }
+    const sessionSetupLines = [];
+    for (let i = 0; i < firstMediaIndex; i++) {
+      const line = lines[i];
+      if (line && /^a=setup:/i.test(line)) {
+        sessionSetupLines.push(line);
+        lines[i] = null;
+      }
+    }
+    if (!sessionSetupLines.length) {
+      return lines.filter((line) => line !== null && line !== undefined && line !== "").join("\r\n");
+    }
+    const setupLine = sessionSetupLines[0];
+    const rebuilt = [];
+    for (let i = 0; i < firstMediaIndex; i++) {
+      const line = lines[i];
+      if (line !== null && line !== undefined && line !== "") {
+        rebuilt.push(line);
+      }
+    }
+    const mediaLines = lines.slice(firstMediaIndex);
+    let idx = 0;
+    while (idx < mediaLines.length) {
+      const line = mediaLines[idx];
+      if (line && line.startsWith("m=")) {
+        let sectionEnd = mediaLines.length;
+        for (let j = idx + 1; j < mediaLines.length; j++) {
+          if (mediaLines[j] && mediaLines[j].startsWith("m=")) {
+            sectionEnd = j;
+            break;
+          }
+        }
+        const section = mediaLines.slice(idx, sectionEnd);
+        const hasSetup = section.some((entry) => entry && /^a=setup:/i.test(entry));
+        rebuilt.push(section[0]);
+        if (!hasSetup) {
+          rebuilt.push(setupLine);
+        }
+        for (let k = 1; k < section.length; k++) {
+          const entry = section[k];
+          if (entry !== null && entry !== undefined && entry !== "") {
+            rebuilt.push(entry);
+          }
+        }
+        idx = sectionEnd;
+        continue;
+      }
+      if (line !== null && line !== undefined && line !== "") {
+        rebuilt.push(line);
+      }
+      idx += 1;
+    }
+    return rebuilt.join("\r\n");
+  }
+
+  function summarizeSdp(sdp) {
+    if (!sdp || typeof sdp !== "string") {
+      return { lines: 0, hasAudio: false, hasVideo: false, hasApp: false, hasSctpPort: false };
+    }
+    return {
+      lines: sdp.split(/\r?\n/).length,
+      hasAudio: /m=audio/i.test(sdp),
+      hasVideo: /m=video/i.test(sdp),
+      hasApp: /m=application/i.test(sdp),
+      hasSctpPort: /a=sctp-port:/i.test(sdp)
+    };
+  }
+
+  function formatLogDetails(details) {
+    try {
+      return JSON.stringify(details);
+    } catch (error) {
+      return String(details);
+    }
+  }
+
   function ensureChannelOpen() {
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
@@ -320,6 +434,15 @@
         return;
       }
       const shouldRetry = state.hadConnection;
+      console.warn(
+        "Connect ready timeout " +
+          formatLogDetails({
+            signalingState: state.peerConnection ? state.peerConnection.signalingState : "none",
+            connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+            iceState: state.peerConnection ? state.peerConnection.iceConnectionState : "none",
+            channelState: state.controlChannel ? state.controlChannel.readyState : "none"
+          })
+      );
       remdesk.setStatus(
         shouldRetry ? "Client not responding, retrying..." : "Client not responding",
         "warn"
@@ -734,6 +857,10 @@
           hasSdp: Boolean(state.peerConnection.localDescription && state.peerConnection.localDescription.sdp)
         });
         if (signalingSocket.readyState === WebSocket.OPEN) {
+          console.info(
+            "Sending offer " +
+              formatLogDetails(summarizeSdp(state.peerConnection.localDescription.sdp))
+          );
           signalingSocket.send(
             JSON.stringify({
               type: state.peerConnection.localDescription.type,
@@ -753,11 +880,48 @@
           session_id: payload.session_id,
           operator_id: payload.operator_id
         });
+        const normalized = normalizeRemoteDescription(payload, "answer");
+        if (!normalized || !normalized.sdp) {
+          console.warn("Answer missing SDP", {
+            type: payload && payload.type,
+            signalingState: state.peerConnection.signalingState
+          });
+          return;
+        }
+        if (state.peerConnection.signalingState !== "have-local-offer") {
+          console.warn("Ignoring answer in unexpected state", {
+            signalingState: state.peerConnection.signalingState
+          });
+          return;
+        }
         try {
-          await state.peerConnection.setRemoteDescription(payload);
-        } catch (error) {
+        console.info(
+          "Applying answer " + formatLogDetails(summarizeSdp(normalized.sdp))
+        );
+        await state.peerConnection.setRemoteDescription(normalized);
+      } catch (error) {
+        const errorName = error && error.name ? error.name : "";
+        const errorMessage = error && error.message ? error.message : "";
+        const signalingState = state.peerConnection.signalingState;
+        const sdpLength = normalized.sdp.length;
+        const sdpHead = normalized.sdp.split(/\r?\n/, 1)[0] || "";
+        console.warn(
+          "Failed to set remote answer " +
+            formatLogDetails({
+              name: errorName,
+              message: errorMessage,
+              signalingState,
+              sdpLength,
+              sdpHead
+            })
+        );
+        if (
+          errorName === "InvalidStateError" ||
+          /state|signaling|stable/i.test(errorMessage)
+        ) {
+            return;
+          }
           remdesk.setStatus("Connection failed", "bad");
-          console.warn("Failed to set remote answer", error);
           cleanupConnection();
           scheduleReconnect("Connection failed");
           return;
@@ -894,6 +1058,14 @@
 
       state.controlChannel = state.peerConnection.createDataChannel("control");
       state.controlChannel.onopen = () => {
+        console.info(
+          "Control channel open " +
+            formatLogDetails({
+              readyState: state.controlChannel ? state.controlChannel.readyState : "none",
+              connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+              signalingState: state.peerConnection ? state.peerConnection.signalingState : "none"
+            })
+        );
         const label = state.e2eeContext ? "Connected (E2EE)" : "Connected";
         remdesk.setStatus(label, "ok");
         remdesk.setConnected(true);
@@ -923,6 +1095,13 @@
         }
       };
       state.controlChannel.onclose = () => {
+        console.warn(
+          "Control channel closed " +
+            formatLogDetails({
+              connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+              signalingState: state.peerConnection ? state.peerConnection.signalingState : "none"
+            })
+        );
         remdesk.setStatus("Disconnected", "bad");
         remdesk.setConnected(false);
         remdesk.setModeLocked(false);
