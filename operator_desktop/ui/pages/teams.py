@@ -36,9 +36,9 @@ class TeamsPage(QtWidgets.QWidget):
 
         header = QtWidgets.QVBoxLayout()
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         header.addWidget(self.title_label)
         header.addWidget(self.subtitle_label)
         layout.addLayout(header)

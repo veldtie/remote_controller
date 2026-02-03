@@ -161,6 +161,7 @@ class DashboardPage(QtWidgets.QWidget):
     connect_requested = QtCore.pyqtSignal(str, bool)
     extra_action_requested = QtCore.pyqtSignal(str, str)
     delete_requested = QtCore.pyqtSignal(str)
+    client_selected = QtCore.pyqtSignal(str)
     ping_updated = QtCore.pyqtSignal(object)
     server_status_changed = QtCore.pyqtSignal(bool)
 
@@ -199,79 +200,116 @@ class DashboardPage(QtWidgets.QWidget):
         self._ip_lookup_inflight: set[str] = set()
         self._ip_lookup_workers: dict[str, IpCountryWorker] = {}
         self._flag_pixmap_cache: dict[str, QtGui.QPixmap | None] = {}
+        self._logs_visible = False
         self._ensure_client_state()
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        header = QtWidgets.QHBoxLayout()
+        toolbar = QtWidgets.QFrame()
+        toolbar.setObjectName("ToolbarCard")
+        toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(16, 14, 16, 14)
+        toolbar_layout.setSpacing(12)
+
         title_box = QtWidgets.QVBoxLayout()
+        title_box.setSpacing(6)
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         title_box.addWidget(self.title_label)
         title_box.addWidget(self.subtitle_label)
-        header.addLayout(title_box)
-        header.addStretch()
+
+        info_row = QtWidgets.QHBoxLayout()
+        info_row.setSpacing(8)
+        self.last_sync_label = QtWidgets.QLabel()
+        self.last_sync_label.setObjectName("InfoPill")
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setObjectName("InfoPill")
+        info_row.addWidget(self.last_sync_label)
+        info_row.addWidget(self.status_label)
+        info_row.addStretch()
+        title_box.addLayout(info_row)
+
+        toolbar_layout.addLayout(title_box)
+        toolbar_layout.addStretch()
+
         self.search_input = QtWidgets.QLineEdit()
-        self.search_input.setMinimumWidth(220)
+        self.search_input.setObjectName("SearchInput")
+        self.search_input.setMinimumWidth(240)
         self.search_input.setClearButtonEnabled(True)
+        search_icon = load_icon("search", self.theme.name)
+        if not search_icon.isNull():
+            self.search_input.addAction(
+                search_icon,
+                QtWidgets.QLineEdit.ActionPosition.LeadingPosition,
+            )
         self.search_input.textChanged.connect(self.filter_clients)
-        header.addWidget(self.search_input)
+        toolbar_layout.addWidget(self.search_input)
+
         self.refresh_button = make_button("", "ghost")
         self.refresh_button.clicked.connect(self.refresh_clients)
-        header.addWidget(self.refresh_button)
-        layout.addLayout(header)
+        toolbar_layout.addWidget(self.refresh_button)
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        split.setHandleWidth(8)
+        self.activity_button = make_button("", "ghost")
+        self.activity_button.setCheckable(True)
+        self.activity_button.clicked.connect(self.toggle_logs)
+        toolbar_layout.addWidget(self.activity_button)
+
+        layout.addWidget(toolbar)
+
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.splitter.setHandleWidth(8)
         self.table_card = QtWidgets.QFrame()
         self.table_card.setObjectName("Card")
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
-        table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.setSpacing(0)
+        table_layout.setContentsMargins(12, 12, 12, 12)
+        table_layout.setSpacing(8)
         self.table = QtWidgets.QTableWidget(0, 0)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setMouseTracking(True)
+        self.table.setShowGrid(False)
         self.table.viewport().installEventFilter(self)
+        self.table.cellDoubleClicked.connect(self._emit_client_selected)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         self._configure_columns()
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
-        split.addWidget(self.table_card)
+        self.splitter.addWidget(self.table_card)
 
         self.log_card = QtWidgets.QFrame()
-        self.log_card.setObjectName("Card")
+        self.log_card.setObjectName("DrawerCard")
         log_layout = QtWidgets.QVBoxLayout(self.log_card)
+        log_layout.setContentsMargins(14, 14, 14, 14)
+        log_layout.setSpacing(10)
+        log_header = QtWidgets.QHBoxLayout()
         self.log_title = QtWidgets.QLabel()
         self.log_title.setStyleSheet("font-weight: 600;")
-        log_layout.addWidget(self.log_title)
+        log_header.addWidget(self.log_title)
+        log_header.addStretch()
+        self.log_close = make_button("", "ghost")
+        self.log_close.clicked.connect(lambda: self.set_logs_visible(False))
+        log_header.addWidget(self.log_close)
+        log_layout.addLayout(log_header)
         self.log_list = QtWidgets.QListWidget()
         self.log_list.setMouseTracking(True)
         log_layout.addWidget(self.log_list, 1)
-        split.addWidget(self.log_card)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        self.splitter.addWidget(self.log_card)
+        self.splitter.setStretchFactor(0, 4)
+        self.splitter.setStretchFactor(1, 1)
+        self.log_card.setVisible(False)
 
-        layout.addWidget(split, 1)
+        layout.addWidget(self.splitter, 1)
 
-        footer = QtWidgets.QHBoxLayout()
-        self.last_sync_label = QtWidgets.QLabel()
-        self.last_sync_label.setObjectName("Muted")
-        footer.addWidget(self.last_sync_label)
-        footer.addStretch()
-        self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("Muted")
-        footer.addWidget(self.status_label)
-        layout.addLayout(footer)
-
+        self.set_logs_visible(False)
         self.logger.updated.connect(self.refresh_logs)
         self.ping_timer = QtCore.QTimer(self)
         self.ping_timer.setInterval(self._ping_base_interval_ms)
@@ -382,6 +420,18 @@ class DashboardPage(QtWidgets.QWidget):
             if self._pending_render:
                 self._pending_render = False
                 self._render_current_clients()
+
+    def set_logs_visible(self, visible: bool) -> None:
+        self._logs_visible = visible
+        self.log_card.setVisible(visible)
+        self.activity_button.setChecked(visible)
+        if visible:
+            self.splitter.setSizes([680, 280])
+        else:
+            self.splitter.setSizes([1, 0])
+
+    def toggle_logs(self) -> None:
+        self.set_logs_visible(not self._logs_visible)
 
     def _visible_clients(self, clients: list[Dict]) -> list[Dict]:
         if self.current_role == "moderator":
@@ -730,8 +780,10 @@ class DashboardPage(QtWidgets.QWidget):
         self.subtitle_label.setText(self.i18n.t("main_subtitle"))
         self.search_input.setPlaceholderText(self.i18n.t("main_search_placeholder"))
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
+        self.activity_button.setText(self.i18n.t("log_title"))
         self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
+        self.log_close.setText(self.i18n.t("storage_close"))
         self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
         self._render_current_clients()
@@ -1036,26 +1088,41 @@ class DashboardPage(QtWidgets.QWidget):
     def build_name_cell(self, client: Dict) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(container)
-        layout.setContentsMargins(8, 0, 6, 0)
-        layout.setSpacing(6)
-        label = QtWidgets.QLabel(client["name"])
-        label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
-        label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+        text_stack = QtWidgets.QVBoxLayout()
+        name_button = QtWidgets.QPushButton(client["name"])
+        name_button.setObjectName("NameLink")
+        name_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        name_button.setFlat(True)
+        name_button.clicked.connect(lambda _, cid=client["id"]: self.client_selected.emit(cid))
+        id_label = QtWidgets.QLabel(client.get("id", ""))
+        id_label.setObjectName("Muted")
+        id_label.setStyleSheet("font-size: 11px;")
+        text_stack.addWidget(name_button)
+        text_stack.addWidget(id_label)
         button = QtWidgets.QToolButton()
         button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         button.setAutoRaise(True)
-        edit_icon = load_icon("edit", self.theme.name)
+        edit_icon = load_icon("rename", self.theme.name)
         if edit_icon.isNull():
-            button.setText("✎")
+            button.setText(self.i18n.t("button_edit_name"))
         else:
             button.setIcon(edit_icon)
             button.setIconSize(QtCore.QSize(16, 16))
         button.setToolTip(self.i18n.t("button_edit_name"))
         button.clicked.connect(lambda _, cid=client["id"]: self.edit_client_name(cid))
-        layout.addWidget(label, 1)
+        layout.addLayout(text_stack, 1)
         layout.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignRight)
-        container.setLayout(layout)
         return container
+
+    def _emit_client_selected(self, row: int, _column: int) -> None:
+        item = self.table.item(row, 0)
+        if not item:
+            return
+        client_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if client_id:
+            self.client_selected.emit(client_id)
 
     def build_more_button(self, client_id: str) -> QtWidgets.QPushButton:
         button = QtWidgets.QToolButton()

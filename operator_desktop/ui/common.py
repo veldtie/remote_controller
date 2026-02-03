@@ -25,19 +25,31 @@ class BackgroundWidget(QtWidgets.QWidget):
         gradient.setColorAt(1.0, QtGui.QColor(self.theme.colors["bg_end"]))
         painter.fillRect(rect, gradient)
 
-        glow = QtGui.QColor(self.theme.colors["glow"])
-        glow.setAlpha(60)
-        painter.setBrush(glow)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.2), int(rect.height() * 0.06)), 220, 220)
+        glow = QtGui.QColor(self.theme.colors["accent"])
+        glow.setAlpha(28)
+        painter.setBrush(glow)
+        painter.drawEllipse(
+            QtCore.QPoint(int(rect.width() * 0.2), int(rect.height() * 0.12)),
+            240,
+            240,
+        )
 
-        accent = QtGui.QColor(self.theme.colors["accent"])
-        accent.setAlpha(40)
-        painter.setBrush(accent)
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.85), int(rect.height() * 0.12)), 180, 180)
+        glow.setAlpha(20)
+        painter.setBrush(glow)
+        painter.drawEllipse(
+            QtCore.QPoint(int(rect.width() * 0.82), int(rect.height() * 0.1)),
+            220,
+            220,
+        )
 
-        painter.setBrush(QtGui.QColor(self.theme.colors["accent_soft"]))
-        painter.drawEllipse(QtCore.QPoint(int(rect.width() * 0.7), int(rect.height() * 0.72)), 260, 260)
+        glow.setAlpha(14)
+        painter.setBrush(glow)
+        painter.drawEllipse(
+            QtCore.QPoint(int(rect.width() * 0.68), int(rect.height() * 0.8)),
+            320,
+            320,
+        )
 
         painter.end()
 
