@@ -31,6 +31,17 @@ from remote_client.webrtc.signaling import WebSocketSignaling
 
 logger = logging.getLogger(__name__)
 
+def _summarize_sdp(sdp: str | None) -> dict[str, object]:
+    if not sdp:
+        return {"lines": 0, "has_audio": False, "has_video": False, "has_app": False, "has_sctp": False}
+    return {
+        "lines": len(sdp.splitlines()),
+        "has_audio": "m=audio" in sdp,
+        "has_video": "m=video" in sdp,
+        "has_app": "m=application" in sdp,
+        "has_sctp": "a=sctp-port:" in sdp,
+    }
+
 def _read_env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None:
@@ -442,8 +453,27 @@ class WebRTCClient:
 
         @peer_connection.on("datachannel")
         def on_datachannel(data_channel):
+            logger.info(
+                "Data channel created label=%s id=%s",
+                getattr(data_channel, "label", None),
+                getattr(data_channel, "id", None),
+            )
+
+            @data_channel.on("open")
+            def on_open() -> None:
+                logger.info(
+                    "Data channel open label=%s readyState=%s",
+                    getattr(data_channel, "label", None),
+                    getattr(data_channel, "readyState", None),
+                )
+
             @data_channel.on("close")
             def on_close() -> None:
+                logger.info(
+                    "Data channel closed label=%s readyState=%s",
+                    getattr(data_channel, "label", None),
+                    getattr(data_channel, "readyState", None),
+                )
                 connection_done.set()
 
             @data_channel.on("message")
@@ -543,6 +573,7 @@ class WebRTCClient:
                 bool(offer_payload.get("sdp")),
                 offer_payload.get("operator_id"),
             )
+            logger.info("Offer SDP summary: %s", _summarize_sdp(offer_payload.get("sdp")))
             operator_id_holder["value"] = offer_payload.get("operator_id")
             session_mode = _normalize_session_mode(offer_payload.get("mode"))
             self._current_mode = session_mode
@@ -560,6 +591,12 @@ class WebRTCClient:
                 sdp=offer_payload["sdp"], type=offer_payload["type"]
             )
             await peer_connection.setRemoteDescription(offer)
+            if peer_connection.sctp:
+                logger.info(
+                    "SCTP transport state=%s port=%s",
+                    peer_connection.sctp.state,
+                    peer_connection.sctp.port,
+                )
             if pending_ice:
                 for message in pending_ice:
                     await _apply_ice_candidate(message)
@@ -577,7 +614,18 @@ class WebRTCClient:
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)
-            logger.info("Sending answer (has_sdp=%s).", bool(peer_connection.localDescription and peer_connection.localDescription.sdp))
+            logger.info(
+                "Sending answer (has_sdp=%s).",
+                bool(peer_connection.localDescription and peer_connection.localDescription.sdp),
+            )
+            logger.info(
+                "Answer SDP summary: %s",
+                _summarize_sdp(
+                    peer_connection.localDescription.sdp
+                    if peer_connection.localDescription
+                    else None
+                ),
+            )
             answer_payload = {
                 "type": peer_connection.localDescription.type,
                 "sdp": peer_connection.localDescription.sdp,

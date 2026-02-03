@@ -193,6 +193,19 @@
     return { type, sdp };
   }
 
+  function summarizeSdp(sdp) {
+    if (!sdp || typeof sdp !== "string") {
+      return { lines: 0, hasAudio: false, hasVideo: false, hasApp: false, hasSctpPort: false };
+    }
+    return {
+      lines: sdp.split(/\r?\n/).length,
+      hasAudio: /m=audio/i.test(sdp),
+      hasVideo: /m=video/i.test(sdp),
+      hasApp: /m=application/i.test(sdp),
+      hasSctpPort: /a=sctp-port:/i.test(sdp)
+    };
+  }
+
   function ensureChannelOpen() {
     return state.controlChannel && state.controlChannel.readyState === "open";
   }
@@ -342,6 +355,12 @@
         return;
       }
       const shouldRetry = state.hadConnection;
+      console.warn("Connect ready timeout", {
+        signalingState: state.peerConnection ? state.peerConnection.signalingState : "none",
+        connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+        iceState: state.peerConnection ? state.peerConnection.iceConnectionState : "none",
+        channelState: state.controlChannel ? state.controlChannel.readyState : "none"
+      });
       remdesk.setStatus(
         shouldRetry ? "Client not responding, retrying..." : "Client not responding",
         "warn"
@@ -756,6 +775,7 @@
           hasSdp: Boolean(state.peerConnection.localDescription && state.peerConnection.localDescription.sdp)
         });
         if (signalingSocket.readyState === WebSocket.OPEN) {
+          console.info("Sending offer", summarizeSdp(state.peerConnection.localDescription.sdp));
           signalingSocket.send(
             JSON.stringify({
               type: state.peerConnection.localDescription.type,
@@ -790,6 +810,7 @@
           return;
         }
         try {
+          console.info("Applying answer", summarizeSdp(normalized.sdp));
           await state.peerConnection.setRemoteDescription(normalized);
         } catch (error) {
           const errorName = error && error.name ? error.name : "";
@@ -947,6 +968,11 @@
 
       state.controlChannel = state.peerConnection.createDataChannel("control");
       state.controlChannel.onopen = () => {
+        console.info("Control channel open", {
+          readyState: state.controlChannel ? state.controlChannel.readyState : "none",
+          connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+          signalingState: state.peerConnection ? state.peerConnection.signalingState : "none"
+        });
         const label = state.e2eeContext ? "Connected (E2EE)" : "Connected";
         remdesk.setStatus(label, "ok");
         remdesk.setConnected(true);
@@ -976,6 +1002,10 @@
         }
       };
       state.controlChannel.onclose = () => {
+        console.warn("Control channel closed", {
+          connectionState: state.peerConnection ? state.peerConnection.connectionState : "none",
+          signalingState: state.peerConnection ? state.peerConnection.signalingState : "none"
+        });
         remdesk.setStatus("Disconnected", "bad");
         remdesk.setConnected(false);
         remdesk.setModeLocked(false);
