@@ -166,6 +166,8 @@
   function getWorkspaceBounds() {
     const style = getComputedStyle(document.documentElement);
     const edgeGap = Number.parseFloat(style.getPropertyValue("--edge-gap")) || 16;
+    const workspaceTop =
+      Number.parseFloat(style.getPropertyValue("--workspace-top")) || edgeGap;
     const workspaceLeft =
       Number.parseFloat(style.getPropertyValue("--workspace-left")) || 320;
     const workspaceBottom =
@@ -173,10 +175,11 @@
     const availableWidth = Math.max(0, window.innerWidth - workspaceLeft - edgeGap);
     const availableHeight = Math.max(
       0,
-      window.innerHeight - workspaceBottom - edgeGap * 2
+      window.innerHeight - workspaceTop - workspaceBottom - edgeGap
     );
     return {
       edgeGap,
+      workspaceTop,
       workspaceLeft,
       workspaceBottom,
       availableWidth,
@@ -195,12 +198,28 @@
       dom.screenFrame.style.removeProperty("height");
       return;
     }
-    const { edgeGap, workspaceLeft, workspaceBottom, availableWidth, availableHeight } =
+    const { edgeGap, workspaceTop, workspaceLeft, availableWidth, availableHeight } =
       getWorkspaceBounds();
-    dom.screenFrame.style.top = `${edgeGap}px`;
-    dom.screenFrame.style.left = `${workspaceLeft}px`;
-    dom.screenFrame.style.width = `${availableWidth}px`;
-    dom.screenFrame.style.height = `${availableHeight}px`;
+    const nextBounds = {
+      top: workspaceTop,
+      left: workspaceLeft,
+      width: availableWidth,
+      height: availableHeight
+    };
+    if (
+      state.lastFrameBounds &&
+      state.lastFrameBounds.top === nextBounds.top &&
+      state.lastFrameBounds.left === nextBounds.left &&
+      state.lastFrameBounds.width === nextBounds.width &&
+      state.lastFrameBounds.height === nextBounds.height
+    ) {
+      return;
+    }
+    state.lastFrameBounds = nextBounds;
+    dom.screenFrame.style.top = `${nextBounds.top}px`;
+    dom.screenFrame.style.left = `${nextBounds.left}px`;
+    dom.screenFrame.style.width = `${nextBounds.width}px`;
+    dom.screenFrame.style.height = `${nextBounds.height}px`;
   }
 
   function ensureCursorOverlay() {
@@ -756,7 +775,14 @@
     startMovePump();
   }
 
-  function handleModeToggle() {
+  function handleModeToggle(nextMode) {
+    const mode =
+      nextMode ||
+      (dom.interactionToggle && dom.interactionToggle.checked ? "manage" : "view");
+    if (remdesk.applySessionMode) {
+      remdesk.applySessionMode(mode, { triggerReconnect: true });
+      return;
+    }
     remdesk.updateInteractionMode();
     if (state.isConnected && !state.modeLocked) {
       remdesk.setStatus("Switching mode...", "warn");

@@ -15,7 +15,7 @@ from ...core.constants import APP_VERSION
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
-from ..common import load_icon, make_button
+from ..common import GlassFrame, load_icon, make_button
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,7 @@ class DashboardPage(QtWidgets.QWidget):
         layout.setSpacing(14)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        toolbar = QtWidgets.QFrame()
+        toolbar = GlassFrame(radius=18, tone="card_alt", tint_alpha=160, border_alpha=70)
         toolbar.setObjectName("ToolbarCard")
         toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(16, 14, 16, 14)
@@ -262,7 +262,7 @@ class DashboardPage(QtWidgets.QWidget):
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(8)
-        self.table_card = QtWidgets.QFrame()
+        self.table_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.table_card.setObjectName("Card")
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
         table_layout.setContentsMargins(12, 12, 12, 12)
@@ -280,12 +280,12 @@ class DashboardPage(QtWidgets.QWidget):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         self._configure_columns()
-        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
         self.splitter.addWidget(self.table_card)
 
-        self.log_card = QtWidgets.QFrame()
+        self.log_card = GlassFrame(radius=20, tone="card_strong", tint_alpha=180, border_alpha=70)
         self.log_card.setObjectName("DrawerCard")
         log_layout = QtWidgets.QVBoxLayout(self.log_card)
         log_layout.setContentsMargins(14, 14, 14, 14)
@@ -854,7 +854,7 @@ class DashboardPage(QtWidgets.QWidget):
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setRowHeight(row, 44)
+            self.table.setRowHeight(row, 46)
             name_item = QtWidgets.QTableWidgetItem(client["name"])
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client["id"])
             name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -937,8 +937,8 @@ class DashboardPage(QtWidgets.QWidget):
                 delete_button.setStyleSheet(
                     "QToolButton {"
                     f"background: {self.theme.colors['danger']};"
-                    "border: none;"
-                    "border-radius: 8px;"
+                    "border: 1px solid rgba(255, 255, 255, 0.12);"
+                    "border-radius: 10px;"
                     "color: #ffffff;"
                     "}"
                     "QToolButton:hover {"
@@ -1137,7 +1137,7 @@ class DashboardPage(QtWidgets.QWidget):
             "QToolButton {"
             f"background: {self.theme.colors['card_alt']};"
             f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 8px;"
+            "border-radius: 12px;"
             "padding: 0;"
             "}"
             "QToolButton:hover {"
@@ -1223,7 +1223,7 @@ class DashboardPage(QtWidgets.QWidget):
             "QPushButton {"
             f"background: {self.theme.colors['card_alt']};"
             f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 8px;"
+            "border-radius: 10px;"
             "padding: 6px 12px;"
             "}"
             "QPushButton:hover {"

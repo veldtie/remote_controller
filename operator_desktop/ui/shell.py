@@ -9,7 +9,7 @@ from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from ..core.translations import LANGUAGE_NAMES
-from .common import ICON_DIR, animate_widget, load_icon, make_button
+from .common import ICON_DIR, GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
@@ -44,28 +44,28 @@ class MainShell(QtWidgets.QWidget):
         self._utility_sessions: Dict[str, RemoteSessionDialog] = {}
         self._ice_servers_cache: list[dict[str, object]] | None = None
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(18)
 
-        self.sidebar = QtWidgets.QFrame()
+        self.sidebar = GlassFrame(radius=22, tone="card", tint_alpha=170, border_alpha=70)
         self.sidebar.setObjectName("Sidebar")
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(236)
         sidebar_layout = QtWidgets.QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(14, 14, 14, 14)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setContentsMargins(16, 16, 16, 16)
+        sidebar_layout.setSpacing(12)
 
-        brand = QtWidgets.QFrame()
+        brand = GlassFrame(radius=16, tone="card_alt", tint_alpha=150, border_alpha=60)
         brand.setObjectName("SidebarHeader")
         brand_layout = QtWidgets.QHBoxLayout(brand)
         brand_layout.setContentsMargins(4, 4, 4, 4)
         brand_layout.setSpacing(10)
         self.brand_icon = QtWidgets.QLabel("RC")
         self.brand_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.brand_icon.setFixedSize(54, 54)
+        self.brand_icon.setFixedSize(52, 52)
         self.brand_icon.setObjectName("BrandIcon")
         brand_text = QtWidgets.QVBoxLayout()
         self.brand_title = QtWidgets.QLabel()
-        self.brand_title.setStyleSheet("font-weight: 700; font-size: 15px;")
+        self.brand_title.setStyleSheet("font-weight: 700; font-size: 16px;")
         self.brand_subtitle = QtWidgets.QLabel()
         self.brand_subtitle.setObjectName("Muted")
         brand_text.addWidget(self.brand_title)
@@ -155,7 +155,7 @@ class MainShell(QtWidgets.QWidget):
         self.connection_banner = QtWidgets.QFrame()
         self.connection_banner.setObjectName("ConnectionBanner")
         banner_layout = QtWidgets.QHBoxLayout(self.connection_banner)
-        banner_layout.setContentsMargins(12, 8, 12, 8)
+        banner_layout.setContentsMargins(14, 10, 14, 10)
         banner_layout.setSpacing(10)
         self.banner_icon = QtWidgets.QLabel("!")
         self.banner_icon.setObjectName("ConnectionBannerIcon")

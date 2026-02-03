@@ -9,7 +9,7 @@ from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from ..core.theme import THEMES, build_stylesheet, select_font_for_language
-from .common import BackgroundWidget, animate_widget
+from .common import BackgroundWidget, GlassFrame, animate_widget
 from .pages.login import LoginPage
 from .shell import MainShell
 
@@ -41,22 +41,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background = BackgroundWidget(self.theme)
         self.setCentralWidget(self.background)
 
-        self.window_frame = QtWidgets.QFrame()
+        self.window_frame = GlassFrame(radius=30, tone="card_strong", tint_alpha=190, border_alpha=80)
         self.window_frame.setObjectName("WindowFrame")
         frame_layout = QtWidgets.QVBoxLayout(self.window_frame)
-        frame_layout.setContentsMargins(16, 16, 16, 16)
-        frame_layout.setSpacing(12)
+        frame_layout.setContentsMargins(18, 18, 18, 18)
+        frame_layout.setSpacing(14)
         shadow = QtWidgets.QGraphicsDropShadowEffect(self.window_frame)
-        shadow.setBlurRadius(50)
-        shadow.setOffset(0, 18)
-        shadow.setColor(QtGui.QColor(0, 0, 0, 140))
+        shadow.setBlurRadius(60)
+        shadow.setOffset(0, 20)
+        shadow.setColor(QtGui.QColor(0, 0, 0, 155))
         self.window_frame.setGraphicsEffect(shadow)
 
         self.chrome_bar = QtWidgets.QFrame()
         self.chrome_bar.setObjectName("ChromeBar")
-        self.chrome_bar.setFixedHeight(44)
+        self.chrome_bar.setFixedHeight(48)
         chrome_layout = QtWidgets.QHBoxLayout(self.chrome_bar)
-        chrome_layout.setContentsMargins(14, 8, 14, 8)
+        chrome_layout.setContentsMargins(16, 8, 16, 8)
         chrome_layout.setSpacing(10)
 
         dots = QtWidgets.QHBoxLayout()
@@ -95,7 +95,7 @@ class MainWindow(QtWidgets.QMainWindow):
         frame_layout.addWidget(self.stack, 1)
 
         bg_layout = QtWidgets.QVBoxLayout(self.background)
-        bg_layout.setContentsMargins(28, 28, 28, 28)
+        bg_layout.setContentsMargins(24, 24, 24, 24)
         bg_layout.addWidget(self.window_frame)
 
         self.login_page.login_requested.connect(self.handle_login)

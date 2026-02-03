@@ -464,12 +464,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
     def _build_window_controls(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame(self)
         bar.setObjectName("SessionControlBar")
-        bar.setStyleSheet(
-            "QFrame#SessionControlBar {"
-            "background: rgba(12, 14, 18, 0.92);"
-            "border-bottom: 1px solid rgba(255, 255, 255, 0.08);"
-            "}"
-        )
+        bar.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         bar_layout = QtWidgets.QHBoxLayout(bar)
         bar_layout.setContentsMargins(10, 8, 10, 8)
         bar_layout.setSpacing(10)
@@ -479,22 +474,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         controls = QtWidgets.QFrame(bar)
         controls.setObjectName("SessionControls")
         controls.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        controls.setStyleSheet(
-            "QFrame#SessionControls {"
-            "background: rgba(12, 16, 22, 0.82);"
-            "border: 1px solid rgba(255, 255, 255, 0.14);"
-            "border-radius: 10px;"
-            "}"
-            "QToolButton {"
-            "color: #f5f2ea;"
-            "border: none;"
-            "padding: 4px;"
-            "}"
-            "QToolButton:hover {"
-            "background: rgba(255, 255, 255, 0.12);"
-            "border-radius: 8px;"
-            "}"
-        )
         controls_layout = QtWidgets.QHBoxLayout(controls)
         controls_layout.setContentsMargins(8, 6, 8, 6)
         controls_layout.setSpacing(6)

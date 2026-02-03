@@ -5,7 +5,7 @@ from ...core.constants import APP_VERSION
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.translations import LANGUAGE_NAMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 class SettingsPage(QtWidgets.QWidget):
@@ -50,7 +50,7 @@ class SettingsPage(QtWidgets.QWidget):
         content = QtWidgets.QVBoxLayout()
         content.setSpacing(14)
 
-        self.appearance_card = QtWidgets.QFrame()
+        self.appearance_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.appearance_card.setObjectName("SettingsCard")
         appearance_layout = QtWidgets.QVBoxLayout(self.appearance_card)
         appearance_layout.setContentsMargins(14, 10, 14, 10)
@@ -72,7 +72,7 @@ class SettingsPage(QtWidgets.QWidget):
         content.addWidget(self.appearance_card)
 
         content.addSpacing(8)
-        self.account_card = QtWidgets.QFrame()
+        self.account_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.account_card.setObjectName("SettingsCard")
         account_layout = QtWidgets.QVBoxLayout(self.account_card)
         account_layout.setContentsMargins(14, 10, 14, 10)
@@ -139,7 +139,7 @@ class SettingsPage(QtWidgets.QWidget):
         actions_layout.addLayout(actions_buttons)
         content.addLayout(actions_layout)
 
-        self.about_card = QtWidgets.QFrame()
+        self.about_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.about_card.setObjectName("SettingsCard")
         about_layout = QtWidgets.QVBoxLayout(self.about_card)
         about_layout.setContentsMargins(16, 12, 16, 12)

@@ -127,9 +127,11 @@
     }
 
     const mode = (params.get("mode") || "").toLowerCase();
-    if (mode === "view") {
+    if (mode && remdesk.applySessionMode) {
+      remdesk.applySessionMode(mode);
+    } else if (mode === "view" && dom.interactionToggle) {
       dom.interactionToggle.checked = false;
-    } else if (mode === "manage") {
+    } else if (mode === "manage" && dom.interactionToggle) {
       dom.interactionToggle.checked = true;
     }
 
@@ -223,12 +225,14 @@
     if (payload.stream && dom.streamProfile) {
       remdesk.applyStreamProfile(payload.stream, false);
     }
-    if (payload.manage === true && dom.interactionToggle && !dom.interactionToggle.checked) {
-      dom.interactionToggle.checked = true;
-      dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
-    } else if (payload.manage === false && dom.interactionToggle && dom.interactionToggle.checked) {
-      dom.interactionToggle.checked = false;
-      dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    if (Object.prototype.hasOwnProperty.call(payload, "manage")) {
+      const nextMode = payload.manage ? "manage" : "view";
+      if (remdesk.applySessionMode) {
+        remdesk.applySessionMode(nextMode);
+      } else if (dom.interactionToggle) {
+        dom.interactionToggle.checked = payload.manage;
+        dom.interactionToggle.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     }
     if (payload.openStorage) {
       remdesk.toggleStorage(true);
@@ -240,7 +244,16 @@
   }
 
   function bindEvents() {
-    dom.interactionToggle.addEventListener("change", remdesk.handleModeToggle);
+    if (dom.interactionToggle) {
+      dom.interactionToggle.addEventListener("change", remdesk.handleModeToggle);
+    }
+    if (dom.sessionModeButtons && dom.sessionModeButtons.length) {
+      dom.sessionModeButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          remdesk.handleModeToggle(button.dataset.mode);
+        });
+      });
+    }
     window.addEventListener("resize", () => remdesk.scheduleScreenLayout());
     document.addEventListener("pointerlockchange", remdesk.handlePointerLockChange);
     document.addEventListener("pointerlockerror", () => {
@@ -363,7 +376,11 @@
   initDefaults();
   const shouldConnect = applyUrlParams();
   remdesk.updateTopBar();
-  remdesk.updateInteractionMode();
+  if (remdesk.applySessionMode) {
+    remdesk.applySessionMode(state.sessionMode || "manage");
+  } else {
+    remdesk.updateInteractionMode();
+  }
   remdesk.updateDrawerOffset();
   remdesk.updateScreenLayout();
   bindEvents();

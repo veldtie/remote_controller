@@ -3,6 +3,7 @@ import re
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.i18n import I18n
+from ..common import GlassFrame
 
 
 class InstructionsPage(QtWidgets.QWidget):
@@ -17,7 +18,7 @@ class InstructionsPage(QtWidgets.QWidget):
         self.subtitle_label.setObjectName("PageSubtitle")
         layout.addWidget(self.title_label)
         layout.addWidget(self.subtitle_label)
-        self.primary_card = QtWidgets.QFrame()
+        self.primary_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.primary_card.setObjectName("SettingsCard")
         primary_layout = QtWidgets.QVBoxLayout(self.primary_card)
         primary_layout.setContentsMargins(16, 16, 16, 16)
@@ -28,7 +29,7 @@ class InstructionsPage(QtWidgets.QWidget):
         primary_layout.addWidget(self.primary_instructions, 1)
         layout.addWidget(self.primary_card, 1)
 
-        self.secondary_card = QtWidgets.QFrame()
+        self.secondary_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.secondary_card.setObjectName("SettingsCard")
         secondary_layout = QtWidgets.QVBoxLayout(self.secondary_card)
         secondary_layout.setContentsMargins(16, 16, 16, 16)

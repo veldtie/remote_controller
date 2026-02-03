@@ -6,7 +6,7 @@ from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import Theme, THEMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 from ..dialogs import AddMemberDialog
 
 
@@ -46,7 +46,7 @@ class TeamsPage(QtWidgets.QWidget):
         body = QtWidgets.QHBoxLayout()
         body.setSpacing(16)
 
-        self.list_card = QtWidgets.QFrame()
+        self.list_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.list_card.setObjectName("Card")
         list_layout = QtWidgets.QVBoxLayout(self.list_card)
         self.list_title = QtWidgets.QLabel()
@@ -67,7 +67,7 @@ class TeamsPage(QtWidgets.QWidget):
         list_layout.addWidget(self.team_list, 1)
         body.addWidget(self.list_card, 2)
 
-        self.details_card = QtWidgets.QFrame()
+        self.details_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.details_card.setObjectName("Card")
         details_layout = QtWidgets.QVBoxLayout(self.details_card)
 
@@ -128,7 +128,7 @@ class TeamsPage(QtWidgets.QWidget):
         unassigned_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         unassigned_header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         unassigned_header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.unassigned_table.verticalHeader().setDefaultSectionSize(36)
+        self.unassigned_table.verticalHeader().setDefaultSectionSize(40)
         container_layout.addWidget(self.unassigned_table, 1)
 
         self.members_label = QtWidgets.QLabel()
@@ -144,7 +144,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.members_table.setMouseTracking(True)
         header = self.members_table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.members_table.verticalHeader().setDefaultSectionSize(36)
+        self.members_table.verticalHeader().setDefaultSectionSize(40)
         container_layout.addWidget(self.members_table, 1)
 
         member_actions = QtWidgets.QHBoxLayout()
@@ -388,7 +388,7 @@ class TeamsPage(QtWidgets.QWidget):
         for client in unassigned:
             row = self.unassigned_table.rowCount()
             self.unassigned_table.insertRow(row)
-            self.unassigned_table.setRowHeight(row, 36)
+            self.unassigned_table.setRowHeight(row, 40)
             name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
             id_item = QtWidgets.QTableWidgetItem(client.get("id", ""))
             ip_item = QtWidgets.QTableWidgetItem(client.get("ip", ""))
@@ -594,7 +594,7 @@ class TeamsPage(QtWidgets.QWidget):
             "QPushButton {"
             f"background: {self.theme.colors['card_alt']};"
             f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 8px;"
+            "border-radius: 10px;"
             "padding: 6px 12px;"
             "}"
             "QPushButton:hover {"

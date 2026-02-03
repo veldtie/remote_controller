@@ -15,7 +15,7 @@ from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.theme import THEMES
 from ...core.settings import SettingsStore
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 @dataclass
@@ -387,7 +387,7 @@ class CompilerPage(QtWidgets.QWidget):
         header.addWidget(self.subtitle_label)
         layout.addLayout(header)
 
-        form_card = QtWidgets.QFrame()
+        form_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         form_card.setObjectName("Card")
         form_layout = QtWidgets.QGridLayout(form_card)
         form_layout.setHorizontalSpacing(16)
@@ -473,7 +473,7 @@ class CompilerPage(QtWidgets.QWidget):
         actions.addWidget(self.status_label)
         layout.addLayout(actions)
 
-        log_card = QtWidgets.QFrame()
+        log_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         log_card.setObjectName("Card")
         log_layout = QtWidgets.QVBoxLayout(log_card)
         self.log_output = QtWidgets.QPlainTextEdit()
