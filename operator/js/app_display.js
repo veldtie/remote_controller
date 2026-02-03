@@ -170,18 +170,15 @@
       Number.parseFloat(style.getPropertyValue("--workspace-left")) || 320;
     const workspaceBottom =
       Number.parseFloat(style.getPropertyValue("--workspace-bottom")) || 120;
-    const workspaceTop =
-      Number.parseFloat(style.getPropertyValue("--workspace-top")) || edgeGap;
     const availableWidth = Math.max(0, window.innerWidth - workspaceLeft - edgeGap);
     const availableHeight = Math.max(
       0,
-      window.innerHeight - workspaceTop - workspaceBottom - edgeGap
+      window.innerHeight - workspaceBottom - edgeGap * 2
     );
     return {
       edgeGap,
       workspaceLeft,
       workspaceBottom,
-      workspaceTop,
       availableWidth,
       availableHeight
     };
@@ -198,9 +195,9 @@
       dom.screenFrame.style.removeProperty("height");
       return;
     }
-    const { edgeGap, workspaceLeft, workspaceBottom, workspaceTop, availableWidth, availableHeight } =
+    const { edgeGap, workspaceLeft, workspaceBottom, availableWidth, availableHeight } =
       getWorkspaceBounds();
-    dom.screenFrame.style.top = `${workspaceTop}px`;
+    dom.screenFrame.style.top = `${edgeGap}px`;
     dom.screenFrame.style.left = `${workspaceLeft}px`;
     dom.screenFrame.style.width = `${availableWidth}px`;
     dom.screenFrame.style.height = `${availableHeight}px`;
@@ -594,25 +591,6 @@
     return true;
   }
 
-  function maybeStartDrag() {
-    if (!state.dragState.active || state.dragState.dragging) {
-      return;
-    }
-    const dx = state.cursorX - state.dragState.startX;
-    const dy = state.cursorY - state.dragState.startY;
-    const threshold = 3;
-    if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) {
-      return;
-    }
-    state.dragState.dragging = true;
-    void remdesk.sendControl({
-      type: CONTROL_TYPES.mouseDown,
-      x: Math.round(state.dragState.startX),
-      y: Math.round(state.dragState.startY),
-      button: state.dragState.button
-    });
-  }
-
   function setCursorFromDelta(deltaX, deltaY) {
     const metrics = getVideoMetrics();
     if (!metrics) {
@@ -729,22 +707,6 @@
     startMovePump();
   }
 
-  function scheduleSingleClick(position, button) {
-    if (state.clickTimer) {
-      clearTimeout(state.clickTimer);
-    }
-    state.clickTimer = setTimeout(() => {
-      state.clickTimer = null;
-      void remdesk.sendControl({
-        type: CONTROL_TYPES.mouseClick,
-        x: position.x,
-        y: position.y,
-        button,
-        count: 1
-      });
-    }, 240);
-  }
-
   function handleModeToggle() {
     remdesk.updateInteractionMode();
     if (state.isConnected && !state.modeLocked) {
@@ -769,12 +731,10 @@
           setCursorFromAbsolute(event);
           scheduleMoveSend();
         }
-        maybeStartDrag();
         return;
       }
       setCursorFromAbsolute(event);
       scheduleMoveSend();
-      maybeStartDrag();
     });
 
     dom.screenFrame.addEventListener("mousedown", (event) => {
@@ -784,61 +744,20 @@
       if (event.button === 0 && shouldUsePointerLock()) {
         dom.screenFrame.requestPointerLock();
       }
-      const position = getCursorPosition();
-      const button = mapMouseButton(event.button);
-      state.mouseButtonsDown.add(button);
-      state.dragState = {
-        active: true,
-        dragging: false,
-        wasDrag: false,
-        button,
-        startX: position.x,
-        startY: position.y
-      };
     });
-
-    const handleMouseUp = (event) => {
-      if (!state.controlEnabled || !state.isConnected) {
-        return;
-      }
-      const position = getCursorPosition();
-      const button = mapMouseButton(event.button);
-      if (!state.mouseButtonsDown.has(button)) {
-        return;
-      }
-      state.mouseButtonsDown.delete(button);
-      if (state.dragState.active && state.dragState.button === button && state.dragState.dragging) {
-        state.dragState.wasDrag = true;
-        void remdesk.sendControl({
-          type: CONTROL_TYPES.mouseUp,
-          x: position.x,
-          y: position.y,
-          button
-        });
-      } else if (state.dragState.active && state.dragState.button === button) {
-        state.dragState.wasDrag = false;
-      }
-      state.dragState.active = false;
-      state.dragState.dragging = false;
-    };
-
-    dom.screenFrame.addEventListener("mouseup", handleMouseUp);
-    window.addEventListener("mouseup", handleMouseUp);
 
     dom.screenFrame.addEventListener("click", (event) => {
       if (!state.controlEnabled || !state.isConnected) {
         return;
       }
-      if (state.dragState.wasDrag) {
-        state.dragState.wasDrag = false;
-        return;
-      }
-      if (event.detail && event.detail > 1) {
-        return;
-      }
       const position = getCursorPosition();
       const button = mapMouseButton(event.button);
-      scheduleSingleClick(position, button);
+      void remdesk.sendControl({
+        type: CONTROL_TYPES.mouseClick,
+        x: position.x,
+        y: position.y,
+        button
+      });
     });
 
     dom.screenFrame.addEventListener("contextmenu", (event) => {
@@ -851,8 +770,7 @@
         type: CONTROL_TYPES.mouseClick,
         x: position.x,
         y: position.y,
-        button: "right",
-        count: 1
+        button: "right"
       });
     });
 
@@ -885,25 +803,7 @@
         dom.screenFrame.requestFullscreen().catch(() => {
           remdesk.setStatus("Fullscreen failed", "bad");
         });
-        return;
       }
-      if (state.dragState.wasDrag) {
-        state.dragState.wasDrag = false;
-        return;
-      }
-      if (state.clickTimer) {
-        clearTimeout(state.clickTimer);
-        state.clickTimer = null;
-      }
-      const position = getCursorPosition();
-      const button = mapMouseButton(event.button);
-      void remdesk.sendControl({
-        type: CONTROL_TYPES.mouseClick,
-        x: position.x,
-        y: position.y,
-        button,
-        count: 2
-      });
     });
 
     dom.screenFrame.addEventListener("keydown", (event) => {

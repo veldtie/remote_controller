@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from pathlib import Path
-from datetime import datetime
-import tempfile
 
 import base64
 import json
@@ -25,10 +23,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     QWebEngineProfile = None
 try:
-    from PyQt6.QtWebEngineCore import QWebEnginePage
-except Exception:  # pragma: no cover - optional dependency
-    QWebEnginePage = None
-try:
     from PyQt6.QtWebChannel import QWebChannel
 except Exception:  # pragma: no cover - optional dependency
     QWebChannel = None
@@ -36,47 +30,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 def webengine_available() -> bool:
     return QWebEngineView is not None
-
-
-_JS_LOG_ENABLED = os.getenv("RC_LOG_JS_CONSOLE", "1").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
-_JS_LOG_PATH = os.getenv("RC_JS_LOG_PATH", "").strip()
-if not _JS_LOG_PATH:
-    _JS_LOG_PATH = os.path.join(tempfile.gettempdir(), "remdesk_operator_js.log")
-
-
-def _append_js_log(message: str) -> None:
-    if not _JS_LOG_ENABLED:
-        return
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"{timestamp} {message}"
-    try:
-        with open(_JS_LOG_PATH, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-    except OSError:
-        pass
-    print(line)
-
-
-class DebugWebPage(QWebEnginePage):  # type: ignore[misc]
-    def javaScriptConsoleMessage(self, level, message, line_number, source_id) -> None:  # noqa: N802
-        label = "log"
-        try:
-            if level == QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel:
-                label = "warn"
-            elif level == QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel:
-                label = "error"
-            elif level == QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel:
-                label = "info"
-            else:
-                label = "log"
-        except Exception:
-            label = "log"
-        _append_js_log(f"[js:{label}] {message} ({source_id}:{line_number})")
 
 
 def build_session_url(
@@ -206,12 +159,6 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._window_controls = None
 
         self.view = QWebEngineView()
-        if QWebEnginePage is not None and _JS_LOG_ENABLED:
-            try:
-                page = DebugWebPage(self.view.page().profile(), self.view)
-                self.view.setPage(page)
-            except Exception:
-                pass
         if QWebEngineProfile is not None:
             try:
                 profile = self.view.page().profile()

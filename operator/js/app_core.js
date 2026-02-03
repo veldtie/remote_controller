@@ -6,8 +6,6 @@
   const CONTROL_ACTION = "control";
   const CONTROL_TYPES = {
     mouseMove: "mouse_move",
-    mouseDown: "mouse_down",
-    mouseUp: "mouse_up",
     mouseClick: "mouse_click",
     mouseScroll: "mouse_scroll",
     keypress: "keypress",
@@ -165,16 +163,6 @@
     lastLocalX: null,
     lastLocalY: null,
     lastSentPosition: null,
-    mouseButtonsDown: new Set(),
-    dragState: {
-      active: false,
-      dragging: false,
-      wasDrag: false,
-      button: null,
-      startX: 0,
-      startY: 0
-    },
-    clickTimer: null,
     regionLabel: "",
     countryLabel: "",
     countryCode: "",
@@ -195,7 +183,6 @@
     iceFallbackTried: false,
     allowIceFallback: false,
     pendingIce: [],
-    lastIceStatsAt: 0,
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
@@ -511,9 +498,6 @@
   function updateInteractionMode() {
     state.controlEnabled = dom.interactionToggle.checked;
     syncInteractionToggle();
-    if (!dom.cursorVisibilityToggle) {
-      state.remoteCursorVisible = !state.controlEnabled;
-    }
     const label = state.controlEnabled ? "Managing" : "Viewing";
     dom.interactionState.textContent = label;
     dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";

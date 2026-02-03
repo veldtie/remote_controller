@@ -38,29 +38,6 @@ def _truthy_env(name: str) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _filter_tcp_only(servers: list[dict]) -> list[dict]:
-    filtered: list[dict] = []
-    for entry in servers:
-        urls = entry.get("urls") if isinstance(entry, dict) else None
-        if isinstance(urls, str):
-            urls_list = [urls]
-        elif isinstance(urls, list):
-            urls_list = [u for u in urls if isinstance(u, str)]
-        else:
-            urls_list = []
-        tcp_urls = [
-            url
-            for url in urls_list
-            if url.startswith("turns:") or "transport=tcp" in url
-        ]
-        if not tcp_urls:
-            continue
-        new_entry = dict(entry)
-        new_entry["urls"] = tcp_urls
-        filtered.append(new_entry)
-    return filtered
-
-
 def _candidate_config_dirs() -> list[str]:
     candidates: list[str] = []
     if getattr(sys, "frozen", False):
@@ -232,36 +209,22 @@ def resolve_ice_servers() -> list[dict] | None:
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            servers = [parsed]
-            if _truthy_env("RC_ICE_TCP_ONLY") or _truthy_env("RC_TURN_TCP_ONLY"):
-                return _filter_tcp_only(servers)
-            return servers
+            return [parsed]
         if isinstance(parsed, list):
-            servers = parsed
-            if _truthy_env("RC_ICE_TCP_ONLY") or _truthy_env("RC_TURN_TCP_ONLY"):
-                return _filter_tcp_only(servers)
-            return servers
+            return parsed
 
     raw_config = _read_server_config()
     if raw_config:
         servers = raw_config.get("ice_servers") or raw_config.get("iceServers")
         if isinstance(servers, dict):
-            servers_list = [servers]
-            if _truthy_env("RC_ICE_TCP_ONLY") or _truthy_env("RC_TURN_TCP_ONLY"):
-                return _filter_tcp_only(servers_list)
-            return servers_list
+            return [servers]
         if isinstance(servers, list):
-            servers_list = servers
-            if _truthy_env("RC_ICE_TCP_ONLY") or _truthy_env("RC_TURN_TCP_ONLY"):
-                return _filter_tcp_only(servers_list)
-            return servers_list
+            return servers
 
     server_url = resolve_signaling_url()
     token = resolve_signaling_token()
     fetched = _fetch_ice_servers_from_url(server_url, token)
     if fetched is not None:
-        if _truthy_env("RC_ICE_TCP_ONLY") or _truthy_env("RC_TURN_TCP_ONLY"):
-            return _filter_tcp_only(fetched)
         return fetched
     return None
 

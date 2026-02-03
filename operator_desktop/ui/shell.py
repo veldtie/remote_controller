@@ -414,42 +414,11 @@ class MainShell(QtWidgets.QWidget):
             return True
         return False
 
-    def _filter_ice_tcp_only(
-        self, servers: list[dict[str, object]] | None
-    ) -> list[dict[str, object]] | None:
-        if not servers:
-            return servers
-        value = os.getenv("RC_ICE_TCP_ONLY", "").strip().lower()
-        if value not in {"1", "true", "yes", "on"}:
-            value = os.getenv("RC_TURN_TCP_ONLY", "").strip().lower()
-            if value not in {"1", "true", "yes", "on"}:
-                return servers
-        filtered: list[dict[str, object]] = []
-        for entry in servers:
-            urls = entry.get("urls") if isinstance(entry, dict) else None
-            if isinstance(urls, str):
-                url_list = [urls]
-            elif isinstance(urls, list):
-                url_list = [str(u) for u in urls if isinstance(u, str)]
-            else:
-                url_list = []
-            tcp_urls = [
-                url
-                for url in url_list
-                if url.startswith("turns:") or "transport=tcp" in url
-            ]
-            if not tcp_urls:
-                continue
-            new_entry = dict(entry)
-            new_entry["urls"] = tcp_urls
-            filtered.append(new_entry)
-        return filtered
-
     def _resolve_ice_servers(self) -> list[dict[str, object]] | None:
         if self._force_host_ice():
             return []
         if self._ice_servers_cache is not None:
-            return self._filter_ice_tcp_only(self._ice_servers_cache)
+            return self._ice_servers_cache
         if not self.api:
             return None
         try:
@@ -457,7 +426,7 @@ class MainShell(QtWidgets.QWidget):
         except Exception:
             servers = None
         self._ice_servers_cache = servers
-        return self._filter_ice_tcp_only(servers)
+        return servers
 
     def _open_session(self, client_id: str, open_storage: bool = False) -> bool:
         if not client_id:
