@@ -157,6 +157,34 @@ def _normalize_ice_servers(value: Any) -> list[dict[str, Any]]:
     return servers
 
 
+def _filter_tcp_ice_servers(servers: list[RTCIceServer]) -> list[RTCIceServer]:
+    """Return TURN-only TCP ICE servers from a list of RTCIceServer."""
+    filtered: list[RTCIceServer] = []
+    for entry in servers:
+        urls = getattr(entry, "urls", None)
+        if isinstance(urls, str):
+            url_list = [urls]
+        elif isinstance(urls, (list, tuple)):
+            url_list = [str(item) for item in urls if isinstance(item, str)]
+        else:
+            url_list = []
+        tcp_urls = [
+            url
+            for url in url_list
+            if url.startswith("turns:") or "transport=tcp" in url
+        ]
+        if not tcp_urls:
+            continue
+        filtered.append(
+            RTCIceServer(
+                urls=tcp_urls,
+                username=getattr(entry, "username", None),
+                credential=getattr(entry, "credential", None),
+            )
+        )
+    return filtered
+
+
 def _load_ice_servers() -> list[RTCIceServer]:
     """Load ICE server config from the RC_ICE_SERVERS env var."""
     resolved = resolve_ice_servers()
@@ -214,7 +242,9 @@ class WebRTCClient:
         self._client_config = client_config
         self._e2ee = e2ee
         self._ice_servers = _load_ice_servers()
+        self._ice_servers_tcp_only = _filter_tcp_ice_servers(self._ice_servers)
         self._force_host_only = False
+        self._force_tcp_only = False
         self._pending_offer: dict[str, Any] | None = None
         self._current_mode: str = "manage"
         self._video_sender = None
@@ -224,6 +254,8 @@ class WebRTCClient:
     def _build_rtc_configuration(self) -> RTCConfiguration:
         if self._force_host_only:
             return RTCConfiguration(iceServers=[])
+        if self._force_tcp_only and self._ice_servers_tcp_only:
+            return RTCConfiguration(iceServers=self._ice_servers_tcp_only)
         return RTCConfiguration(iceServers=self._ice_servers)
 
     async def run_forever(self) -> None:
@@ -297,6 +329,8 @@ class WebRTCClient:
         """Run a single signaling and WebRTC session."""
         if self._force_host_only:
             logger.warning("Using host-only ICE (STUN/TURN disabled) for this session.")
+        elif self._force_tcp_only and self._ice_servers_tcp_only:
+            logger.warning("Using TURN/TCP-only ICE for this session.")
         self._restart_event.clear()
         peer_connection = RTCPeerConnection(self._build_rtc_configuration())
         self._video_sender = None
@@ -433,9 +467,16 @@ class WebRTCClient:
             state = peer_connection.iceConnectionState
             logger.info("ICE connection state changed to %s.", state)
             if state in {"failed", "closed"}:
-                if state == "failed" and not had_connection and not self._force_host_only:
-                    logger.warning("ICE failed before connection; retrying with host-only ICE.")
-                    self._force_host_only = True
+                if state == "failed" and not had_connection:
+                    if not self._force_tcp_only and self._ice_servers_tcp_only:
+                        logger.warning("ICE failed before connection; retrying with TURN/TCP only.")
+                        self._force_tcp_only = True
+                        self._force_host_only = False
+                    elif not self._force_host_only:
+                        logger.warning(
+                            "ICE failed before connection; retrying with host-only ICE."
+                        )
+                        self._force_host_only = True
                 if state == "failed":
                     await _log_ice_stats("ice_failed")
                 connection_done.set()
