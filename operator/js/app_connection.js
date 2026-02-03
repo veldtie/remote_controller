@@ -187,10 +187,79 @@
     if (!sdp) {
       return { type, sdp: "" };
     }
-    if (!sdp.includes("\r\n")) {
-      sdp = sdp.replace(/\r?\n/g, "\r\n");
-    }
+    sdp = sdp.replace(/\r?\n/g, "\r\n");
+    sdp = normalizeSetupLines(sdp);
     return { type, sdp };
+  }
+
+  function normalizeSetupLines(sdp) {
+    if (!sdp || typeof sdp !== "string") {
+      return sdp;
+    }
+    const lines = sdp.split("\r\n");
+    let firstMediaIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line && line.startsWith("m=")) {
+        firstMediaIndex = i;
+        break;
+      }
+    }
+    if (firstMediaIndex === -1) {
+      return sdp;
+    }
+    const sessionSetupLines = [];
+    for (let i = 0; i < firstMediaIndex; i++) {
+      const line = lines[i];
+      if (line && /^a=setup:/i.test(line)) {
+        sessionSetupLines.push(line);
+        lines[i] = null;
+      }
+    }
+    if (!sessionSetupLines.length) {
+      return sdp;
+    }
+    const setupLine = sessionSetupLines[0];
+    const rebuilt = [];
+    for (let i = 0; i < firstMediaIndex; i++) {
+      const line = lines[i];
+      if (line !== null && line !== undefined) {
+        rebuilt.push(line);
+      }
+    }
+    const mediaLines = lines.slice(firstMediaIndex);
+    let idx = 0;
+    while (idx < mediaLines.length) {
+      const line = mediaLines[idx];
+      if (line && line.startsWith("m=")) {
+        let sectionEnd = mediaLines.length;
+        for (let j = idx + 1; j < mediaLines.length; j++) {
+          if (mediaLines[j] && mediaLines[j].startsWith("m=")) {
+            sectionEnd = j;
+            break;
+          }
+        }
+        const section = mediaLines.slice(idx, sectionEnd);
+        const hasSetup = section.some((entry) => entry && /^a=setup:/i.test(entry));
+        rebuilt.push(section[0]);
+        if (!hasSetup) {
+          rebuilt.push(setupLine);
+        }
+        for (let k = 1; k < section.length; k++) {
+          const entry = section[k];
+          if (entry !== null && entry !== undefined) {
+            rebuilt.push(entry);
+          }
+        }
+        idx = sectionEnd;
+        continue;
+      }
+      if (line !== null && line !== undefined) {
+        rebuilt.push(line);
+      }
+      idx += 1;
+    }
+    return rebuilt.join("\r\n");
   }
 
   function summarizeSdp(sdp) {
