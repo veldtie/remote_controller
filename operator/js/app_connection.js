@@ -196,7 +196,9 @@
     if (!sdp || typeof sdp !== "string") {
       return sdp;
     }
-    const lines = sdp.split("\r\n");
+    const lines = sdp
+      .split("\r\n")
+      .map((line) => (typeof line === "string" ? line.trim() : line));
     let firstMediaIndex = -1;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -206,7 +208,7 @@
       }
     }
     if (firstMediaIndex === -1) {
-      return sdp;
+      return lines.filter((line) => line !== null && line !== undefined && line !== "").join("\r\n");
     }
     const sessionSetupLines = [];
     for (let i = 0; i < firstMediaIndex; i++) {
@@ -217,13 +219,13 @@
       }
     }
     if (!sessionSetupLines.length) {
-      return sdp;
+      return lines.filter((line) => line !== null && line !== undefined && line !== "").join("\r\n");
     }
     const setupLine = sessionSetupLines[0];
     const rebuilt = [];
     for (let i = 0; i < firstMediaIndex; i++) {
       const line = lines[i];
-      if (line !== null && line !== undefined) {
+      if (line !== null && line !== undefined && line !== "") {
         rebuilt.push(line);
       }
     }
@@ -247,14 +249,14 @@
         }
         for (let k = 1; k < section.length; k++) {
           const entry = section[k];
-          if (entry !== null && entry !== undefined) {
+          if (entry !== null && entry !== undefined && entry !== "") {
             rebuilt.push(entry);
           }
         }
         idx = sectionEnd;
         continue;
       }
-      if (line !== null && line !== undefined) {
+      if (line !== null && line !== undefined && line !== "") {
         rebuilt.push(line);
       }
       idx += 1;
