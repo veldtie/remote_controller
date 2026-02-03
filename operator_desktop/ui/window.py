@@ -37,26 +37,73 @@ class MainWindow(QtWidgets.QMainWindow):
                 app.setWindowIcon(icon)
         self.resize(1280, 800)
 
-        self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
+        self.theme = THEMES["dark"]
         self.background = BackgroundWidget(self.theme)
         self.setCentralWidget(self.background)
+
+        self.window_frame = QtWidgets.QFrame()
+        self.window_frame.setObjectName("WindowFrame")
+        frame_layout = QtWidgets.QVBoxLayout(self.window_frame)
+        frame_layout.setContentsMargins(16, 16, 16, 16)
+        frame_layout.setSpacing(12)
+        shadow = QtWidgets.QGraphicsDropShadowEffect(self.window_frame)
+        shadow.setBlurRadius(50)
+        shadow.setOffset(0, 18)
+        shadow.setColor(QtGui.QColor(0, 0, 0, 140))
+        self.window_frame.setGraphicsEffect(shadow)
+
+        self.chrome_bar = QtWidgets.QFrame()
+        self.chrome_bar.setObjectName("ChromeBar")
+        self.chrome_bar.setFixedHeight(44)
+        chrome_layout = QtWidgets.QHBoxLayout(self.chrome_bar)
+        chrome_layout.setContentsMargins(14, 8, 14, 8)
+        chrome_layout.setSpacing(10)
+
+        dots = QtWidgets.QHBoxLayout()
+        dots.setSpacing(8)
+        self.chrome_dot_close = QtWidgets.QLabel()
+        self.chrome_dot_close.setObjectName("ChromeDot")
+        self.chrome_dot_close.setProperty("dot", "close")
+        self.chrome_dot_min = QtWidgets.QLabel()
+        self.chrome_dot_min.setObjectName("ChromeDot")
+        self.chrome_dot_min.setProperty("dot", "minimize")
+        self.chrome_dot_max = QtWidgets.QLabel()
+        self.chrome_dot_max.setObjectName("ChromeDot")
+        self.chrome_dot_max.setProperty("dot", "zoom")
+        for dot in (self.chrome_dot_close, self.chrome_dot_min, self.chrome_dot_max):
+            dot.setFixedSize(10, 10)
+            dots.addWidget(dot)
+        chrome_layout.addLayout(dots)
+
+        chrome_title_box = QtWidgets.QVBoxLayout()
+        chrome_title_box.setSpacing(0)
+        self.chrome_title = QtWidgets.QLabel()
+        self.chrome_title.setObjectName("ChromeTitle")
+        self.chrome_subtitle = QtWidgets.QLabel()
+        self.chrome_subtitle.setObjectName("ChromeSubtitle")
+        chrome_title_box.addWidget(self.chrome_title)
+        chrome_title_box.addWidget(self.chrome_subtitle)
+        chrome_layout.addLayout(chrome_title_box)
+        chrome_layout.addStretch()
+        frame_layout.addWidget(self.chrome_bar)
 
         self.stack = QtWidgets.QStackedWidget()
         self.login_page = LoginPage(self.i18n, self.settings)
         self.shell = MainShell(self.i18n, self.settings, self.logger, api=self.api)
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.shell)
+        frame_layout.addWidget(self.stack, 1)
 
         bg_layout = QtWidgets.QVBoxLayout(self.background)
-        bg_layout.setContentsMargins(0, 0, 0, 0)
-        bg_layout.addWidget(self.stack)
+        bg_layout.setContentsMargins(28, 28, 28, 28)
+        bg_layout.addWidget(self.window_frame)
 
         self.login_page.login_requested.connect(self.handle_login)
         self.login_page.language_changed.connect(self.set_language)
         self.shell.logout_requested.connect(self.logout)
         self.shell.page_changed.connect(self.handle_shell_event)
 
-        self.apply_theme(self.settings.get("theme", "dark"))
+        self.apply_theme("dark")
         self.apply_translations()
         self.restore_session()
 
@@ -65,14 +112,16 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.instance().setFont(QtGui.QFont(font_name, 10))
 
     def apply_theme(self, theme_name: str) -> None:
-        self.theme = THEMES.get(theme_name, THEMES["dark"])
+        self.theme = THEMES["dark"]
         self.background.set_theme(self.theme)
-        self.settings.set("theme", theme_name)
+        self.settings.set("theme", "dark")
         self.setStyleSheet(build_stylesheet(self.theme))
         self.shell.teams_page.apply_theme(self.theme)
         self.shell.dashboard.apply_theme(self.theme)
 
     def apply_translations(self) -> None:
+        self.chrome_title.setText(self.i18n.t("app_title"))
+        self.chrome_subtitle.setText(self.i18n.t("app_subtitle"))
         self.login_page.apply_translations()
         self.shell.apply_translations()
 
@@ -193,10 +242,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def handle_shell_event(self, event: str) -> None:
         if event == "refresh":
             self.shell.dashboard.refresh_clients()
-            return
-        if event.startswith("theme:"):
-            self.apply_theme(event.split(":", 1)[1])
-            self.settings.save()
             return
         if event.startswith("lang:"):
             self.set_language(event.split(":", 1)[1])

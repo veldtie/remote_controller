@@ -8,9 +8,12 @@ from ..core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL, RemoteControllerApi
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
-from .common import ICON_DIR, animate_widget, make_button
+from ..core.translations import LANGUAGE_NAMES
+from .common import ICON_DIR, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
+from .pages.cookies import CookiesPage
+from .pages.client_details import ClientDetailsPage
 from .pages.dashboard import DashboardPage
 from .pages.instructions import InstructionsPage
 from .pages.settings import SettingsPage
@@ -41,45 +44,95 @@ class MainShell(QtWidgets.QWidget):
         self._utility_sessions: Dict[str, RemoteSessionDialog] = {}
         self._ice_servers_cache: list[dict[str, object]] | None = None
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
         self.sidebar = QtWidgets.QFrame()
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(220)
         sidebar_layout = QtWidgets.QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(20, 20, 20, 20)
-        sidebar_layout.setSpacing(16)
+        sidebar_layout.setContentsMargins(14, 14, 14, 14)
+        sidebar_layout.setSpacing(10)
 
         brand = QtWidgets.QFrame()
-        brand_layout = QtWidgets.QVBoxLayout(brand)
+        brand.setObjectName("SidebarHeader")
+        brand_layout = QtWidgets.QHBoxLayout(brand)
+        brand_layout.setContentsMargins(4, 4, 4, 4)
+        brand_layout.setSpacing(10)
         self.brand_icon = QtWidgets.QLabel("RC")
         self.brand_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.brand_icon.setFixedSize(72, 72)
+        self.brand_icon.setFixedSize(54, 54)
         self.brand_icon.setObjectName("BrandIcon")
+        brand_text = QtWidgets.QVBoxLayout()
         self.brand_title = QtWidgets.QLabel()
-        self.brand_title.setStyleSheet("font-weight: 700; font-size: 16px;")
+        self.brand_title.setStyleSheet("font-weight: 700; font-size: 15px;")
         self.brand_subtitle = QtWidgets.QLabel()
         self.brand_subtitle.setObjectName("Muted")
-        brand_layout.addWidget(self.brand_icon, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
-        brand_layout.addWidget(self.brand_title)
-        brand_layout.addWidget(self.brand_subtitle)
+        brand_text.addWidget(self.brand_title)
+        brand_text.addWidget(self.brand_subtitle)
+        brand_layout.addWidget(self.brand_icon)
+        brand_layout.addLayout(brand_text, 1)
         sidebar_layout.addWidget(brand)
         self._apply_brand_icon()
+
+        self.workflow_label = QtWidgets.QLabel()
+        self.workflow_label.setObjectName("SidebarSection")
+        sidebar_layout.addWidget(self.workflow_label)
 
         self.nav_buttons = {}
         self.nav_group = QtWidgets.QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        for key in ["main", "teams", "compiler", "settings", "instructions"]:
-            button = make_button("", "ghost")
-            button.setCheckable(True)
-            button.setMinimumHeight(40)
+        nav_items = [
+            ("compiler", "nav_compiler", "build"),
+            ("main", "nav_main", "clients"),
+            ("cookies", "nav_cookies", "cookies"),
+            ("teams", "nav_teams", "team"),
+        ]
+        for key, _, icon_name in nav_items:
+            button = self._build_nav_button(icon_name)
             self.nav_group.addButton(button)
             self.nav_buttons[key] = button
             sidebar_layout.addWidget(button)
             button.clicked.connect(lambda _, page_key=key: self.switch_page(page_key))
 
+        self.settings_label = QtWidgets.QLabel()
+        self.settings_label.setObjectName("SidebarSection")
+        sidebar_layout.addWidget(self.settings_label)
+
+        for key, icon_name in [("settings", None), ("instructions", None)]:
+            button = self._build_nav_button(icon_name)
+            self.nav_group.addButton(button)
+            self.nav_buttons[key] = button
+            sidebar_layout.addWidget(button)
+            button.clicked.connect(lambda _, page_key=key: self.switch_page(page_key))
+
+        self.language_button = QtWidgets.QToolButton()
+        self.language_button.setProperty("nav", True)
+        self.language_button.setAutoRaise(True)
+        self.language_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.language_button.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        language_icon = load_icon("language", "dark")
+        if not language_icon.isNull():
+            self.language_button.setIcon(language_icon)
+            self.language_button.setIconSize(QtCore.QSize(16, 16))
+        self.language_menu = QtWidgets.QMenu(self.language_button)
+        self._build_language_menu()
+        self.language_button.setMenu(self.language_menu)
+        sidebar_layout.addWidget(self.language_button)
+
+        self.clear_data_button = make_button("", "ghost")
+        self.clear_data_button.setProperty("nav", True)
+        self.clear_data_button.clicked.connect(self.clear_local_data)
+        sidebar_layout.addWidget(self.clear_data_button)
+
         sidebar_layout.addStretch()
+        self.operator_label = QtWidgets.QLabel()
+        self.operator_label.setObjectName("OperatorBadge")
+        sidebar_layout.addWidget(self.operator_label)
         self.status_label = QtWidgets.QLabel()
         self.status_label.setObjectName("StatusBadge")
         self.status_label.setProperty("status", "unknown")
@@ -87,27 +140,17 @@ class MainShell(QtWidgets.QWidget):
         self.sidebar_footer = QtWidgets.QLabel(self.i18n.t("ping_unavailable"))
         self.sidebar_footer.setObjectName("Muted")
         sidebar_layout.addWidget(self.sidebar_footer)
+        self.logout_button = make_button("", "ghost")
+        self.logout_button.setObjectName("DangerText")
+        self.logout_button.clicked.connect(self.logout_requested.emit)
+        sidebar_layout.addWidget(self.logout_button)
 
         layout.addWidget(self.sidebar)
 
-        content = QtWidgets.QVBoxLayout()
-        self.top_bar = QtWidgets.QFrame()
-        self.top_bar.setObjectName("TopBar")
-        top_layout = QtWidgets.QHBoxLayout(self.top_bar)
-        self.page_title = QtWidgets.QLabel()
-        self.page_title.setStyleSheet("font-weight: 600; font-size: 16px;")
-        top_layout.addWidget(self.page_title)
-        top_layout.addStretch()
-        self.operator_label = QtWidgets.QLabel()
-        self.operator_label.setObjectName("OperatorBadge")
-        top_layout.addWidget(self.operator_label)
-        self.refresh_button = make_button("", "ghost")
-        self.refresh_button.clicked.connect(lambda: self.page_changed.emit("refresh"))
-        top_layout.addWidget(self.refresh_button)
-        self.logout_button = make_button("", "ghost")
-        self.logout_button.clicked.connect(self.logout_requested.emit)
-        top_layout.addWidget(self.logout_button)
-        content.addWidget(self.top_bar)
+        content_frame = QtWidgets.QFrame()
+        content_layout = QtWidgets.QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
 
         self.connection_banner = QtWidgets.QFrame()
         self.connection_banner.setObjectName("ConnectionBanner")
@@ -125,31 +168,43 @@ class MainShell(QtWidgets.QWidget):
         banner_layout.addWidget(self.banner_text, 1)
         banner_layout.addWidget(self.banner_retry)
         self.connection_banner.setVisible(False)
-        content.addWidget(self.connection_banner)
+        content_layout.addWidget(self.connection_banner)
 
         self.stack = QtWidgets.QStackedWidget()
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
+        self.cookies_page = CookiesPage(i18n, settings, api=api)
+        self.client_details = ClientDetailsPage(i18n, settings)
         self.teams_page = TeamsPage(i18n, settings, api=api)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings, api=api)
         self.instructions_page = InstructionsPage(i18n)
         self.stack.addWidget(self.dashboard)
+        self.stack.addWidget(self.cookies_page)
+        self.stack.addWidget(self.client_details)
         self.stack.addWidget(self.teams_page)
         self.stack.addWidget(self.compiler)
         self.stack.addWidget(self.settings_page)
         self.stack.addWidget(self.instructions_page)
-        content.addWidget(self.stack, 1)
+        content_layout.addWidget(self.stack, 1)
 
-        layout.addLayout(content, 1)
+        layout.addWidget(content_frame, 1)
 
         self.dashboard.storage_requested.connect(self.open_storage)
         self.dashboard.connect_requested.connect(self.toggle_connection)
         self.dashboard.extra_action_requested.connect(self.handle_extra_action)
         self.dashboard.delete_requested.connect(self.handle_delete_request)
+        self.dashboard.client_selected.connect(self.open_client_details)
         self.dashboard.ping_updated.connect(self.update_ping)
         self.dashboard.server_status_changed.connect(self.handle_server_status)
+        self.cookies_page.extra_action_requested.connect(self.handle_extra_action)
+        self.cookies_page.client_selected.connect(self.open_client_details)
+        self.client_details.back_requested.connect(self.show_clients)
+        self.client_details.connect_requested.connect(self.toggle_connection)
+        self.client_details.storage_requested.connect(self.open_storage)
+        self.client_details.extra_action_requested.connect(self.handle_extra_action)
+        self.client_details.delete_requested.connect(self.handle_delete_request)
+        self.client_details.rename_requested.connect(self.rename_client)
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
-        self.settings_page.theme_changed.connect(self.emit_theme_change)
         self.settings_page.language_changed.connect(self.emit_language_change)
         self.settings_page.role_changed.connect(self.handle_role_change)
         self.settings_page.profile_updated.connect(self.update_operator_label)
@@ -161,12 +216,16 @@ class MainShell(QtWidgets.QWidget):
         self.switch_page("main")
 
     def apply_translations(self) -> None:
-        self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
-        self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
+        self.workflow_label.setText(self.i18n.t("sidebar_workflow"))
+        self.settings_label.setText(self.i18n.t("sidebar_settings"))
         self.nav_buttons["compiler"].setText(self.i18n.t("nav_compiler"))
+        self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
+        self.nav_buttons["cookies"].setText(self.i18n.t("nav_cookies"))
+        self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
         self.nav_buttons["settings"].setText(self.i18n.t("nav_settings"))
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
-        self.refresh_button.setText(self.i18n.t("top_refresh"))
+        self.language_button.setText(self.i18n.t("sidebar_language"))
+        self.clear_data_button.setText(self.i18n.t("sidebar_clear_data"))
         self.logout_button.setText(self.i18n.t("top_logout"))
         self.banner_text.setText(self.i18n.t("server_connection_lost"))
         self.banner_retry.setText(self.i18n.t("server_connection_retry"))
@@ -174,12 +233,14 @@ class MainShell(QtWidgets.QWidget):
         self.update_brand_header()
         self.update_operator_label()
         self.dashboard.apply_translations()
+        self.cookies_page.apply_translations()
+        self.client_details.apply_translations()
         self.teams_page.apply_translations()
         self.compiler.apply_translations()
         self.settings_page.apply_translations()
         self.instructions_page.apply_translations()
+        self._build_language_menu()
         self._render_ping_label()
-        self.update_page_title()
 
     def _apply_brand_icon(self) -> None:
         icon_path = ICON_DIR / "logo.svg"
@@ -198,17 +259,64 @@ class MainShell(QtWidgets.QWidget):
         self.brand_icon.setPixmap(pixmap)
         self.brand_icon.setText("")
 
+    def _build_nav_button(self, icon_name: str | None) -> QtWidgets.QPushButton:
+        button = make_button("", "ghost")
+        button.setCheckable(True)
+        button.setMinimumHeight(38)
+        button.setProperty("nav", True)
+        if icon_name:
+            icon = load_icon(icon_name, "dark")
+            if not icon.isNull():
+                button.setIcon(icon)
+                button.setIconSize(QtCore.QSize(16, 16))
+        return button
+
+    def _build_language_menu(self) -> None:
+        self.language_menu.clear()
+        group = QtGui.QActionGroup(self.language_menu)
+        group.setExclusive(True)
+        current = self.i18n.language()
+        for code, name in LANGUAGE_NAMES.items():
+            action = QtGui.QAction(name, group)
+            action.setCheckable(True)
+            action.setChecked(code == current)
+            action.triggered.connect(lambda _, lang=code: self.emit_language_change(lang))
+            self.language_menu.addAction(action)
+
+    def clear_local_data(self) -> None:
+        self.settings.clear_user_data()
+        self.logout_requested.emit()
+
+    def open_client_details(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        if client is None:
+            return
+        self.client_details.set_client(client)
+        self.stack.setCurrentIndex(2)
+        if "main" in self.nav_buttons:
+            self.nav_buttons["main"].setChecked(True)
+        self.update_brand_header()
+        animate_widget(self.client_details)
+
+    def show_clients(self) -> None:
+        self.switch_page("main")
+
+    def rename_client(self, client_id: str) -> None:
+        self.dashboard.edit_client_name(client_id)
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        if client and self.client_details.client and self.client_details.client.get("id") == client_id:
+            self.client_details.set_client(client)
+
     def update_brand_header(self) -> None:
         self.brand_title.setText("RemDesk")
         self.brand_subtitle.setText(self._current_page_label())
-
-    def update_page_title(self) -> None:
-        self.page_title.setText(self._resolve_team_label())
 
     def _current_page_label(self) -> str:
         index = self.stack.currentIndex()
         titles = [
             self.i18n.t("nav_main"),
+            self.i18n.t("nav_cookies"),
+            self.i18n.t("client_details_title"),
             self.i18n.t("nav_teams"),
             self.i18n.t("nav_compiler"),
             self.i18n.t("nav_settings"),
@@ -232,17 +340,19 @@ class MainShell(QtWidgets.QWidget):
             self.nav_buttons[key].setChecked(True)
         mapping = {
             "main": 0,
-            "teams": 1,
-            "compiler": 2,
-            "settings": 3,
-            "instructions": 4,
+            "cookies": 1,
+            "teams": 3,
+            "compiler": 4,
+            "settings": 5,
+            "instructions": 6,
         }
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
         self.update_brand_header()
-        self.update_page_title()
         if key == "teams":
             self.teams_page.refresh_from_api()
+        if key == "cookies":
+            self.cookies_page.refresh_clients()
         animate_widget(self.stack.currentWidget())
 
     def update_role_visibility(self) -> None:
@@ -280,6 +390,8 @@ class MainShell(QtWidgets.QWidget):
                 client["connected"] = True
                 self.logger.log("log_connected", client=client["name"])
         self.dashboard.refresh_view()
+        if self.client_details.client and self.client_details.client.get("id") == client_id:
+            self.client_details.set_client(client)
         self.settings.set("clients", self.dashboard.clients)
         self.settings.save()
 
@@ -354,9 +466,6 @@ class MainShell(QtWidgets.QWidget):
         # TODO: integrate with remote control backend to trigger uninstall.
         self.logger.log("log_delete_signal", client=client_name)
 
-    def emit_theme_change(self, theme: str) -> None:
-        self.page_changed.emit(f"theme:{theme}")
-
     def emit_language_change(self, lang: str) -> None:
         self.page_changed.emit(f"lang:{lang}")
 
@@ -388,7 +497,6 @@ class MainShell(QtWidgets.QWidget):
             role_label = role
         team_label = self._resolve_team_label()
         self.operator_label.setText(f"{label} | {team_label} | {role_label}")
-        self.update_page_title()
 
     def _resolve_server_url(self) -> str:
         url = str(self.settings.get("api_url", "") or "").strip()
