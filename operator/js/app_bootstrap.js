@@ -338,6 +338,10 @@
         remdesk.setRemoteCursorVisibility(dom.cursorVisibilityToggle.checked, true);
       });
     }
+    // Hidden Desktop: Initialize input blocking toggle
+    if (remdesk.initInputBlockingToggle) {
+      remdesk.initInputBlockingToggle();
+    }
     dom.storageToggle.addEventListener("click", () => {
       remdesk.updateDrawerOffset();
       remdesk.toggleStorage();
