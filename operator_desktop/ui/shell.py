@@ -370,6 +370,8 @@ class MainShell(QtWidgets.QWidget):
         client_name = client["name"] if client else client_id
         self.logger.log("log_delete_requested", client=client_name)
         self.send_silent_uninstall(client_id, client_name)
+        if self.client_details.client and self.client_details.client.get("id") == client_id:
+            self.show_clients()
 
     def handle_extra_action(self, client_id: str, action: str) -> None:
         if not action:
