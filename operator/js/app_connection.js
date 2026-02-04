@@ -523,7 +523,9 @@
     const apiBase = dom.serverUrlInput.value.trim() || "http://localhost:8000";
     const sessionId = dom.sessionIdInput.value.trim() || "default-session";
     const authToken = dom.authTokenInput.value.trim();
-    const sessionMode = state.controlEnabled ? "manage" : "view";
+    const sessionMode = remdesk.normalizeSessionMode
+      ? remdesk.normalizeSessionMode(state.sessionMode)
+      : state.sessionMode || (state.controlEnabled ? "manage" : "view");
 
     try {
       await prepareE2ee(sessionId);

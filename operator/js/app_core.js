@@ -532,12 +532,17 @@
     state.controlEnabled = nextEnabled;
     state.sessionMode = normalizeSessionMode(nextMode);
     syncSessionModeButtons();
-    const label = state.controlEnabled ? "Managing" : "Viewing";
+    const hiddenMode = state.sessionMode === "hidden";
+    const label = hiddenMode ? "Hidden managing" : state.controlEnabled ? "Managing" : "Viewing";
     if (dom.interactionState) {
       dom.interactionState.textContent = label;
     }
     if (dom.modeBadge) {
-      dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";
+      dom.modeBadge.textContent = hiddenMode
+        ? "Hidden desktop"
+        : state.controlEnabled
+          ? "Manage mode"
+          : "View only";
     }
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);

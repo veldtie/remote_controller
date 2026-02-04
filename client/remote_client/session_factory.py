@@ -23,6 +23,8 @@ def _normalize_mode(mode: str | None) -> str:
     value = str(mode).strip().lower()
     if value in {"view", "viewer", "readonly"}:
         return "view"
+    if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
+        return "hidden"
     return "manage"
 
 

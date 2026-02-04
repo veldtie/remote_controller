@@ -86,6 +86,8 @@ def _normalize_session_mode(mode: Any) -> str:
     value = str(mode).strip().lower()
     if value in {"view", "viewer", "readonly"}:
         return "view"
+    if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
+        return "hidden"
     return "manage"
 
 
@@ -576,7 +578,7 @@ class WebRTCClient:
             if message_type == "offer":
                 offer_mode = _normalize_session_mode(message.get("mode"))
                 if peer_connection.connectionState in {"connecting", "connected"}:
-                    if offer_mode == "view" and self._current_mode == "manage":
+                    if offer_mode == "view" and self._current_mode in {"manage", "hidden"}:
                         continue
                 self._pending_offer = message
                 return
