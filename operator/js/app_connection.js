@@ -926,6 +926,13 @@
         remdesk.handleAppLaunchStatus(parsed);
         return;
       }
+      // Hidden Desktop: Handle input blocking responses
+      if (parsed.action === "toggle_input_blocking" || parsed.action === "get_input_blocking_status") {
+        if (remdesk.handleInputBlockingResponse) {
+          remdesk.handleInputBlockingResponse(parsed);
+        }
+        return;
+      }
       if (Array.isArray(parsed.files)) {
         if (typeof parsed.path === "string") {
           state.remoteCurrentPath = parsed.path;

