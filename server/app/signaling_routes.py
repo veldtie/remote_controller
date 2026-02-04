@@ -133,6 +133,14 @@ async def list_remote_clients(request: Request) -> dict[str, list[dict[str, obje
                        WHERE device_registry.session_id = remote_clients.id
                    ) AS last_seen,
                    COALESCE(
+                       remote_clients.first_connected_at,
+                       (
+                           SELECT MIN(created_at)
+                           FROM device_registry
+                           WHERE device_registry.session_id = remote_clients.id
+                       )
+                   ) AS created_at,
+                   COALESCE(
                        json_agg(
                            json_build_object(
                                'id', team_tags.id,

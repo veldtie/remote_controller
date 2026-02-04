@@ -735,6 +735,9 @@ class DashboardPage(QtWidgets.QWidget):
             client_config = api_client.get("client_config")
             if client_config is None:
                 client_config = local.get("client_config")
+            created_at = api_client.get("created_at")
+            if created_at is None:
+                created_at = local.get("created_at")
             merged_client = {
                 "id": client_id,
                 "name": api_client.get("name", ""),
@@ -743,6 +746,7 @@ class DashboardPage(QtWidgets.QWidget):
                 "ip": api_client.get("ip", ""),
                 "region": api_client.get("region", ""),
                 "last_seen": api_client.get("last_seen"),
+                "created_at": created_at,
                 "connected": local.get("connected", False),
                 "assigned_operator_id": assigned_operator_id or "",
                 "assigned_team_id": assigned_team_id or "",

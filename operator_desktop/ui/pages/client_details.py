@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -30,6 +31,9 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.client: dict | None = None
         self._work_status_updating = False
         self._tags_updating = False
+        self._tag_icon_cache: dict[str, QtGui.QIcon] = {}
+        self._tag_checks: dict[str, QtWidgets.QCheckBox] = {}
+        self._detail_label_width = 150
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -42,9 +46,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
         hero_layout.setSpacing(12)
 
         header = QtWidgets.QHBoxLayout()
+        header.setSpacing(12)
         self.back_button = QtWidgets.QToolButton()
         self.back_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-        self.back_button.setAutoRaise(True)
+        self.back_button.setAutoRaise(False)
+        self.back_button.setProperty("variant", "icon")
+        self.back_button.setFixedSize(36, 36)
         self.back_button.setToolTip(self.i18n.t("client_details_back"))
         back_icon = load_icon("back", "dark")
         if not back_icon.isNull():
@@ -58,6 +65,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         title_box = QtWidgets.QVBoxLayout()
         title_box.setSpacing(4)
         status_row = QtWidgets.QHBoxLayout()
+        status_row.setSpacing(8)
         self.status_dot = QtWidgets.QLabel()
         self.status_dot.setObjectName("StatusDot")
         self.status_dot.setFixedSize(8, 8)
@@ -65,7 +73,6 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.status_text.setObjectName("Muted")
         status_row.addWidget(self.status_dot)
         status_row.addWidget(self.status_text)
-        status_row.addStretch()
         self.title_label = QtWidgets.QLabel()
         self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
@@ -78,7 +85,9 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.rename_button = QtWidgets.QToolButton()
         self.rename_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         self.rename_button.setToolTip(self.i18n.t("button_edit_name"))
-        self.rename_button.setAutoRaise(True)
+        self.rename_button.setAutoRaise(False)
+        self.rename_button.setProperty("variant", "icon")
+        self.rename_button.setFixedSize(36, 36)
         rename_icon = load_icon("rename", "dark")
         if not rename_icon.isNull():
             self.rename_button.setIcon(rename_icon)
@@ -86,40 +95,62 @@ class ClientDetailsPage(QtWidgets.QWidget):
         else:
             self.rename_button.setText("?")
         self.rename_button.clicked.connect(self._emit_rename)
-        header.addWidget(self.rename_button)
 
-        hero_layout.addLayout(header)
-
-        actions = QtWidgets.QHBoxLayout()
         self.connect_button = make_button("", "primary")
         self.connect_button.clicked.connect(self._toggle_connection)
+        self.delete_button = make_button("", "danger")
+        self.delete_button.clicked.connect(self._delete_client)
+
         self.storage_button = make_button("", "ghost")
         self.storage_button.clicked.connect(self._open_storage)
         self.cookies_button = make_button("", "ghost")
         self.proxy_button = make_button("", "ghost")
         self.proxy_button.clicked.connect(self._export_proxy)
-        self.delete_button = make_button("", "danger")
-        self.delete_button.clicked.connect(self._delete_client)
-        actions.addWidget(self.connect_button)
-        actions.addWidget(self.storage_button)
-        actions.addWidget(self.cookies_button)
-        actions.addWidget(self.proxy_button)
-        actions.addStretch()
-        actions.addWidget(self.delete_button)
-        hero_layout.addLayout(actions)
+
+        header_actions = QtWidgets.QHBoxLayout()
+        header_actions.setSpacing(8)
+        header_actions.addWidget(self.rename_button)
+        header_actions.addWidget(self.connect_button)
+        header_actions.addWidget(self.delete_button)
+        header.addLayout(header_actions)
+
+        hero_layout.addLayout(header)
 
         layout.addWidget(hero)
 
-        self.tabs = QtWidgets.QTabWidget()
+        tabs_widget = QtWidgets.QWidget()
+        tabs_layout = QtWidgets.QHBoxLayout(tabs_widget)
+        tabs_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_layout.setSpacing(8)
+
+        self.tab_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self.tab_group = QtWidgets.QButtonGroup(self)
+        self.tab_group.setExclusive(True)
+        self.tab_stack = QtWidgets.QStackedWidget()
+
         self.main_tab = QtWidgets.QWidget()
         self.cookies_tab = QtWidgets.QWidget()
         self.proxy_tab = QtWidgets.QWidget()
         self.storage_tab = QtWidgets.QWidget()
-        self.tabs.addTab(self.main_tab, "")
-        self.tabs.addTab(self.cookies_tab, "")
-        self.tabs.addTab(self.proxy_tab, "")
-        self.tabs.addTab(self.storage_tab, "")
-        layout.addWidget(self.tabs, 1)
+        self.tab_stack.addWidget(self.main_tab)
+        self.tab_stack.addWidget(self.cookies_tab)
+        self.tab_stack.addWidget(self.proxy_tab)
+        self.tab_stack.addWidget(self.storage_tab)
+
+        for index, key in enumerate(["main", "cookies", "proxy", "storage"]):
+            button = make_button("", "ghost")
+            button.setCheckable(True)
+            self.tab_group.addButton(button, index)
+            button.clicked.connect(lambda _, i=index: self.tab_stack.setCurrentIndex(i))
+            tabs_layout.addWidget(button)
+            self.tab_buttons[key] = button
+
+        tabs_layout.addStretch()
+        self.tab_buttons["main"].setChecked(True)
+        self.tab_stack.setCurrentIndex(0)
+
+        layout.addWidget(tabs_widget)
+        layout.addWidget(self.tab_stack, 1)
 
         self._build_main_tab()
         self._build_cookies_tab()
@@ -133,10 +164,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.cookies_button.setText(self.i18n.t("menu_cookies_title"))
         self.proxy_button.setText(self.i18n.t("menu_proxy_download"))
         self.delete_button.setText(self.i18n.t("button_delete"))
-        self.tabs.setTabText(0, self.i18n.t("client_tab_main"))
-        self.tabs.setTabText(1, self.i18n.t("client_tab_cookies"))
-        self.tabs.setTabText(2, self.i18n.t("client_tab_proxy"))
-        self.tabs.setTabText(3, self.i18n.t("client_tab_storage"))
+        self.tab_buttons["main"].setText(self.i18n.t("client_tab_main"))
+        self.tab_buttons["cookies"].setText(self.i18n.t("client_tab_cookies"))
+        self.tab_buttons["proxy"].setText(self.i18n.t("client_tab_proxy"))
+        self.tab_buttons["storage"].setText(self.i18n.t("client_tab_storage"))
         self.client_info_title.setText(self.i18n.t("client_info_title"))
         self.system_info_title.setText(self.i18n.t("client_system_title"))
         self.cookies_title.setText(self.i18n.t("client_cookies_title"))
@@ -148,6 +179,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.storage_action.setText(self.i18n.t("button_storage"))
         self.work_status_label.setText(self.i18n.t("client_work_status"))
         self.tags_label.setText(self.i18n.t("client_tags_title"))
+        self.tags_hint.setText(self.i18n.t("client_tags_hint"))
         self._populate_work_status_options()
         self._build_cookies_menu()
         self._update_view()
@@ -159,51 +191,105 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _build_main_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.main_tab)
         layout.setSpacing(16)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.client_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.client_info_card.setObjectName("Card")
+        self.client_info_card.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         client_layout = QtWidgets.QVBoxLayout(self.client_info_card)
-        client_layout.setContentsMargins(14, 14, 14, 14)
+        client_layout.setContentsMargins(10, 10, 10, 16)
+        client_layout.setSpacing(0)
         self.client_info_title = QtWidgets.QLabel()
-        self.client_info_title.setStyleSheet("font-weight: 600;")
+        self.client_info_title.setObjectName("ClientCardTitle")
         client_layout.addWidget(self.client_info_title)
+        client_layout.addSpacing(10)
         self.client_info_form = QtWidgets.QFormLayout()
         self.client_info_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        self.client_info_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.client_info_form.setFormAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
+        )
+        self.client_info_form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
+        self.client_info_form.setHorizontalSpacing(20)
+        self.client_info_form.setVerticalSpacing(4)
         client_layout.addLayout(self.client_info_form)
+        client_layout.addSpacing(15)
 
         status_row = QtWidgets.QHBoxLayout()
+        status_row.setSpacing(self.client_info_form.horizontalSpacing())
         self.work_status_label = QtWidgets.QLabel()
+        self.work_status_label.setObjectName("DetailLabel")
+        self.work_status_label.setFixedWidth(self._detail_label_width)
         self.work_status_combo = QtWidgets.QComboBox()
+        self.work_status_combo.setObjectName("StatusSelect")
+        self.work_status_combo.setMinimumWidth(150)
         self.work_status_combo.currentIndexChanged.connect(self._handle_work_status_changed)
         status_row.addWidget(self.work_status_label)
         status_row.addWidget(self.work_status_combo)
         status_row.addStretch()
         client_layout.addLayout(status_row)
 
+        client_layout.addSpacing(12)
         self.tags_label = QtWidgets.QLabel()
-        self.tags_label.setStyleSheet("font-weight: 600;")
-        self.tags_list = QtWidgets.QListWidget()
-        self.tags_list.setMouseTracking(True)
-        self.tags_list.itemChanged.connect(self._handle_tag_changed)
-        self.tags_list.setMinimumHeight(120)
+        self.tags_label.setObjectName("CardTitle")
+        self.tags_area = QtWidgets.QScrollArea()
+        self.tags_area.setObjectName("TagArea")
+        self.tags_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.tags_area.setWidgetResizable(True)
+        self.tags_area.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.tags_area.setMinimumHeight(150)
+        self.tags_area.setMaximumHeight(150)
+        self.tags_container = QtWidgets.QWidget()
+        self.tags_container.setObjectName("TagContainer")
+        self.tags_layout = QtWidgets.QVBoxLayout(self.tags_container)
+        self.tags_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_layout.setSpacing(10)
+        self.tags_area.setWidget(self.tags_container)
+        self.tags_hint = QtWidgets.QLabel()
+        self.tags_hint.setObjectName("TagHint")
+        self.tags_hint.setWordWrap(True)
+        self.tags_hint.setContentsMargins(2, 4, 2, 2)
         client_layout.addWidget(self.tags_label)
-        client_layout.addWidget(self.tags_list, 1)
+        client_layout.addSpacing(8)
+        client_layout.addWidget(self.tags_area, 1)
+        client_layout.addStretch()
 
         self.system_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.system_info_card.setObjectName("Card")
+        self.system_info_card.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         system_layout = QtWidgets.QVBoxLayout(self.system_info_card)
-        system_layout.setContentsMargins(14, 14, 14, 14)
+        system_layout.setContentsMargins(10, 10, 10, 10)
+        system_layout.setSpacing(0)
         self.system_info_title = QtWidgets.QLabel()
-        self.system_info_title.setStyleSheet("font-weight: 600;")
+        self.system_info_title.setObjectName("ClientCardTitle")
         system_layout.addWidget(self.system_info_title)
+        system_layout.addSpacing(10)
         self.system_info_form = QtWidgets.QFormLayout()
         self.system_info_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        self.system_info_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.system_info_form.setFormAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
+        )
+        self.system_info_form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
+        self.system_info_form.setHorizontalSpacing(20)
+        self.system_info_form.setVerticalSpacing(4)
         system_layout.addLayout(self.system_info_form)
+        system_layout.addStretch()
 
         layout.addWidget(self.client_info_card, 1)
         layout.addWidget(self.system_info_card, 1)
+        layout.setAlignment(self.client_info_card, QtCore.Qt.AlignmentFlag.AlignTop)
+        layout.setAlignment(self.system_info_card, QtCore.Qt.AlignmentFlag.AlignTop)
 
     def _build_cookies_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.cookies_tab)
@@ -296,7 +382,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
             return
         name = self.client.get("name") or self.client.get("id") or "--"
         self.title_label.setText(name)
-        self.subtitle_label.setText(self.client.get("id", ""))
+        client_id = self._safe_text(self.client.get("id"))
+        if client_id != "--":
+            self.subtitle_label.setText(f"{self.i18n.t('client_info_id')}: {client_id}")
+        else:
+            self.subtitle_label.setText("--")
         online = self.client.get("status") == "connected"
         self.status_text.setText(
             self.i18n.t("top_status_online") if online else self.i18n.t("top_status_offline")
@@ -309,20 +399,34 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._render_tags()
 
     def _render_client_info(self) -> None:
-        def _add_row(label: str, value: str) -> None:
+        def _add_row(label: str, value: str | QtWidgets.QWidget) -> None:
             row = self.client_info_form.rowCount()
-            self.client_info_form.insertRow(row, QtWidgets.QLabel(label), QtWidgets.QLabel(value))
+            label_widget = QtWidgets.QLabel(label)
+            label_widget.setObjectName("DetailLabel")
+            label_widget.setFixedWidth(self._detail_label_width)
+            label_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Fixed,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            if isinstance(value, QtWidgets.QWidget):
+                value_widget = value
+            else:
+                value_widget = QtWidgets.QLabel(value)
+                value_widget.setObjectName("DetailValue")
+            value_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            self.client_info_form.insertRow(row, label_widget, value_widget)
 
         self._clear_form(self.client_info_form)
         client = self.client or {}
         region = self._safe_text(client.get("region"))
         if region != "--":
             region = self.i18n.t(region)
-        _add_row(self.i18n.t("client_info_region"), region)
-        _add_row(self.i18n.t("client_info_id"), self._safe_text(client.get("id")))
+        _add_row(self.i18n.t("client_info_region"), self._build_region_value(region, client))
         _add_row(self.i18n.t("client_info_ip"), self._safe_text(client.get("ip")))
-        _add_row(self.i18n.t("client_info_last_seen"), self._format_last_seen(client.get("last_seen")))
-        _add_row(self.i18n.t("client_info_status"), self.status_text.text())
+        _add_row(self.i18n.t("client_info_status"), self._session_status_label(client))
         _add_row(
             self.i18n.t("client_info_team"),
             self._resolve_team_name(client.get("assigned_team_id")),
@@ -331,6 +435,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.i18n.t("client_info_operator"),
             self._resolve_operator_name(client.get("assigned_operator_id")),
         )
+        _add_row(self.i18n.t("client_info_last_seen"), self._format_last_seen(client.get("last_seen")))
+        _add_row(self.i18n.t("client_info_created"), self._format_created_at(client.get("created_at")))
 
     def _populate_work_status_options(self) -> None:
         self.work_status_combo.blockSignals(True)
@@ -388,49 +494,40 @@ class ClientDetailsPage(QtWidgets.QWidget):
             if isinstance(tag, dict) and tag.get("id")
         }
         self._tags_updating = True
-        self.tags_list.blockSignals(True)
-        self.tags_list.clear()
+        self._tag_checks = {}
+        self._clear_layout(self.tags_layout)
         if not tags:
-            item = QtWidgets.QListWidgetItem(self.i18n.t("tags_empty"))
-            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
-            self.tags_list.addItem(item)
+            self.tags_layout.addWidget(self._build_tag_placeholder(self.i18n.t("tags_empty")))
+            if self.tags_hint.text():
+                self.tags_layout.addWidget(self.tags_hint)
         else:
             for tag in tags:
                 name = str(tag.get("name") or "").strip()
                 if not name:
                     continue
-                item = QtWidgets.QListWidgetItem(name)
-                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
                 tag_id = str(tag.get("id") or "")
-                item.setData(QtCore.Qt.ItemDataRole.UserRole, tag_id)
-                item.setCheckState(
-                    QtCore.Qt.CheckState.Checked
-                    if tag_id and tag_id in assigned
-                    else QtCore.Qt.CheckState.Unchecked
-                )
                 color = str(tag.get("color") or "").strip()
-                if color:
-                    qcolor = QtGui.QColor(color)
-                    qcolor.setAlpha(80)
-                    item.setBackground(QtGui.QBrush(qcolor))
-                self.tags_list.addItem(item)
-        self.tags_list.blockSignals(False)
+                row, checkbox = self._build_tag_row(
+                    name,
+                    color,
+                    bool(tag_id and tag_id in assigned),
+                    tag_id,
+                )
+                self.tags_layout.addWidget(row, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+                if tag_id:
+                    self._tag_checks[tag_id] = checkbox
+        self.tags_layout.addStretch()
         self._tags_updating = False
 
-    def _handle_tag_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
+    def _handle_tag_checkbox_changed(self, _state: int) -> None:
         if self._tags_updating or not self.client or not self.api:
             return
         client_id = self.client.get("id")
         if not client_id:
             return
-        tag_ids = []
-        for index in range(self.tags_list.count()):
-            item = self.tags_list.item(index)
-            if item.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable:
-                if item.checkState() == QtCore.Qt.CheckState.Checked:
-                    tag_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
-                    if tag_id:
-                        tag_ids.append(str(tag_id))
+        tag_ids = [
+            tag_id for tag_id, checkbox in self._tag_checks.items() if checkbox.isChecked()
+        ]
         try:
             self.api.update_client_tags(client_id, tag_ids)
         except Exception:
@@ -443,7 +540,20 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _render_system_info(self) -> None:
         def _add_row(label: str, value: str) -> None:
             row = self.system_info_form.rowCount()
-            self.system_info_form.insertRow(row, QtWidgets.QLabel(label), QtWidgets.QLabel(value))
+            label_widget = QtWidgets.QLabel(label)
+            label_widget.setObjectName("DetailLabel")
+            label_widget.setFixedWidth(self._detail_label_width)
+            label_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Fixed,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            value_widget = QtWidgets.QLabel(value)
+            value_widget.setObjectName("DetailValue")
+            value_widget.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+            self.system_info_form.insertRow(row, label_widget, value_widget)
 
         self._clear_form(self.system_info_form)
         client = self.client or {}
@@ -479,6 +589,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
                 if member.get("account_id") == value:
                     return member.get("name") or value
         return value
+
+    def _session_status_label(self, client: dict) -> str:
+        connected = bool(client.get("connected")) or client.get("status") == "connected"
+        if connected:
+            return self.i18n.t("status_connected")
+        return self.i18n.t("status_disconnected")
 
     def _update_actions(self, connected: bool) -> None:
         if connected:
@@ -558,27 +674,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
             return raw
         return "planning"
 
-    @staticmethod
-    def _format_last_seen(value: object) -> str:
-        if value is None:
+    def _format_last_seen(self, value: object) -> str:
+        parsed = self._parse_datetime(value)
+        if not parsed:
             return "--"
-        if isinstance(value, datetime):
-            parsed = value
-        elif isinstance(value, (int, float)):
-            try:
-                parsed = datetime.fromtimestamp(value)
-            except Exception:
-                return "--"
-        else:
-            text = str(value).strip()
-            if not text:
-                return "--"
-            if text.endswith("Z"):
-                text = f"{text[:-1]}+00:00"
-            try:
-                parsed = datetime.fromisoformat(text)
-            except ValueError:
-                return "--"
         if parsed.tzinfo:
             parsed = parsed.astimezone()
             now = datetime.now(parsed.tzinfo)
@@ -586,4 +685,156 @@ class ClientDetailsPage(QtWidgets.QWidget):
             now = datetime.now()
         if parsed.date() == now.date():
             return parsed.strftime("%H:%M:%S")
-        return parsed.strftime("%Y-%m-%d %H:%M")
+        return self._format_date_value(parsed)
+
+    def _format_created_at(self, value: object) -> str:
+        parsed = self._parse_datetime(value)
+        if not parsed:
+            return "--"
+        return self._format_date_value(parsed)
+
+    def _format_date_value(self, parsed: datetime) -> str:
+        lang = self.i18n.language()
+        if lang == "ru":
+            return parsed.strftime("%d.%m.%Y")
+        return parsed.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _parse_datetime(value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value)
+            except Exception:
+                return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
+    def _tag_icon(self, color: str) -> QtGui.QIcon:
+        key = color.strip().lower()
+        if not key:
+            return QtGui.QIcon()
+        cached = self._tag_icon_cache.get(key)
+        if cached:
+            return cached
+        size = 10
+        pixmap = QtGui.QPixmap(size, size)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(color))
+        painter.drawEllipse(0, 0, size, size)
+        painter.end()
+        icon = QtGui.QIcon(pixmap)
+        self._tag_icon_cache[key] = icon
+        return icon
+
+    def _build_region_value(self, region: str, client: dict) -> QtWidgets.QWidget:
+        wrapper = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        value_label = QtWidgets.QLabel(region)
+        value_label.setObjectName("DetailValue")
+        layout.addWidget(value_label)
+        flag_code = self._resolve_flag_code(client)
+        flag_pixmap = self._load_flag_pixmap(flag_code) if flag_code else None
+        if flag_pixmap is not None:
+            flag_label = QtWidgets.QLabel()
+            flag_label.setPixmap(flag_pixmap)
+            flag_label.setFixedHeight(flag_pixmap.height())
+            layout.addWidget(flag_label)
+        layout.addStretch()
+        return wrapper
+
+    @staticmethod
+    def _resolve_flag_code(client: dict) -> str | None:
+        for key in ("country", "country_code", "region_code", "region"):
+            value = str(client.get(key) or "").strip()
+            if len(value) == 2 and value.isalpha():
+                return value.lower()
+        return None
+
+    @staticmethod
+    def _load_flag_pixmap(code: str | None) -> QtGui.QPixmap | None:
+        if not code:
+            return None
+        base = Path(__file__).resolve().parent.parent / "assets" / "flags"
+        path = base / f"{code.lower()}.png"
+        if not path.exists():
+            return None
+        pixmap = QtGui.QPixmap(str(path))
+        if pixmap.isNull():
+            return None
+        return pixmap.scaledToHeight(14, QtCore.Qt.TransformationMode.SmoothTransformation)
+
+    def _build_tag_row(
+        self, name: str, color: str, checked: bool, tag_id: str
+    ) -> tuple[QtWidgets.QFrame, QtWidgets.QCheckBox]:
+        row = QtWidgets.QFrame()
+        row.setObjectName("TagRow")
+        row.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+
+        checkbox = QtWidgets.QCheckBox()
+        checkbox.setChecked(checked)
+        checkbox.setProperty("tag_id", tag_id)
+        checkbox.stateChanged.connect(self._handle_tag_checkbox_changed)
+        layout.addWidget(checkbox)
+
+        dot = QtWidgets.QLabel()
+        dot.setObjectName("TagDot")
+        dot.setFixedSize(10, 10)
+        if color:
+            dot.setStyleSheet(f"background: {color}; border-radius: 5px;")
+        else:
+            dot.setStyleSheet("background: rgba(255, 255, 255, 0.3); border-radius: 5px;")
+        layout.addWidget(dot)
+
+        label = QtWidgets.QLabel(name)
+        label.setObjectName("DetailValue")
+        layout.addWidget(label)
+        layout.addStretch()
+        return row, checkbox
+
+    def _build_tag_placeholder(self, text: str) -> QtWidgets.QFrame:
+        row = QtWidgets.QFrame()
+        row.setObjectName("TagRow")
+        row.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("Muted")
+        layout.addWidget(label)
+        layout.addStretch()
+        return row
+
+    @staticmethod
+    def _clear_layout(layout: QtWidgets.QLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)

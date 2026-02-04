@@ -62,6 +62,7 @@ REMOTE_CONTROLLER_SCHEMA = [
         status TEXT NOT NULL DEFAULT 'disconnected',
         connected_time INTEGER NOT NULL DEFAULT 0,
         status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        first_connected_at TIMESTAMPTZ,
         work_status TEXT NOT NULL DEFAULT 'planning',
         assigned_operator_id TEXT,
         assigned_team_id TEXT,
@@ -78,6 +79,7 @@ REMOTE_CONTROLLER_SCHEMA = [
     );
     """,
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS first_connected_at TIMESTAMPTZ;",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS work_status TEXT NOT NULL DEFAULT 'planning';",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_operator_id TEXT;",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_team_id TEXT;",
@@ -102,6 +104,20 @@ async def init_db() -> None:
             async with db_pool.acquire() as conn:
                 for statement in DEVICE_REGISTRY_SCHEMA + REMOTE_CONTROLLER_SCHEMA:
                     await conn.execute(statement)
+                await conn.execute(
+                    """
+                    UPDATE remote_clients
+                    SET first_connected_at = COALESCE(
+                        first_connected_at,
+                        (
+                            SELECT MIN(created_at)
+                            FROM device_registry
+                            WHERE device_registry.session_id = remote_clients.id
+                        )
+                    )
+                    WHERE first_connected_at IS NULL;
+                    """
+                )
             logger.info("Database connection established.")
             return
         except Exception:
@@ -212,9 +228,21 @@ async def upsert_remote_client(
                     assigned_team_id,
                     assigned_operator_id,
                     status_changed_at,
+                    first_connected_at,
                     client_config
                 )
-                VALUES ($1, $1, $2, 0, $3, $4, $5, NOW(), $6::jsonb)
+                VALUES (
+                    $1,
+                    $1,
+                    $2,
+                    0,
+                    $3,
+                    $4,
+                    $5,
+                    NOW(),
+                    CASE WHEN $2 = 'connected' THEN NOW() ELSE NULL END,
+                    $6::jsonb
+                )
                 ON CONFLICT (id)
                 DO UPDATE SET
                     status = EXCLUDED.status,
@@ -222,6 +250,11 @@ async def upsert_remote_client(
                     assigned_team_id = COALESCE(remote_clients.assigned_team_id, EXCLUDED.assigned_team_id),
                     assigned_operator_id = COALESCE(remote_clients.assigned_operator_id, EXCLUDED.assigned_operator_id),
                     client_config = COALESCE(EXCLUDED.client_config, remote_clients.client_config),
+                    first_connected_at = CASE
+                        WHEN remote_clients.first_connected_at IS NULL
+                             AND EXCLUDED.status = 'connected' THEN NOW()
+                        ELSE remote_clients.first_connected_at
+                    END,
                     connected_time = CASE
                         WHEN remote_clients.status IS DISTINCT FROM EXCLUDED.status THEN 0
                         ELSE remote_clients.connected_time

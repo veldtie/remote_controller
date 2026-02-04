@@ -111,6 +111,22 @@ def build_stylesheet(theme: Theme) -> str:
         color: {c["muted"]};
         font-size: 11px;
     }}
+    QLabel#CardTitle {{
+        font-size: 13px;
+        font-weight: 600;
+    }}
+    QLabel#ClientCardTitle {{
+        font-size: 24px;
+        font-weight: 700;
+    }}
+    QLabel#DetailLabel {{
+        color: {c["muted"]};
+        font-size: 13px;
+    }}
+    QLabel#DetailValue {{
+        font-weight: 600;
+        font-size: 13px;
+    }}
     QFrame#Sidebar {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 rgba(26, 34, 48, 0.62),
@@ -177,8 +193,18 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         border-radius: 18px;
     }}
+    QScrollArea#TagArea {{
+        background: transparent;
+    }}
+    QWidget#TagContainer {{
+        background: transparent;
+    }}
     QLabel#Muted {{
         color: {c["muted"]};
+    }}
+    QLabel#TagHint {{
+        color: {c["muted"]};
+        font-size: 13px;
     }}
     QLabel#InfoPill {{
         padding: 4px 10px;
@@ -379,6 +405,16 @@ def build_stylesheet(theme: Theme) -> str:
         padding: 4px;
         border-radius: 10px;
     }}
+    QToolButton[variant="icon"] {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid transparent;
+        padding: 4px;
+        border-radius: 10px;
+    }}
+    QToolButton[variant="icon"]:hover {{
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.12);
+    }}
     QToolButton[nav="true"] {{
         background: transparent;
         border: 1px solid transparent;
@@ -423,6 +459,15 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         border-radius: 14px;
         padding: 8px 12px;
+    }}
+    QComboBox#StatusSelect {{
+        padding-right: 28px;
+        min-width: 150px;
+        font-size: 13px;
+    }}
+    QComboBox#StatusSelect::drop-down {{
+        border: none;
+        width: 22px;
     }}
     QLineEdit#SearchInput {{
         padding-left: 34px;
@@ -507,6 +552,48 @@ def build_stylesheet(theme: Theme) -> str:
     QListWidget::item:selected {{
         background: {c["accent_soft"]};
         color: {c["text"]};
+    }}
+    QFrame#TagRow {{
+        border: 1px dashed {c["border"]};
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.04);
+    }}
+    QFrame#TagRow:hover {{
+        background: rgba(255, 255, 255, 0.06);
+    }}
+    QLabel#TagDot {{
+        border-radius: 5px;
+    }}
+    QListWidget#TagList {{
+        background: transparent;
+    }}
+    QListWidget#TagList::item {{
+        border: 1px dashed {c["border"]};
+        border-radius: 12px;
+        padding: 6px 10px;
+        margin-bottom: 6px;
+        background: rgba(255, 255, 255, 0.04);
+    }}
+    QListWidget#TagList::item:hover {{
+        background: rgba(255, 255, 255, 0.06);
+    }}
+    QListWidget#TagList::item:selected {{
+        background: rgba(255, 255, 255, 0.04);
+        color: {c["text"]};
+    }}
+    QListWidget#TagList::indicator {{
+        width: 14px;
+        height: 14px;
+    }}
+    QListWidget#TagList::indicator:unchecked {{
+        border: 1px solid {c["border"]};
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 4px;
+    }}
+    QListWidget#TagList::indicator:checked {{
+        border: 1px solid {c["accent"]};
+        background: {c["accent"]};
+        border-radius: 4px;
     }}
     QAbstractItemView::item:focus {{
         outline: none;
