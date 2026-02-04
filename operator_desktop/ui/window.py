@@ -52,40 +52,16 @@ class MainWindow(QtWidgets.QMainWindow):
         shadow.setColor(QtGui.QColor(0, 0, 0, 155))
         self.window_frame.setGraphicsEffect(shadow)
 
-        self.chrome_bar = QtWidgets.QFrame()
-        self.chrome_bar.setObjectName("ChromeBar")
-        self.chrome_bar.setFixedHeight(48)
-        chrome_layout = QtWidgets.QHBoxLayout(self.chrome_bar)
-        chrome_layout.setContentsMargins(16, 8, 16, 8)
-        chrome_layout.setSpacing(10)
-
-        dots = QtWidgets.QHBoxLayout()
-        dots.setSpacing(8)
-        self.chrome_dot_close = QtWidgets.QLabel()
-        self.chrome_dot_close.setObjectName("ChromeDot")
-        self.chrome_dot_close.setProperty("dot", "close")
-        self.chrome_dot_min = QtWidgets.QLabel()
-        self.chrome_dot_min.setObjectName("ChromeDot")
-        self.chrome_dot_min.setProperty("dot", "minimize")
-        self.chrome_dot_max = QtWidgets.QLabel()
-        self.chrome_dot_max.setObjectName("ChromeDot")
-        self.chrome_dot_max.setProperty("dot", "zoom")
-        for dot in (self.chrome_dot_close, self.chrome_dot_min, self.chrome_dot_max):
-            dot.setFixedSize(10, 10)
-            dots.addWidget(dot)
-        chrome_layout.addLayout(dots)
-
-        chrome_title_box = QtWidgets.QVBoxLayout()
-        chrome_title_box.setSpacing(0)
-        self.chrome_title = QtWidgets.QLabel()
-        self.chrome_title.setObjectName("ChromeTitle")
-        self.chrome_subtitle = QtWidgets.QLabel()
-        self.chrome_subtitle.setObjectName("ChromeSubtitle")
-        chrome_title_box.addWidget(self.chrome_title)
-        chrome_title_box.addWidget(self.chrome_subtitle)
-        chrome_layout.addLayout(chrome_title_box)
-        chrome_layout.addStretch()
-        frame_layout.addWidget(self.chrome_bar)
+        self.header_row = QtWidgets.QFrame()
+        self.header_row.setObjectName("HeaderRow")
+        header_layout = QtWidgets.QHBoxLayout(self.header_row)
+        header_layout.setContentsMargins(6, 0, 6, 0)
+        header_layout.setSpacing(8)
+        self.header_title = QtWidgets.QLabel()
+        self.header_title.setObjectName("ChromeTitle")
+        header_layout.addWidget(self.header_title)
+        header_layout.addStretch()
+        frame_layout.addWidget(self.header_row)
 
         self.stack = QtWidgets.QStackedWidget()
         self.login_page = LoginPage(self.i18n, self.settings)
@@ -120,10 +96,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shell.dashboard.apply_theme(self.theme)
 
     def apply_translations(self) -> None:
-        self.chrome_title.setText(self.i18n.t("app_title"))
-        self.chrome_subtitle.setText(self.i18n.t("app_subtitle"))
+        self.set_header(APP_NAME)
         self.login_page.apply_translations()
         self.shell.apply_translations()
+
+    def set_header(self, title: str, subtitle: str | None = None) -> None:
+        if self.header_title:
+            self.header_title.setText(title)
 
     def _reset_server_cache(self) -> None:
         self.settings.set("clients", [])

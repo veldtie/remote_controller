@@ -49,9 +49,13 @@ class RemoteControllerApi:
 
     def download_error_log(self) -> bytes:
         url = f"{self._base_url}/api/logs/error"
+        params: dict[str, str] | None = None
+        if self._token:
+            params = {"token": self._token}
         response = requests.get(
             url,
             headers=self._headers(),
+            params=params,
             timeout=self._timeout,
         )
         response.raise_for_status()

@@ -222,16 +222,8 @@ class DashboardPage(QtWidgets.QWidget):
         title_box.addWidget(self.title_label)
         title_box.addWidget(self.subtitle_label)
 
-        info_row = QtWidgets.QHBoxLayout()
-        info_row.setSpacing(8)
-        self.last_sync_label = QtWidgets.QLabel()
-        self.last_sync_label.setObjectName("InfoPill")
-        self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("InfoPill")
-        info_row.addWidget(self.last_sync_label)
-        info_row.addWidget(self.status_label)
-        info_row.addStretch()
-        title_box.addLayout(info_row)
+        self.last_sync_label = None
+        self.status_label = None
 
         toolbar_layout.addLayout(title_box)
         toolbar_layout.addStretch()
@@ -275,12 +267,18 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setMouseTracking(True)
         self.table.setShowGrid(False)
+        table_font = self.table.font()
+        table_font.setPointSize(max(12, table_font.pointSize() + 1))
+        self.table.setFont(table_font)
         self.table.viewport().installEventFilter(self)
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         header = self.table.horizontalHeader()
+        header_font = header.font()
+        header_font.setPointSize(max(11, header_font.pointSize() + 1))
+        header.setFont(header_font)
         header.setStretchLastSection(False)
         self._configure_columns()
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table.verticalHeader().setDefaultSectionSize(56)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
         self.splitter.addWidget(self.table_card)
@@ -354,31 +352,15 @@ class DashboardPage(QtWidgets.QWidget):
         self._render_current_clients()
 
     def _build_column_keys(self) -> list[str]:
-        keys = ["name", "id"]
-        if self.current_role == "moderator":
-            keys += ["team", "operator"]
-        elif self.current_role == "administrator":
-            keys += ["operator"]
-        keys += ["status", "last_seen", "region", "flags", "ip", "storage", "connect", "more"]
-        if self.current_role in {"moderator", "administrator"}:
-            keys.append("delete")
-        return keys
+        return ["name", "ip", "region", "team", "operator"]
 
     def _column_labels(self) -> dict[str, str]:
         return {
             "name": self.i18n.t("table_name"),
-            "id": self.i18n.t("table_id"),
             "team": self.i18n.t("table_team"),
             "operator": self.i18n.t("table_operator"),
-            "status": self.i18n.t("table_status"),
-            "last_seen": self.i18n.t("table_last_seen"),
             "region": self.i18n.t("table_region"),
-            "flags": self.i18n.t("table_flags"),
             "ip": self.i18n.t("table_ip"),
-            "storage": self.i18n.t("table_storage"),
-            "connect": self.i18n.t("table_connect"),
-            "more": self.i18n.t("table_more"),
-            "delete": self.i18n.t("table_delete"),
         }
 
     def _configure_columns(self) -> None:
@@ -463,6 +445,14 @@ class DashboardPage(QtWidgets.QWidget):
                     return member.get("name", operator_id)
         return operator_id
 
+    def _resolve_country_name(self, code: str) -> str:
+        normalized = str(code or "").strip().lower()
+        if not normalized:
+            return "--"
+        key = f"country_{normalized}"
+        label = self.i18n.t(key)
+        return label if label != key else code.upper()
+
     def _extract_flag_codes(self, client: Dict) -> list[str]:
         ip_value = _normalize_ip(client.get("ip"))
         if not ip_value:
@@ -522,11 +512,16 @@ class DashboardPage(QtWidgets.QWidget):
 
     def _resolve_region_display(self, client: Dict) -> str:
         region_value = str(client.get("region") or "").strip()
-        if region_value:
-            return self.i18n.t(region_value)
         codes = self._extract_flag_codes(client)
         if codes:
+            country_name = self._resolve_country_name(codes[0])
+            if country_name and country_name != codes[0]:
+                return country_name
+            if region_value:
+                return self.i18n.t(region_value)
             return codes[0]
+        if region_value:
+            return self.i18n.t(region_value)
         return "--"
 
     def _emoji_font(self) -> QtGui.QFont:
@@ -784,7 +779,8 @@ class DashboardPage(QtWidgets.QWidget):
         self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
         self.log_close.setText(self.i18n.t("storage_close"))
-        self.status_label.setText(self.i18n.t("main_status_ready"))
+        if self.status_label is not None:
+            self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
         self._render_current_clients()
 
@@ -804,6 +800,8 @@ class DashboardPage(QtWidgets.QWidget):
             self.log_list.scrollToBottom()
 
     def update_last_sync_label(self) -> None:
+        if self.last_sync_label is None:
+            return
         if not self.last_sync:
             last_sync = self.i18n.t("main_last_sync_never")
         else:
@@ -822,19 +820,10 @@ class DashboardPage(QtWidgets.QWidget):
             return
         filtered = []
         for client in self._visible_clients(self.clients):
-            connected = client.get("status") == "connected"
-            status_key = "status_connected" if connected else "status_disconnected"
-            flags = self._extract_flag_codes(client)
-            flags_text = " ".join(flags)
-            flags_view = self._format_flags(flags) if flags else ""
             values = [
                 client["name"],
                 client["id"],
-                self.i18n.t(status_key),
-                self._format_last_seen(client.get("last_seen")),
                 self._resolve_region_display(client),
-                flags_text,
-                flags_view,
                 client["ip"],
                 self._resolve_team_name(client.get("assigned_team_id")),
                 self._resolve_operator_name(client.get("assigned_operator_id")),
@@ -854,99 +843,35 @@ class DashboardPage(QtWidgets.QWidget):
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setRowHeight(row, 46)
+            self.table.setRowHeight(row, 56)
             name_item = QtWidgets.QTableWidgetItem(client["name"])
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client["id"])
             name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             name_item.setText("")
-            id_item = QtWidgets.QTableWidgetItem(client["id"])
-            connected = client.get("status") == "connected"
-            status_key = "status_connected" if connected else "status_disconnected"
-            time_value = int(client.get("connected_time") or 0)
-            if connected:
-                time_value = max(1, time_value)
-            status_text = f"{self.i18n.t(status_key)} / {self._format_duration(time_value)}"
-            status_item = QtWidgets.QTableWidgetItem(status_text)
-            status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.apply_status_style(status_item, connected)
-            last_seen_item = QtWidgets.QTableWidgetItem(
-                self._format_last_seen(client.get("last_seen"))
-            )
-            last_seen_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            ip_item = QtWidgets.QTableWidgetItem(client["ip"])
             region_item = QtWidgets.QTableWidgetItem(self._resolve_region_display(client))
             flags_codes = self._extract_flag_codes(client)
-            flags_text = " ".join(flags_codes) if flags_codes else "--"
-            flags_item = QtWidgets.QTableWidgetItem(flags_text)
-            flags_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            flags_item.setFont(self._emoji_font())
-            ip_item = QtWidgets.QTableWidgetItem(client["ip"])
-            for item in (id_item, status_item, last_seen_item, region_item, flags_item, ip_item):
+            if flags_codes:
+                flag_pixmap = self._flag_pixmap(flags_codes[0])
+                if flag_pixmap:
+                    region_item.setIcon(QtGui.QIcon(flag_pixmap))
+                    region_item.setToolTip(flags_codes[0])
+            for item in (ip_item, region_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, column_index["name"], name_item)
             self.table.setCellWidget(row, column_index["name"], self.build_name_cell(client))
-            self.table.setItem(row, column_index["id"], id_item)
-            if "team" in column_index:
-                team_item = QtWidgets.QTableWidgetItem(
-                    self._resolve_team_name(client.get("assigned_team_id"))
-                )
-                team_item.setFlags(team_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, column_index["team"], team_item)
-            if "operator" in column_index:
-                operator_item = QtWidgets.QTableWidgetItem(
-                    self._resolve_operator_name(client.get("assigned_operator_id"))
-                )
-                operator_item.setFlags(operator_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, column_index["operator"], operator_item)
-            self.table.setItem(row, column_index["status"], status_item)
-            self.table.setItem(row, column_index["last_seen"], last_seen_item)
             self.table.setItem(row, column_index["region"], region_item)
-            self.table.setItem(row, column_index["flags"], flags_item)
-            flag_pixmap = self._flag_pixmap(flags_codes[0]) if flags_codes else None
-            if flag_pixmap:
-                flags_item.setText("")
-                flags_item.setIcon(QtGui.QIcon(flag_pixmap))
-                flags_item.setToolTip(flags_codes[0])
             self.table.setItem(row, column_index["ip"], ip_item)
-
-            storage_button = make_button(self.i18n.t("button_storage"), "ghost")
-            storage_button.clicked.connect(lambda _, cid=client["id"]: self.storage_requested.emit(cid))
-            self.table.setCellWidget(row, column_index["storage"], storage_button)
-
-            connect_text = self.i18n.t("button_connected") if client["connected"] else self.i18n.t("button_connect")
-            connect_button = make_button(connect_text, "primary")
-            connect_button.clicked.connect(
-                lambda _, cid=client["id"], state=client["connected"]: self.connect_requested.emit(cid, state)
+            team_item = QtWidgets.QTableWidgetItem(
+                self._resolve_team_name(client.get("assigned_team_id"))
             )
-            self.table.setCellWidget(row, column_index["connect"], connect_button)
-
-            more_button = self.build_more_button(client["id"])
-            self.table.setCellWidget(row, column_index["more"], self.wrap_cell_widget(more_button))
-
-            if "delete" in column_index:
-                delete_button = QtWidgets.QToolButton()
-                delete_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-                delete_button.setToolTip(self.i18n.t("button_delete"))
-                delete_button.setAutoRaise(True)
-                delete_button.setFixedSize(40, 30)
-                delete_icon = load_icon("delete", self.theme.name)
-                if delete_icon.isNull():
-                    delete_button.setText("X")
-                else:
-                    delete_button.setIcon(delete_icon)
-                    delete_button.setIconSize(QtCore.QSize(16, 16))
-                delete_button.setStyleSheet(
-                    "QToolButton {"
-                    f"background: {self.theme.colors['danger']};"
-                    "border: 1px solid rgba(255, 255, 255, 0.12);"
-                    "border-radius: 10px;"
-                    "color: #ffffff;"
-                    "}"
-                    "QToolButton:hover {"
-                    f"background: {self.theme.colors['danger']};"
-                    "}"
-                )
-                delete_button.clicked.connect(lambda _, cid=client["id"]: self.confirm_delete_client(cid))
-                self.table.setCellWidget(row, column_index["delete"], self.wrap_cell_widget(delete_button))
+            team_item.setFlags(team_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, column_index["team"], team_item)
+            operator_item = QtWidgets.QTableWidgetItem(
+                self._resolve_operator_name(client.get("assigned_operator_id"))
+            )
+            operator_item.setFlags(operator_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, column_index["operator"], operator_item)
         self.table.blockSignals(False)
 
     def handle_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
@@ -1006,19 +931,11 @@ class DashboardPage(QtWidgets.QWidget):
             return
 
         base_config = {
-            "name": (3.2, 170),
-            "id": (1.2, 80),
-            "team": (1.6, 130),
-            "operator": (1.8, 150),
-            "status": (2.1, 160),
-            "last_seen": (1.8, 180),
-            "region": (1.3, 100),
-            "flags": (1.1, 90),
-            "ip": (1.3, 100),
-            "storage": (1.3, 110),
-            "connect": (1.6, 140),
-            "more": (1.4, 130),
-            "delete": (1.0, 90),
+            "name": (3.2, 200),
+            "ip": (1.5, 140),
+            "region": (1.7, 160),
+            "team": (1.6, 150),
+            "operator": (1.8, 160),
         }
         header_min = self._header_min_widths()
         config = {}
@@ -1095,10 +1012,14 @@ class DashboardPage(QtWidgets.QWidget):
         name_button.setObjectName("NameLink")
         name_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         name_button.setFlat(True)
+        name_font = name_button.font()
+        name_font.setPointSize(max(12, name_font.pointSize() + 1))
+        name_font.setWeight(QtGui.QFont.Weight.DemiBold)
+        name_button.setFont(name_font)
         name_button.clicked.connect(lambda _, cid=client["id"]: self.client_selected.emit(cid))
         id_label = QtWidgets.QLabel(client.get("id", ""))
         id_label.setObjectName("Muted")
-        id_label.setStyleSheet("font-size: 11px;")
+        id_label.setStyleSheet("font-size: 12px;")
         text_stack.addWidget(name_button)
         text_stack.addWidget(id_label)
         button = QtWidgets.QToolButton()

@@ -196,15 +196,35 @@
       dom.screenFrame.style.removeProperty("left");
       dom.screenFrame.style.removeProperty("width");
       dom.screenFrame.style.removeProperty("height");
+      dom.screenFrame.style.removeProperty("right");
+      dom.screenFrame.style.removeProperty("bottom");
+      state.lastFrameBounds = null;
       return;
     }
-    const { edgeGap, workspaceTop, workspaceLeft, availableWidth, availableHeight } =
+    const { workspaceTop, workspaceLeft, availableWidth, availableHeight } =
       getWorkspaceBounds();
+    if (!availableWidth || !availableHeight) {
+      return;
+    }
+    const maxAspect = 16 / 9;
+    const rawAspect =
+      Number.isFinite(state.screenAspect) && state.screenAspect > 0
+        ? state.screenAspect
+        : maxAspect;
+    const targetAspect = Math.min(rawAspect, maxAspect);
+    let frameWidth = availableWidth;
+    let frameHeight = Math.round(availableWidth / targetAspect);
+    if (frameHeight > availableHeight) {
+      frameHeight = availableHeight;
+      frameWidth = Math.round(availableHeight * targetAspect);
+    }
+    const offsetX = Math.max(0, Math.round((availableWidth - frameWidth) / 2));
+    const offsetY = Math.max(0, Math.round((availableHeight - frameHeight) / 2));
     const nextBounds = {
-      top: workspaceTop,
-      left: workspaceLeft,
-      width: availableWidth,
-      height: availableHeight
+      top: workspaceTop + offsetY,
+      left: workspaceLeft + offsetX,
+      width: frameWidth,
+      height: frameHeight
     };
     if (
       state.lastFrameBounds &&
@@ -220,6 +240,8 @@
     dom.screenFrame.style.left = `${nextBounds.left}px`;
     dom.screenFrame.style.width = `${nextBounds.width}px`;
     dom.screenFrame.style.height = `${nextBounds.height}px`;
+    dom.screenFrame.style.right = "auto";
+    dom.screenFrame.style.bottom = "auto";
   }
 
   function ensureCursorOverlay() {

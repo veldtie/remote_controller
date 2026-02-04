@@ -5,11 +5,12 @@ import os
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.api import DEFAULT_API_TOKEN, DEFAULT_API_URL, RemoteControllerApi
+from ..core.constants import APP_NAME
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from ..core.translations import LANGUAGE_NAMES
-from .common import ICON_DIR, GlassFrame, animate_widget, load_icon, make_button
+from .common import GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
@@ -54,27 +55,6 @@ class MainShell(QtWidgets.QWidget):
         sidebar_layout.setContentsMargins(16, 16, 16, 16)
         sidebar_layout.setSpacing(12)
 
-        brand = GlassFrame(radius=16, tone="card_alt", tint_alpha=150, border_alpha=60)
-        brand.setObjectName("SidebarHeader")
-        brand_layout = QtWidgets.QHBoxLayout(brand)
-        brand_layout.setContentsMargins(4, 4, 4, 4)
-        brand_layout.setSpacing(10)
-        self.brand_icon = QtWidgets.QLabel("RC")
-        self.brand_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.brand_icon.setFixedSize(52, 52)
-        self.brand_icon.setObjectName("BrandIcon")
-        brand_text = QtWidgets.QVBoxLayout()
-        self.brand_title = QtWidgets.QLabel()
-        self.brand_title.setStyleSheet("font-weight: 700; font-size: 16px;")
-        self.brand_subtitle = QtWidgets.QLabel()
-        self.brand_subtitle.setObjectName("Muted")
-        brand_text.addWidget(self.brand_title)
-        brand_text.addWidget(self.brand_subtitle)
-        brand_layout.addWidget(self.brand_icon)
-        brand_layout.addLayout(brand_text, 1)
-        sidebar_layout.addWidget(brand)
-        self._apply_brand_icon()
-
         self.workflow_label = QtWidgets.QLabel()
         self.workflow_label.setObjectName("SidebarSection")
         sidebar_layout.addWidget(self.workflow_label)
@@ -83,10 +63,10 @@ class MainShell(QtWidgets.QWidget):
         self.nav_group = QtWidgets.QButtonGroup(self)
         self.nav_group.setExclusive(True)
         nav_items = [
-            ("compiler", "nav_compiler", "build"),
             ("main", "nav_main", "clients"),
-            ("cookies", "nav_cookies", "cookies"),
             ("teams", "nav_teams", "team"),
+            ("cookies", "nav_cookies", "cookies"),
+            ("compiler", "nav_compiler", "build"),
         ]
         for key, _, icon_name in nav_items:
             button = self._build_nav_button(icon_name)
@@ -99,7 +79,7 @@ class MainShell(QtWidgets.QWidget):
         self.settings_label.setObjectName("SidebarSection")
         sidebar_layout.addWidget(self.settings_label)
 
-        for key, icon_name in [("settings", None), ("instructions", None)]:
+        for key, icon_name in [("instructions", "instructions"), ("settings", "settings")]:
             button = self._build_nav_button(icon_name)
             self.nav_group.addButton(button)
             self.nav_buttons[key] = button
@@ -126,6 +106,7 @@ class MainShell(QtWidgets.QWidget):
 
         self.clear_data_button = make_button("", "nav")
         self.clear_data_button.setProperty("nav", True)
+        self._apply_nav_icon(self.clear_data_button, "trash")
         self.clear_data_button.clicked.connect(self.clear_local_data)
         sidebar_layout.addWidget(self.clear_data_button)
 
@@ -142,6 +123,7 @@ class MainShell(QtWidgets.QWidget):
         sidebar_layout.addWidget(self.sidebar_footer)
         self.logout_button = make_button("", "ghost")
         self.logout_button.setObjectName("DangerText")
+        self._apply_nav_icon(self.logout_button, "logout")
         self.logout_button.clicked.connect(self.logout_requested.emit)
         sidebar_layout.addWidget(self.logout_button)
 
@@ -202,7 +184,7 @@ class MainShell(QtWidgets.QWidget):
         self.client_details.connect_requested.connect(self.toggle_connection)
         self.client_details.storage_requested.connect(self.open_storage)
         self.client_details.extra_action_requested.connect(self.handle_extra_action)
-        self.client_details.delete_requested.connect(self.handle_delete_request)
+        self.client_details.delete_requested.connect(self.dashboard.confirm_delete_client)
         self.client_details.rename_requested.connect(self.rename_client)
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
         self.settings_page.language_changed.connect(self.emit_language_change)
@@ -242,34 +224,21 @@ class MainShell(QtWidgets.QWidget):
         self._build_language_menu()
         self._render_ping_label()
 
-    def _apply_brand_icon(self) -> None:
-        icon_path = ICON_DIR / "logo.svg"
-        if not icon_path.exists():
-            return
-        pixmap = QtGui.QPixmap(str(icon_path))
-        if pixmap.isNull():
-            return
-        size = int(self.brand_icon.width() * 0.9) or 32
-        pixmap = pixmap.scaled(
-            size,
-            size,
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        )
-        self.brand_icon.setPixmap(pixmap)
-        self.brand_icon.setText("")
-
     def _build_nav_button(self, icon_name: str | None) -> QtWidgets.QPushButton:
         button = make_button("", "nav")
         button.setCheckable(True)
         button.setMinimumHeight(38)
         button.setProperty("nav", True)
         if icon_name:
-            icon = load_icon(icon_name, "dark")
-            if not icon.isNull():
-                button.setIcon(icon)
-                button.setIconSize(QtCore.QSize(16, 16))
+            self._apply_nav_icon(button, icon_name)
         return button
+
+    def _apply_nav_icon(self, button: QtWidgets.QAbstractButton, icon_name: str) -> None:
+        icon = load_icon(icon_name, "dark")
+        if icon.isNull():
+            return
+        button.setIcon(icon)
+        button.setIconSize(QtCore.QSize(16, 16))
 
     def _build_language_menu(self) -> None:
         self.language_menu.clear()
@@ -308,8 +277,9 @@ class MainShell(QtWidgets.QWidget):
             self.client_details.set_client(client)
 
     def update_brand_header(self) -> None:
-        self.brand_title.setText("RemDesk")
-        self.brand_subtitle.setText(self._current_page_label())
+        window = self.window()
+        if window and hasattr(window, "set_header"):
+            window.set_header(APP_NAME)
 
     def _current_page_label(self) -> str:
         index = self.stack.currentIndex()
