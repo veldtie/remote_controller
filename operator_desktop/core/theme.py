@@ -328,18 +328,21 @@ def build_stylesheet(theme: Theme) -> str:
     QPushButton[variant="island"]:pressed {{
         background: rgba(255, 255, 255, 0.04);
     }}
-    QPushButton[nav="true"] {{
+    QPushButton[nav="true"],
+    QPushButton[variant="nav"] {{
         background: transparent;
         border: 1px solid transparent;
         text-align: left;
         padding: 8px 12px;
         border-radius: 12px;
     }}
-    QPushButton[nav="true"]:hover {{
+    QPushButton[nav="true"]:hover,
+    QPushButton[variant="nav"]:hover {{
         background: rgba(255, 255, 255, 0.06);
         border-color: rgba(255, 255, 255, 0.12);
     }}
-    QPushButton[nav="true"]:checked {{
+    QPushButton[nav="true"]:checked,
+    QPushButton[variant="nav"]:checked {{
         background: {c["accent_soft"]};
         border-color: rgba(0, 145, 255, 0.45);
         color: {c["text"]};
