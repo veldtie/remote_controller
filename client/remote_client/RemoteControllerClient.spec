@@ -1,13 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-<<<<<<< HEAD
-datas = [('C:\\Temp\\rc_build_pd7fypb2\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_pd7fypb2\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_pd7fypb2\\remote_client\\rc_server.json', 'remote_client')]
-=======
-datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_z0mfe_m3\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_z0mfe_m3\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_z0mfe_m3\\remote_client\\rc_server.json', 'remote_client')]
->>>>>>> ee86a7ab9b979ee0065104f3099fe4f9808fd4a0
+datas = [('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
-hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop']
+hiddenimports = [
+    'win32crypt',
+    'cryptography',
+    'pynput',
+    'pynput.mouse',
+    'pynput.keyboard',
+    'remote_client.apps.launcher',
+    'remote_client.windows.hidden_desktop',
+]
 tmp_ret = collect_all('pynput')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('av')
@@ -23,7 +27,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['C:\\Users\\ChalkBro\\Documents\\GitHub\\remote_controller\\client\\client.py'],
+    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

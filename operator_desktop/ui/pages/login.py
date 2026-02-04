@@ -3,7 +3,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.translations import LANGUAGE_NAMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 class LoginPage(QtWidgets.QWidget):
@@ -15,18 +15,18 @@ class LoginPage(QtWidgets.QWidget):
         self.i18n = i18n
         self.settings = settings
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(120, 60, 120, 60)
+        layout.setContentsMargins(140, 80, 140, 80)
         layout.addStretch()
 
-        card = QtWidgets.QFrame()
-        card.setObjectName("Card")
+        card = GlassFrame(radius=24, tone="card_strong", tint_alpha=180, border_alpha=80)
+        card.setObjectName("HeroCard")
         card_layout = QtWidgets.QVBoxLayout(card)
         card_layout.setContentsMargins(32, 32, 32, 32)
 
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 22px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         card_layout.addWidget(self.title_label)
         card_layout.addWidget(self.subtitle_label)
 

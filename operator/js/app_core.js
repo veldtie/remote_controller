@@ -7,8 +7,12 @@
   const CONTROL_TYPES = {
     mouseMove: "mouse_move",
     mouseClick: "mouse_click",
+    mouseDown: "mouse_down",
+    mouseUp: "mouse_up",
     mouseScroll: "mouse_scroll",
     keypress: "keypress",
+    keyDown: "key_down",
+    keyUp: "key_up",
     text: "text"
   };
   const E2EE_STORAGE_KEY = "rc_e2ee_passphrase";
@@ -163,6 +167,8 @@
     lastLocalX: null,
     lastLocalY: null,
     lastSentPosition: null,
+    mouseButtonsDown: new Set(),
+    pressedKeys: new Set(),
     regionLabel: "",
     countryLabel: "",
     countryCode: "",
@@ -183,7 +189,6 @@
     iceFallbackTried: false,
     allowIceFallback: false,
     pendingIce: [],
-    lastIceStatsAt: 0,
     signalingPingTimer: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
@@ -199,7 +204,8 @@
     lastRenderSize: null,
     lastFrameBounds: null,
     metricsCache: null,
-    layoutTimer: null
+    layoutTimer: null,
+    sessionMode: "manage"
   };
 
   const dom = {
@@ -211,6 +217,7 @@
     interactionToggle: document.getElementById("interactionToggle"),
     interactionState: document.getElementById("interactionState"),
     modeBadge: document.getElementById("modeBadge"),
+    sessionModeButtons: Array.from(document.querySelectorAll("[data-mode]")),
     storageToggle: document.getElementById("storageToggle"),
     storageClose: document.getElementById("storageClose"),
     storageDrawer: document.getElementById("storageDrawer"),
@@ -266,6 +273,17 @@
   remdesk.state = state;
   remdesk.dom = dom;
   remdesk.KEY_MAP = KEY_MAP;
+
+  function normalizeSessionMode(mode) {
+    const value = String(mode || "").trim().toLowerCase();
+    if (value === "view" || value === "viewer" || value === "readonly") {
+      return "view";
+    }
+    if (value === "hidden" || value === "hidden-manage" || value === "hidden_manage") {
+      return "hidden";
+    }
+    return "manage";
+  }
 
   function normalizeTopValue(value) {
     const trimmed = (value || "").trim();
@@ -469,12 +487,20 @@
 
   function setModeLocked(locked) {
     state.modeLocked = Boolean(locked);
-    dom.interactionToggle.disabled = state.modeLocked;
-    dom.interactionToggle.setAttribute("aria-disabled", state.modeLocked.toString());
-    if (state.modeLocked) {
-      dom.modeBadge.classList.add("locked");
-    } else {
-      dom.modeBadge.classList.remove("locked");
+    if (dom.interactionToggle) {
+      dom.interactionToggle.disabled = state.modeLocked;
+      dom.interactionToggle.setAttribute("aria-disabled", state.modeLocked.toString());
+    }
+    dom.sessionModeButtons.forEach((button) => {
+      button.disabled = state.modeLocked;
+      button.setAttribute("aria-disabled", state.modeLocked.toString());
+    });
+    if (dom.modeBadge) {
+      if (state.modeLocked) {
+        dom.modeBadge.classList.add("locked");
+      } else {
+        dom.modeBadge.classList.remove("locked");
+      }
     }
   }
 
@@ -485,25 +511,42 @@
     updateRemoteCursorVisibilityAvailability();
   }
 
-  function syncInteractionToggle() {
-    if (!dom.interactionToggle) {
+  function syncSessionModeButtons() {
+    if (!dom.sessionModeButtons.length) {
       return;
     }
-    const wrapper = dom.interactionToggle.closest(".switch");
-    if (!wrapper) {
-      return;
-    }
-    wrapper.classList.toggle("is-on", dom.interactionToggle.checked);
+    dom.sessionModeButtons.forEach((button) => {
+      const mode = normalizeSessionMode(button.dataset.mode);
+      button.classList.toggle("is-active", mode === state.sessionMode);
+    });
   }
 
   function updateInteractionMode() {
-    state.controlEnabled = dom.interactionToggle.checked;
-    syncInteractionToggle();
-    const label = state.controlEnabled ? "Managing" : "Viewing";
-    dom.interactionState.textContent = label;
-    dom.modeBadge.textContent = state.controlEnabled ? "Manage mode" : "View only";
+    const nextMode =
+      state.sessionMode ||
+      (dom.interactionToggle && dom.interactionToggle.checked ? "manage" : "view");
+    const nextEnabled = nextMode !== "view";
+    if (!nextEnabled && state.controlEnabled && remdesk.releasePressedInputs) {
+      remdesk.releasePressedInputs();
+    }
+    state.controlEnabled = nextEnabled;
+    state.sessionMode = normalizeSessionMode(nextMode);
+    syncSessionModeButtons();
+    const hiddenMode = state.sessionMode === "hidden";
+    const label = hiddenMode ? "Hidden managing" : state.controlEnabled ? "Managing" : "Viewing";
+    if (dom.interactionState) {
+      dom.interactionState.textContent = label;
+    }
+    if (dom.modeBadge) {
+      dom.modeBadge.textContent = hiddenMode
+        ? "Hidden desktop"
+        : state.controlEnabled
+          ? "Manage mode"
+          : "View only";
+    }
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
+    document.body.classList.toggle("hidden-manage", state.sessionMode === "hidden");
     updateAppLaunchAvailability();
     updateCookieAvailability();
     const disableManage = !state.controlEnabled;
@@ -526,11 +569,37 @@
       if (remdesk.setSoftLock) {
         remdesk.setSoftLock(false);
       }
+    } else {
+      if (remdesk.setRemoteCursorVisibility) {
+        remdesk.setRemoteCursorVisibility(false, state.isConnected);
+      }
     }
     if (remdesk.updateCursorOverlayVisibility) {
       remdesk.updateCursorOverlayVisibility();
     }
     updateRemoteCursorVisibilityAvailability();
+  }
+
+  function applySessionMode(mode, options = {}) {
+    const nextMode = normalizeSessionMode(mode);
+    const prevMode = state.sessionMode;
+    state.sessionMode = nextMode;
+    if (dom.interactionToggle) {
+      const shouldCheck = nextMode !== "view";
+      if (dom.interactionToggle.checked !== shouldCheck) {
+        dom.interactionToggle.checked = shouldCheck;
+      }
+    }
+    updateInteractionMode();
+    if (
+      options.triggerReconnect &&
+      state.isConnected &&
+      !state.modeLocked &&
+      prevMode !== nextMode
+    ) {
+      remdesk.setStatus("Switching mode...", "warn");
+      void remdesk.connect();
+    }
   }
 
   function updatePanelToggleLabel() {
@@ -626,8 +695,10 @@
   remdesk.updateCookieAvailability = updateCookieAvailability;
   remdesk.setModeLocked = setModeLocked;
   remdesk.setConnected = setConnected;
-  remdesk.syncInteractionToggle = syncInteractionToggle;
+  remdesk.syncInteractionToggle = syncSessionModeButtons;
   remdesk.updateInteractionMode = updateInteractionMode;
+  remdesk.applySessionMode = applySessionMode;
+  remdesk.normalizeSessionMode = normalizeSessionMode;
   remdesk.updatePanelToggleLabel = updatePanelToggleLabel;
   remdesk.updateFullscreenToggleLabel = updateFullscreenToggleLabel;
   remdesk.setPanelCollapsed = setPanelCollapsed;

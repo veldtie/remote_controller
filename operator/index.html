@@ -10,32 +10,19 @@
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="styles.css?v=20260201-9" />
+  <link rel="stylesheet" href="styles.css?v=20260203-8" />
 </head>
 <body class="view-mode">
   <div id="managePanel">
-    <div class="panel-header">
-      <div class="brand">
-        <div class="brand-mark">RC</div>
-        <div class="brand-text">
-          <div class="brand-title">RemDesk</div>
-          <div class="brand-subtitle">Operator console</div>
+    <div id="interactionMenu" class="hud-section panel-card">
+      <div class="section-title">Session mode</div>
+      <div class="mode-selector">
+        <div class="mode-buttons">
+          <button class="mode-chip" type="button" data-mode="view">View</button>
+          <button class="mode-chip is-active" type="button" data-mode="manage">Manage</button>
+          <button class="mode-chip" type="button" data-mode="hidden">Hidden desktop</button>
         </div>
       </div>
-      <div class="brand-chip">Secure link</div>
-    </div>
-
-    <div id="interactionMenu" class="hud-section panel-card">
-      <div class="section-title">Interaction</div>
-      <div class="toggle-row">
-        <span class="toggle-label">View</span>
-        <label class="switch">
-          <input id="interactionToggle" type="checkbox" />
-          <span class="slider"><span class="slider-thumb"></span></span>
-        </label>
-        <span class="toggle-label">Manage</span>
-      </div>
-      <div id="interactionState" class="hint">Viewing</div>
     </div>
 
     <div id="hud" class="panel-card">
@@ -114,7 +101,6 @@
       </div>
     </div>
 
-    <div id="modeBadge" class="mode-badge">Manage mode</div>
   </div>
 
   <div id="storageDrawer" aria-hidden="true">
@@ -178,10 +164,10 @@
       document.head.appendChild(script);
     }
   </script>
-  <script src="js/app_core.js?v=20260201-1" defer></script>
-  <script src="js/app_display.js?v=20260201-1" defer></script>
-  <script src="js/app_connection.js?v=20260201-1" defer></script>
-  <script src="js/app_storage.js?v=20260201-1" defer></script>
-  <script src="js/app_bootstrap.js?v=20260201-1" defer></script>
+  <script src="js/app_core.js?v=20260203-2" defer></script>
+  <script src="js/app_display.js?v=20260203-2" defer></script>
+  <script src="js/app_connection.js?v=20260203-3" defer></script>
+  <script src="js/app_storage.js?v=20260203-2" defer></script>
+  <script src="js/app_bootstrap.js?v=20260203-2" defer></script>
 </body>
 </html>

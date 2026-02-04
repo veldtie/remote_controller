@@ -203,82 +203,6 @@
     }
   }
 
-  async function logIceStats(reason) {
-    const pc = state.peerConnection;
-    if (!pc || typeof pc.getStats !== "function") {
-      return;
-    }
-    const now = Date.now();
-    if (state.lastIceStatsAt && now - state.lastIceStatsAt < 2000) {
-      return;
-    }
-    state.lastIceStatsAt = now;
-    let stats;
-    try {
-      stats = await pc.getStats();
-    } catch (error) {
-      console.warn("Failed to read ICE stats", error);
-      return;
-    }
-    let localCount = 0;
-    let remoteCount = 0;
-    const candidatesById = {};
-    const pairs = [];
-    stats.forEach((report) => {
-      if (report.type === "local-candidate") {
-        localCount += 1;
-        candidatesById[report.id] = report;
-      } else if (report.type === "remote-candidate") {
-        remoteCount += 1;
-        candidatesById[report.id] = report;
-      } else if (report.type === "candidate-pair") {
-        pairs.push(report);
-      }
-    });
-    const pairStates = {};
-    for (const pair of pairs) {
-      const key = pair.state || "unknown";
-      pairStates[key] = (pairStates[key] || 0) + 1;
-    }
-    const selected = pairs.find((pair) => pair.nominated || pair.selected);
-    const selectedLocal = selected ? candidatesById[selected.localCandidateId] : null;
-    const selectedRemote = selected ? candidatesById[selected.remoteCandidateId] : null;
-    console.warn("ICE stats", {
-      reason,
-      signaling: pc.signalingState,
-      ice: pc.iceConnectionState,
-      connection: pc.connectionState,
-      localCandidates: localCount,
-      remoteCandidates: remoteCount,
-      candidatePairs: pairs.length,
-      pairStates,
-      selectedPair: selected
-        ? {
-            state: selected.state,
-            nominated: selected.nominated,
-            currentRoundTripTime: selected.currentRoundTripTime,
-            totalRoundTripTime: selected.totalRoundTripTime,
-            local: selectedLocal
-              ? {
-                  address: selectedLocal.address,
-                  port: selectedLocal.port,
-                  protocol: selectedLocal.protocol,
-                  candidateType: selectedLocal.candidateType
-                }
-              : null,
-            remote: selectedRemote
-              ? {
-                  address: selectedRemote.address,
-                  port: selectedRemote.port,
-                  protocol: selectedRemote.protocol,
-                  candidateType: selectedRemote.candidateType
-                }
-              : null
-          }
-        : null
-    });
-  }
-
   function scheduleConnectionDrop(reason) {
     if (state.connectionDropTimer) {
       return;
@@ -300,7 +224,6 @@
       if (channel && channel.readyState === "open") {
         return;
       }
-      void logIceStats(`connection_drop:${reason}`);
       remdesk.setStatus("Disconnected", "bad");
       remdesk.setConnected(false);
       remdesk.setModeLocked(false);
@@ -324,7 +247,6 @@
         shouldRetry ? "Client not responding, retrying..." : "Client not responding",
         "warn"
       );
-      void logIceStats("connect_ready_timeout");
       cleanupConnection();
       if (shouldRetry) {
         scheduleReconnect("No response");
@@ -378,7 +300,11 @@
     }
     try {
       const message = await encodeOutgoing(payload);
-      state.controlChannel.send(message);
+      const channel = state.controlChannel;
+      if (!channel || channel.readyState !== "open") {
+        return;
+      }
+      channel.send(message);
     } catch (error) {
       remdesk.setStatus(`E2EE error: ${error.message}`, "bad");
     }
@@ -390,7 +316,11 @@
     }
     try {
       const message = await encodeOutgoing({ action: CONTROL_ACTION, ...payload });
-      state.controlChannel.send(message);
+      const channel = state.controlChannel;
+      if (!channel || channel.readyState !== "open") {
+        return;
+      }
+      channel.send(message);
     } catch (error) {
       remdesk.setStatus(`E2EE error: ${error.message}`, "bad");
     }
@@ -593,7 +523,9 @@
     const apiBase = dom.serverUrlInput.value.trim() || "http://localhost:8000";
     const sessionId = dom.sessionIdInput.value.trim() || "default-session";
     const authToken = dom.authTokenInput.value.trim();
-    const sessionMode = state.controlEnabled ? "manage" : "view";
+    const sessionMode = remdesk.normalizeSessionMode
+      ? remdesk.normalizeSessionMode(state.sessionMode)
+      : state.sessionMode || (state.controlEnabled ? "manage" : "view");
 
     try {
       await prepareE2ee(sessionId);
@@ -810,7 +742,6 @@
           signaling: state.peerConnection.signalingState
         });
         if (connectionState === "failed") {
-          void logIceStats("connection_failed");
           clearConnectionDropTimer();
           remdesk.setStatus("Connection failed", "bad");
           remdesk.setConnected(false);
@@ -834,9 +765,6 @@
           return;
         }
         console.info("ICE connection state:", state.peerConnection.iceConnectionState);
-        if (state.peerConnection.iceConnectionState === "failed") {
-          void logIceStats("ice_failed");
-        }
       };
       state.peerConnection.onicegatheringstatechange = () => {
         if (!state.peerConnection) {
@@ -949,7 +877,6 @@
           return;
         }
         remdesk.setStatus("Client did not answer", "bad");
-        void logIceStats("offer_timeout");
         cleanupConnection();
         scheduleReconnect("No answer", true);
       }, 12000);

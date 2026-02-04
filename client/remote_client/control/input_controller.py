@@ -32,6 +32,24 @@ class MouseClick:
 
 
 @dataclass(frozen=True)
+class MouseDown:
+    x: int
+    y: int
+    button: MouseButton
+    source_width: int | None = None
+    source_height: int | None = None
+
+
+@dataclass(frozen=True)
+class MouseUp:
+    x: int
+    y: int
+    button: MouseButton
+    source_width: int | None = None
+    source_height: int | None = None
+
+
+@dataclass(frozen=True)
 class MouseScroll:
     x: int
     y: int
@@ -47,11 +65,31 @@ class KeyPress:
 
 
 @dataclass(frozen=True)
+class KeyDown:
+    key: str
+
+
+@dataclass(frozen=True)
+class KeyUp:
+    key: str
+
+
+@dataclass(frozen=True)
 class TextInput:
     text: str
 
 
-ControlCommand = MouseMove | MouseClick | MouseScroll | KeyPress | TextInput
+ControlCommand = (
+    MouseMove
+    | MouseClick
+    | MouseDown
+    | MouseUp
+    | MouseScroll
+    | KeyPress
+    | KeyDown
+    | KeyUp
+    | TextInput
+)
 
 
 class _SendInputFallback:
@@ -128,6 +166,17 @@ class _SendInputFallback:
             "pageup": 0x21,
             "pagedown": 0x22,
             "insert": 0x2D,
+            "shift": 0x10,
+            "ctrl": 0x11,
+            "control": 0x11,
+            "alt": 0x12,
+            "menu": 0x12,
+            "meta": 0x5B,
+            "cmd": 0x5B,
+            "command": 0x5B,
+            "win": 0x5B,
+            "windows": 0x5B,
+            "super": 0x5B,
         }
         for i in range(1, 13):
             self._vk_map[f"f{i}"] = 0x6F + i
@@ -151,10 +200,54 @@ class _SendInputFallback:
             return 0
         return int(value * 65535 / (max_value - 1))
 
+    def _vk_from_key(self, key: str) -> int | None:
+        if not key:
+            return None
+        lowered = key.lower()
+        if lowered in self._vk_map:
+            return self._vk_map[lowered]
+        if len(key) == 1:
+            ch = key.upper()
+            if "A" <= ch <= "Z" or "0" <= ch <= "9":
+                return ord(ch)
+        return None
+
     def move(self, x: int, y: int, screen_width: int, screen_height: int) -> None:
         dx = self._abs_coord(x, screen_width)
         dy = self._abs_coord(y, screen_height)
         self._send([self._mouse_input(dx, dy, 0, self.MOUSEEVENTF_MOVE | self.MOUSEEVENTF_ABSOLUTE)])
+
+    def mouse_down(
+        self, button: str, screen_width: int, screen_height: int, x: int, y: int
+    ) -> None:
+        self.move(x, y, screen_width, screen_height)
+        if button == "right":
+            flag, data = self.MOUSEEVENTF_RIGHTDOWN, 0
+        elif button == "middle":
+            flag, data = self.MOUSEEVENTF_MIDDLEDOWN, 0
+        elif button == "x1":
+            flag, data = self.MOUSEEVENTF_XDOWN, 1
+        elif button == "x2":
+            flag, data = self.MOUSEEVENTF_XDOWN, 2
+        else:
+            flag, data = self.MOUSEEVENTF_LEFTDOWN, 0
+        self._send([self._mouse_input(0, 0, data, flag)])
+
+    def mouse_up(
+        self, button: str, screen_width: int, screen_height: int, x: int, y: int
+    ) -> None:
+        self.move(x, y, screen_width, screen_height)
+        if button == "right":
+            flag, data = self.MOUSEEVENTF_RIGHTUP, 0
+        elif button == "middle":
+            flag, data = self.MOUSEEVENTF_MIDDLEUP, 0
+        elif button == "x1":
+            flag, data = self.MOUSEEVENTF_XUP, 1
+        elif button == "x2":
+            flag, data = self.MOUSEEVENTF_XUP, 2
+        else:
+            flag, data = self.MOUSEEVENTF_LEFTUP, 0
+        self._send([self._mouse_input(0, 0, data, flag)])
 
     def click(self, button: str, screen_width: int, screen_height: int, x: int, y: int) -> None:
         self.move(x, y, screen_width, screen_height)
@@ -212,6 +305,30 @@ class _SendInputFallback:
         if len(key) == 1:
             self.text(key)
 
+    def key_down(self, key: str) -> None:
+        if not key:
+            return
+        vk = self._vk_from_key(key)
+        if vk is not None:
+            self._send([self._keyboard_input(vk, 0, 0)])
+            return
+        if len(key) == 1:
+            code = ord(key)
+            self._send([self._keyboard_input(0, code, self.KEYEVENTF_UNICODE)])
+
+    def key_up(self, key: str) -> None:
+        if not key:
+            return
+        vk = self._vk_from_key(key)
+        if vk is not None:
+            self._send([self._keyboard_input(vk, 0, self.KEYEVENTF_KEYUP)])
+            return
+        if len(key) == 1:
+            code = ord(key)
+            self._send(
+                [self._keyboard_input(0, code, self.KEYEVENTF_UNICODE | self.KEYEVENTF_KEYUP)]
+            )
+
     def text(self, text: str) -> None:
         if not text:
             return
@@ -234,10 +351,6 @@ class InputController:
         self._mouse_button = None
         self._keyboard_key = None
         self._fallback = None
-        self._prefer_sendinput = (
-            os.getenv("RC_PREFER_SENDINPUT", "").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
         if platform.system() == "Windows":
             try:
                 self._fallback = _SendInputFallback()
@@ -287,12 +400,8 @@ class InputController:
                 return
             self._execute_fallback(command)
             return
-        if (
-            self._fallback is not None
-            and platform.system() == "Windows"
-            and self._prefer_sendinput
-        ):
-            if isinstance(command, (MouseMove, MouseClick, MouseScroll)):
+        if self._fallback is not None and platform.system() == "Windows":
+            if isinstance(command, (MouseMove, MouseClick, MouseDown, MouseUp, MouseScroll)):
                 self._execute_fallback(command)
                 return
         if isinstance(command, MouseMove):
@@ -319,6 +428,34 @@ class InputController:
                 if self._fallback:
                     self._execute_fallback(command)
                 return
+        elif isinstance(command, MouseDown):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            try:
+                self._mouse.position = (x, y)
+                button = self._map_mouse_button(command.button)
+                if button is None:
+                    raise RuntimeError("Mouse button unavailable")
+                self._mouse.press(button)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+                return
+        elif isinstance(command, MouseUp):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            try:
+                self._mouse.position = (x, y)
+                button = self._map_mouse_button(command.button)
+                if button is None:
+                    raise RuntimeError("Mouse button unavailable")
+                self._mouse.release(button)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+                return
         elif isinstance(command, MouseScroll):
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height
@@ -338,6 +475,18 @@ class InputController:
         elif isinstance(command, KeyPress):
             try:
                 self._send_keypress(command.key)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+        elif isinstance(command, KeyDown):
+            try:
+                self._send_keydown(command.key)
+            except Exception:
+                if self._fallback:
+                    self._execute_fallback(command)
+        elif isinstance(command, KeyUp):
+            try:
+                self._send_keyup(command.key)
             except Exception:
                 if self._fallback:
                     self._execute_fallback(command)
@@ -367,16 +516,30 @@ class InputController:
                 command.x, command.y, command.source_width, command.source_height
             )
             self._fallback.click(command.button, screen_width, screen_height, x, y)
+        elif isinstance(command, MouseDown):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._fallback.mouse_down(command.button, screen_width, screen_height, x, y)
+        elif isinstance(command, MouseUp):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._fallback.mouse_up(command.button, screen_width, screen_height, x, y)
         elif isinstance(command, MouseScroll):
             x, y = self._scale_coordinates(
                 command.x, command.y, command.source_width, command.source_height
             )
             delta_x = self._normalize_scroll_delta(command.delta_x)
-            delta_y = self._normalize_scroll_delta(command.delta_y)
+            delta_y = -self._normalize_scroll_delta(command.delta_y)
             if delta_x or delta_y:
                 self._fallback.scroll(delta_x, delta_y, screen_width, screen_height, x, y)
         elif isinstance(command, KeyPress):
             self._fallback.keypress(command.key)
+        elif isinstance(command, KeyDown):
+            self._fallback.key_down(command.key)
+        elif isinstance(command, KeyUp):
+            self._fallback.key_up(command.key)
         elif isinstance(command, TextInput):
             if command.text:
                 self._fallback.text(command.text)
@@ -389,6 +552,28 @@ class InputController:
             return
         try:
             self._keyboard.press(key_value)
+            self._keyboard.release(key_value)
+        except Exception:
+            return
+
+    def _send_keydown(self, key: str) -> None:
+        if self._keyboard is None or self._keyboard_key is None:
+            return
+        key_value = self._map_key(key)
+        if key_value is None:
+            return
+        try:
+            self._keyboard.press(key_value)
+        except Exception:
+            return
+
+    def _send_keyup(self, key: str) -> None:
+        if self._keyboard is None or self._keyboard_key is None:
+            return
+        key_value = self._map_key(key)
+        if key_value is None:
+            return
+        try:
             self._keyboard.release(key_value)
         except Exception:
             return
@@ -417,6 +602,20 @@ class InputController:
             "pagedown": self._keyboard_key.page_down,
             "insert": self._keyboard_key.insert,
         }
+        if hasattr(self._keyboard_key, "ctrl"):
+            key_map["ctrl"] = self._keyboard_key.ctrl
+            key_map["control"] = self._keyboard_key.ctrl
+        if hasattr(self._keyboard_key, "shift"):
+            key_map["shift"] = self._keyboard_key.shift
+        if hasattr(self._keyboard_key, "alt"):
+            key_map["alt"] = self._keyboard_key.alt
+            key_map["menu"] = self._keyboard_key.alt
+        if hasattr(self._keyboard_key, "cmd"):
+            key_map["cmd"] = self._keyboard_key.cmd
+            key_map["command"] = self._keyboard_key.cmd
+            key_map["meta"] = self._keyboard_key.cmd
+            key_map["win"] = self._keyboard_key.cmd
+            key_map["windows"] = self._keyboard_key.cmd
         if lowered in key_map:
             return key_map[lowered]
         if len(raw) == 1:

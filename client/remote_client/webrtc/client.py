@@ -86,6 +86,8 @@ def _normalize_session_mode(mode: Any) -> str:
     value = str(mode).strip().lower()
     if value in {"view", "viewer", "readonly"}:
         return "view"
+    if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
+        return "hidden"
     return "manage"
 
 
@@ -294,7 +296,6 @@ class WebRTCClient:
         operator_id_holder: dict[str, str | None] = {"value": None}
         had_connection = False
         pending_ice: list[dict[str, Any]] = []
-        ice_stats_logged = False
 
         def _cancel_disconnect_task() -> None:
             nonlocal disconnect_task
@@ -325,71 +326,6 @@ class WebRTCClient:
 
             disconnect_task = asyncio.create_task(_wait_for_disconnect())
 
-        async def _log_ice_stats(reason: str) -> None:
-            nonlocal ice_stats_logged
-            if ice_stats_logged:
-                return
-            ice_stats_logged = True
-            try:
-                stats = await peer_connection.getStats()
-            except Exception as exc:
-                logger.debug("Failed to read ICE stats: %s", exc)
-                return
-            local_count = 0
-            remote_count = 0
-            pairs = []
-            candidates_by_id: dict[str, Any] = {}
-            for report in stats.values():
-                if report.type == "local-candidate":
-                    local_count += 1
-                    candidates_by_id[report.id] = report
-                elif report.type == "remote-candidate":
-                    remote_count += 1
-                    candidates_by_id[report.id] = report
-                elif report.type == "candidate-pair":
-                    pairs.append(report)
-            pair_states: dict[str, int] = {}
-            for pair in pairs:
-                state_name = getattr(pair, "state", None) or "unknown"
-                pair_states[state_name] = pair_states.get(state_name, 0) + 1
-            selected = next(
-                (
-                    pair
-                    for pair in pairs
-                    if getattr(pair, "nominated", False) or getattr(pair, "selected", False)
-                ),
-                None,
-            )
-            selected_local = (
-                candidates_by_id.get(getattr(selected, "localCandidateId", ""), None)
-                if selected
-                else None
-            )
-            selected_remote = (
-                candidates_by_id.get(getattr(selected, "remoteCandidateId", ""), None)
-                if selected
-                else None
-            )
-            logger.warning(
-                "ICE stats (%s): local=%s remote=%s pairs=%s pair_states=%s selected_state=%s",
-                reason,
-                local_count,
-                remote_count,
-                len(pairs),
-                pair_states,
-                getattr(selected, "state", None) if selected else None,
-            )
-            if selected_local or selected_remote:
-                logger.warning(
-                    "ICE selected pair: local=%s:%s(%s) remote=%s:%s(%s)",
-                    getattr(selected_local, "address", None),
-                    getattr(selected_local, "port", None),
-                    getattr(selected_local, "candidateType", None),
-                    getattr(selected_remote, "address", None),
-                    getattr(selected_remote, "port", None),
-                    getattr(selected_remote, "candidateType", None),
-                )
-
         @peer_connection.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
             nonlocal had_connection
@@ -401,8 +337,6 @@ class WebRTCClient:
                 peer_connection.signalingState,
             )
             if state in {"failed", "closed"}:
-                if state == "failed":
-                    await _log_ice_stats("connection_failed")
                 connection_done.set()
                 return
             if state == "disconnected":
@@ -421,8 +355,6 @@ class WebRTCClient:
                 if state == "failed" and not had_connection and not self._force_host_only:
                     logger.warning("ICE failed before connection; retrying with host-only ICE.")
                     self._force_host_only = True
-                if state == "failed":
-                    await _log_ice_stats("ice_failed")
                 connection_done.set()
                 return
             if state == "disconnected":
@@ -500,11 +432,6 @@ class WebRTCClient:
             if not candidate:
                 return
             try:
-                logger.debug(
-                    "Applying ICE candidate sdpMid=%s sdpMLineIndex=%s",
-                    message.get("sdpMid"),
-                    message.get("sdpMLineIndex"),
-                )
                 candidate_sdp = candidate
                 if candidate_sdp.startswith("candidate:"):
                     candidate_sdp = candidate_sdp[len("candidate:") :]
@@ -651,7 +578,7 @@ class WebRTCClient:
             if message_type == "offer":
                 offer_mode = _normalize_session_mode(message.get("mode"))
                 if peer_connection.connectionState in {"connecting", "connected"}:
-                    if offer_mode == "view" and self._current_mode == "manage":
+                    if offer_mode == "view" and self._current_mode in {"manage", "hidden"}:
                         continue
                 self._pending_offer = message
                 return

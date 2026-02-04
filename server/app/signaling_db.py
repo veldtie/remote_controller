@@ -34,6 +34,19 @@ REMOTE_CONTROLLER_SCHEMA = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS team_tags (
+        id TEXT PRIMARY KEY,
+        team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS team_tags_unique
+    ON team_tags (team_id, lower(name));
+    """,
+    """
     CREATE TABLE IF NOT EXISTS operators (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -49,6 +62,7 @@ REMOTE_CONTROLLER_SCHEMA = [
         status TEXT NOT NULL DEFAULT 'disconnected',
         connected_time INTEGER NOT NULL DEFAULT 0,
         status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        work_status TEXT NOT NULL DEFAULT 'planning',
         assigned_operator_id TEXT,
         assigned_team_id TEXT,
         ip TEXT,
@@ -56,7 +70,15 @@ REMOTE_CONTROLLER_SCHEMA = [
         client_config JSONB
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS client_tags (
+        client_id TEXT REFERENCES remote_clients(id) ON DELETE CASCADE,
+        tag_id TEXT REFERENCES team_tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (client_id, tag_id)
+    );
+    """,
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
+    "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS work_status TEXT NOT NULL DEFAULT 'planning';",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_operator_id TEXT;",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS assigned_team_id TEXT;",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS client_config JSONB;",

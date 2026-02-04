@@ -4,7 +4,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
-from .common import make_button
+from .common import GlassFrame, make_button
 
 
 class StorageDialog(QtWidgets.QDialog):
@@ -43,7 +43,7 @@ class StorageDialog(QtWidgets.QDialog):
         layout.addLayout(header)
 
         body = QtWidgets.QHBoxLayout()
-        self.remote_card = QtWidgets.QFrame()
+        self.remote_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.remote_card.setObjectName("Card")
         remote_layout = QtWidgets.QVBoxLayout(self.remote_card)
         self.remote_title = QtWidgets.QLabel()
@@ -74,7 +74,7 @@ class StorageDialog(QtWidgets.QDialog):
         self.remote_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.remote_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.remote_table.setWordWrap(False)
-        self.remote_table.verticalHeader().setDefaultSectionSize(36)
+        self.remote_table.verticalHeader().setDefaultSectionSize(40)
         header = self.remote_table.horizontalHeader()
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
@@ -86,7 +86,7 @@ class StorageDialog(QtWidgets.QDialog):
         self.remote_status.setObjectName("Muted")
         remote_layout.addWidget(self.remote_status)
 
-        self.local_card = QtWidgets.QFrame()
+        self.local_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.local_card.setObjectName("Card")
         local_layout = QtWidgets.QVBoxLayout(self.local_card)
         self.local_title = QtWidgets.QLabel()
@@ -144,7 +144,7 @@ class StorageDialog(QtWidgets.QDialog):
         for entry in self.remote_files:
             row = self.remote_table.rowCount()
             self.remote_table.insertRow(row)
-            self.remote_table.setRowHeight(row, 36)
+            self.remote_table.setRowHeight(row, 40)
             name_item = QtWidgets.QTableWidgetItem(entry["name"])
             size_item = QtWidgets.QTableWidgetItem(entry["size"])
             self.remote_table.setItem(row, 0, name_item)

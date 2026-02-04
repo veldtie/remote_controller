@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/remote_controller/server"
+COMPOSE_DIR="$APP_DIR/deploy/docker"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Upload server folder to $APP_DIR before running this script."
@@ -32,4 +33,4 @@ systemctl daemon-reload
 systemctl enable --now remdesk.service remdesk-healthcheck.timer
 
 cd "$APP_DIR"
-docker compose --env-file "$APP_DIR/.env" -f "$APP_DIR/deploy/docker/docker-compose.yml" up -d --build
+docker compose --env-file "$APP_DIR/.env" --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" up -d --build

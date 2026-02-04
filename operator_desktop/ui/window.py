@@ -9,7 +9,7 @@ from ..core.i18n import I18n
 from ..core.logging import EventLogger
 from ..core.settings import SettingsStore
 from ..core.theme import THEMES, build_stylesheet, select_font_for_language
-from .common import BackgroundWidget, animate_widget
+from .common import BackgroundWidget, GlassFrame, animate_widget
 from .pages.login import LoginPage
 from .shell import MainShell
 
@@ -37,26 +37,49 @@ class MainWindow(QtWidgets.QMainWindow):
                 app.setWindowIcon(icon)
         self.resize(1280, 800)
 
-        self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
+        self.theme = THEMES["dark"]
         self.background = BackgroundWidget(self.theme)
         self.setCentralWidget(self.background)
+
+        self.window_frame = GlassFrame(radius=30, tone="card_strong", tint_alpha=190, border_alpha=80)
+        self.window_frame.setObjectName("WindowFrame")
+        frame_layout = QtWidgets.QVBoxLayout(self.window_frame)
+        frame_layout.setContentsMargins(18, 18, 18, 18)
+        frame_layout.setSpacing(14)
+        shadow = QtWidgets.QGraphicsDropShadowEffect(self.window_frame)
+        shadow.setBlurRadius(60)
+        shadow.setOffset(0, 20)
+        shadow.setColor(QtGui.QColor(0, 0, 0, 155))
+        self.window_frame.setGraphicsEffect(shadow)
+
+        self.header_row = QtWidgets.QFrame()
+        self.header_row.setObjectName("HeaderRow")
+        header_layout = QtWidgets.QHBoxLayout(self.header_row)
+        header_layout.setContentsMargins(6, 0, 6, 0)
+        header_layout.setSpacing(8)
+        self.header_title = QtWidgets.QLabel()
+        self.header_title.setObjectName("ChromeTitle")
+        header_layout.addWidget(self.header_title)
+        header_layout.addStretch()
+        frame_layout.addWidget(self.header_row)
 
         self.stack = QtWidgets.QStackedWidget()
         self.login_page = LoginPage(self.i18n, self.settings)
         self.shell = MainShell(self.i18n, self.settings, self.logger, api=self.api)
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.shell)
+        frame_layout.addWidget(self.stack, 1)
 
         bg_layout = QtWidgets.QVBoxLayout(self.background)
-        bg_layout.setContentsMargins(0, 0, 0, 0)
-        bg_layout.addWidget(self.stack)
+        bg_layout.setContentsMargins(24, 24, 24, 24)
+        bg_layout.addWidget(self.window_frame)
 
         self.login_page.login_requested.connect(self.handle_login)
         self.login_page.language_changed.connect(self.set_language)
         self.shell.logout_requested.connect(self.logout)
         self.shell.page_changed.connect(self.handle_shell_event)
 
-        self.apply_theme(self.settings.get("theme", "dark"))
+        self.apply_theme("dark")
         self.apply_translations()
         self.restore_session()
 
@@ -65,16 +88,21 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.instance().setFont(QtGui.QFont(font_name, 10))
 
     def apply_theme(self, theme_name: str) -> None:
-        self.theme = THEMES.get(theme_name, THEMES["dark"])
+        self.theme = THEMES["dark"]
         self.background.set_theme(self.theme)
-        self.settings.set("theme", theme_name)
+        self.settings.set("theme", "dark")
         self.setStyleSheet(build_stylesheet(self.theme))
         self.shell.teams_page.apply_theme(self.theme)
         self.shell.dashboard.apply_theme(self.theme)
 
     def apply_translations(self) -> None:
+        self.set_header(APP_NAME)
         self.login_page.apply_translations()
         self.shell.apply_translations()
+
+    def set_header(self, title: str, subtitle: str | None = None) -> None:
+        if self.header_title:
+            self.header_title.setText(title)
 
     def _reset_server_cache(self) -> None:
         self.settings.set("clients", [])
@@ -193,10 +221,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def handle_shell_event(self, event: str) -> None:
         if event == "refresh":
             self.shell.dashboard.refresh_clients()
-            return
-        if event.startswith("theme:"):
-            self.apply_theme(event.split(":", 1)[1])
-            self.settings.save()
             return
         if event.startswith("lang:"):
             self.set_language(event.split(":", 1)[1])

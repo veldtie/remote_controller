@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/docker/docker-compose.yml"
 SERVICE_NAME="postgres"
-COMPOSE_CMD=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE")
+PROJECT_DIR="$ROOT_DIR/deploy/docker"
+COMPOSE_CMD=(docker compose --project-directory "$PROJECT_DIR" -f "$COMPOSE_FILE")
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
   set -a

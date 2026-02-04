@@ -5,11 +5,10 @@ from ...core.constants import APP_VERSION
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.translations import LANGUAGE_NAMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 
 
 class SettingsPage(QtWidgets.QWidget):
-    theme_changed = QtCore.pyqtSignal(str)
     language_changed = QtCore.pyqtSignal(str)
     role_changed = QtCore.pyqtSignal(str)
     logout_requested = QtCore.pyqtSignal()
@@ -40,9 +39,9 @@ class SettingsPage(QtWidgets.QWidget):
         header = QtWidgets.QHBoxLayout()
         header_left = QtWidgets.QVBoxLayout()
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         header_left.addWidget(self.title_label)
         header_left.addWidget(self.subtitle_label)
         header.addLayout(header_left, 1)
@@ -51,7 +50,7 @@ class SettingsPage(QtWidgets.QWidget):
         content = QtWidgets.QVBoxLayout()
         content.setSpacing(14)
 
-        self.appearance_card = QtWidgets.QFrame()
+        self.appearance_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.appearance_card.setObjectName("SettingsCard")
         appearance_layout = QtWidgets.QVBoxLayout(self.appearance_card)
         appearance_layout.setContentsMargins(14, 10, 14, 10)
@@ -59,27 +58,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.appearance_title = QtWidgets.QLabel()
         self.appearance_title.setStyleSheet("font-weight: 800;")
         appearance_layout.addWidget(self.appearance_title)
-
-        self.theme_label = QtWidgets.QLabel()
-        theme_row = QtWidgets.QHBoxLayout()
-        theme_row.setSpacing(8)
-        theme_row.addWidget(self.theme_label, 1)
-        theme_buttons = QtWidgets.QHBoxLayout()
-        theme_buttons.setSpacing(6)
-        self.theme_dark = make_button("", "ghost")
-        self.theme_light = make_button("", "ghost")
-        self.theme_dark.setCheckable(True)
-        self.theme_light.setCheckable(True)
-        self.theme_dark.setMinimumWidth(90)
-        self.theme_light.setMinimumWidth(90)
-        self.theme_group = QtWidgets.QButtonGroup(self)
-        self.theme_group.setExclusive(True)
-        self.theme_group.addButton(self.theme_dark)
-        self.theme_group.addButton(self.theme_light)
-        theme_buttons.addWidget(self.theme_dark)
-        theme_buttons.addWidget(self.theme_light)
-        theme_row.addLayout(theme_buttons)
-        appearance_layout.addLayout(theme_row)
 
         self.language_label = QtWidgets.QLabel()
         language_row = QtWidgets.QHBoxLayout()
@@ -94,7 +72,7 @@ class SettingsPage(QtWidgets.QWidget):
         content.addWidget(self.appearance_card)
 
         content.addSpacing(8)
-        self.account_card = QtWidgets.QFrame()
+        self.account_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.account_card.setObjectName("SettingsCard")
         account_layout = QtWidgets.QVBoxLayout(self.account_card)
         account_layout.setContentsMargins(14, 10, 14, 10)
@@ -161,7 +139,7 @@ class SettingsPage(QtWidgets.QWidget):
         actions_layout.addLayout(actions_buttons)
         content.addLayout(actions_layout)
 
-        self.about_card = QtWidgets.QFrame()
+        self.about_card = GlassFrame(radius=18, tone="card", tint_alpha=170, border_alpha=70)
         self.about_card.setObjectName("SettingsCard")
         about_layout = QtWidgets.QVBoxLayout(self.about_card)
         about_layout.setContentsMargins(16, 12, 16, 12)
@@ -180,7 +158,6 @@ class SettingsPage(QtWidgets.QWidget):
         layout.addStretch()
         layout.addWidget(self.about_card)
 
-        self.theme_group.buttonToggled.connect(self.emit_theme)
         self.language_combo.currentIndexChanged.connect(self.emit_language)
         self.role_combo.currentIndexChanged.connect(self.emit_role)
 
@@ -188,9 +165,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.apply_translations()
 
     def load_state(self) -> None:
-        theme = self.settings.get("theme", "dark")
-        self.theme_dark.setChecked(theme == "dark")
-        self.theme_light.setChecked(theme == "light")
         lang = self.settings.get("language", "en")
         index = self.language_combo.findData(lang)
         if index >= 0:
@@ -226,9 +200,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.title_label.setText(self.i18n.t("settings_title"))
         self.subtitle_label.setText(self.i18n.t("settings_subtitle"))
         self.appearance_title.setText(self.i18n.t("settings_appearance"))
-        self.theme_label.setText(self.i18n.t("settings_theme"))
-        self.theme_dark.setText(self.i18n.t("settings_theme_dark"))
-        self.theme_light.setText(self.i18n.t("settings_theme_light"))
         self.language_label.setText(self.i18n.t("settings_language"))
         self.account_label.setText(self.i18n.t("settings_account"))
         self.role_combo.setItemText(0, self.i18n.t("settings_role_operator"))
@@ -291,12 +262,6 @@ class SettingsPage(QtWidgets.QWidget):
         self.error_log_button.setEnabled(enabled)
         if not enabled and self.error_log_status.text():
             self._set_error_log_status("", "idle")
-
-    def emit_theme(self) -> None:
-        if self.theme_dark.isChecked():
-            self.theme_changed.emit("dark")
-        elif self.theme_light.isChecked():
-            self.theme_changed.emit("light")
 
     def emit_language(self) -> None:
         lang = self.language_combo.currentData()

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/remote_controller/server"
+COMPOSE_DIR="$APP_DIR/deploy/docker"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Missing $APP_DIR. Upload server folder first."
@@ -18,4 +19,4 @@ systemctl restart remote-controller.service
 systemctl restart remote-controller-healthcheck.timer
 
 cd "$APP_DIR"
-docker compose --project-directory "$APP_DIR" -f "$APP_DIR/deploy/docker/docker-compose.yml" up -d --build
+docker compose --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" up -d --build

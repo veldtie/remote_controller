@@ -1,17 +1,29 @@
 from typing import Dict, List, Optional
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import Theme, THEMES
-from ..common import make_button
+from ..common import GlassFrame, make_button
 from ..dialogs import AddMemberDialog
 
 
 class TeamsPage(QtWidgets.QWidget):
     teams_updated = QtCore.pyqtSignal()
+    TAG_COLORS = [
+        ("Ocean", "#3b82f6"),
+        ("Mint", "#22c55e"),
+        ("Amber", "#f59e0b"),
+        ("Rose", "#ef4444"),
+        ("Violet", "#8b5cf6"),
+        ("Teal", "#14b8a6"),
+        ("Gold", "#eab308"),
+        ("Pink", "#ec4899"),
+        ("Indigo", "#6366f1"),
+        ("Slate", "#64748b"),
+    ]
 
     def __init__(
         self,
@@ -36,9 +48,9 @@ class TeamsPage(QtWidgets.QWidget):
 
         header = QtWidgets.QVBoxLayout()
         self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setObjectName("Muted")
+        self.subtitle_label.setObjectName("PageSubtitle")
         header.addWidget(self.title_label)
         header.addWidget(self.subtitle_label)
         layout.addLayout(header)
@@ -46,7 +58,7 @@ class TeamsPage(QtWidgets.QWidget):
         body = QtWidgets.QHBoxLayout()
         body.setSpacing(16)
 
-        self.list_card = QtWidgets.QFrame()
+        self.list_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.list_card.setObjectName("Card")
         list_layout = QtWidgets.QVBoxLayout(self.list_card)
         self.list_title = QtWidgets.QLabel()
@@ -67,7 +79,7 @@ class TeamsPage(QtWidgets.QWidget):
         list_layout.addWidget(self.team_list, 1)
         body.addWidget(self.list_card, 2)
 
-        self.details_card = QtWidgets.QFrame()
+        self.details_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.details_card.setObjectName("Card")
         details_layout = QtWidgets.QVBoxLayout(self.details_card)
 
@@ -128,7 +140,7 @@ class TeamsPage(QtWidgets.QWidget):
         unassigned_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         unassigned_header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         unassigned_header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.unassigned_table.verticalHeader().setDefaultSectionSize(36)
+        self.unassigned_table.verticalHeader().setDefaultSectionSize(40)
         container_layout.addWidget(self.unassigned_table, 1)
 
         self.members_label = QtWidgets.QLabel()
@@ -144,7 +156,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.members_table.setMouseTracking(True)
         header = self.members_table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.members_table.verticalHeader().setDefaultSectionSize(36)
+        self.members_table.verticalHeader().setDefaultSectionSize(40)
         container_layout.addWidget(self.members_table, 1)
 
         member_actions = QtWidgets.QHBoxLayout()
@@ -156,6 +168,30 @@ class TeamsPage(QtWidgets.QWidget):
         member_actions.addWidget(self.remove_member_button)
         member_actions.addStretch()
         container_layout.addLayout(member_actions)
+
+        self.tags_label = QtWidgets.QLabel()
+        self.tags_label.setStyleSheet("font-weight: 600;")
+        container_layout.addWidget(self.tags_label)
+
+        self.tags_list = QtWidgets.QListWidget()
+        self.tags_list.setMouseTracking(True)
+        self.tags_list.setMinimumHeight(120)
+        container_layout.addWidget(self.tags_list)
+
+        tag_controls = QtWidgets.QHBoxLayout()
+        self.tag_name_input = QtWidgets.QLineEdit()
+        self.tag_name_input.setPlaceholderText("")
+        self.tag_color_combo = QtWidgets.QComboBox()
+        for name, color in self.TAG_COLORS:
+            self.tag_color_combo.addItem(name, color)
+        self._sync_tag_color_icons()
+        self.tag_add_button = make_button("", "ghost")
+        self.tag_add_button.clicked.connect(self.create_tag)
+        tag_controls.addWidget(self.tag_name_input, 2)
+        tag_controls.addWidget(self.tag_color_combo, 1)
+        tag_controls.addWidget(self.tag_add_button)
+        tag_controls.addStretch()
+        container_layout.addLayout(tag_controls)
 
         self.details_stack.addWidget(details_container)
         details_layout.addWidget(self.details_stack, 1)
@@ -223,6 +259,9 @@ class TeamsPage(QtWidgets.QWidget):
         self.members_label.setText(self.i18n.t("team_members"))
         self.add_member_button.setText(self.i18n.t("team_add_member"))
         self.remove_member_button.setText(self.i18n.t("team_remove_member"))
+        self.tags_label.setText(self.i18n.t("team_tags_title"))
+        self.tag_name_input.setPlaceholderText(self.i18n.t("tags_name_placeholder"))
+        self.tag_add_button.setText(self.i18n.t("tags_add_button"))
         self.members_table.setHorizontalHeaderLabels(
             [
                 self.i18n.t("team_member_name"),
@@ -248,6 +287,7 @@ class TeamsPage(QtWidgets.QWidget):
         can_toggle_activity = is_moderator and allow_api
         show_unassigned = (is_moderator or is_admin)
         show_team_info = self.current_role != "operator"
+        can_manage_tags = (is_moderator or is_admin) and allow_api
 
         self.list_card.setVisible(is_moderator)
         self.team_name_input.setReadOnly(not can_manage_teams)
@@ -269,6 +309,12 @@ class TeamsPage(QtWidgets.QWidget):
         self.delete_team_button.setEnabled(can_manage_teams and self.selected_team() is not None)
         self.unassigned_label.setVisible(show_unassigned)
         self.unassigned_table.setVisible(show_unassigned)
+        self.tag_name_input.setVisible(can_manage_tags)
+        self.tag_color_combo.setVisible(can_manage_tags)
+        self.tag_add_button.setVisible(can_manage_tags)
+        self.tag_name_input.setEnabled(can_manage_tags)
+        self.tag_color_combo.setEnabled(can_manage_tags)
+        self.tag_add_button.setEnabled(can_manage_tags)
 
     def visible_teams(self) -> List[Dict]:
         if self.current_role == "moderator":
@@ -310,6 +356,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.update_subscription_display(team)
         self.render_unassigned_clients(team)
         self.render_members(team)
+        self.render_tags(team)
 
     def selected_team(self) -> Optional[Dict]:
         item = self.team_list.currentItem()
@@ -364,6 +411,36 @@ class TeamsPage(QtWidgets.QWidget):
             self.members_table.setItem(row, 1, tag_item)
             self.members_table.setItem(row, 2, clients_item)
 
+    def render_tags(self, team: Dict) -> None:
+        self.tags_list.clear()
+        tags = team.get("tags", []) if team else []
+        if not tags:
+            item = QtWidgets.QListWidgetItem(self.i18n.t("tags_empty"))
+            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+            self.tags_list.addItem(item)
+            return
+        for tag in tags:
+            name = str(tag.get("name") or "").strip()
+            if not name:
+                continue
+            item = QtWidgets.QListWidgetItem(name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(tag.get("id") or ""))
+            color = str(tag.get("color") or "").strip()
+            if color:
+                qcolor = QtGui.QColor(color)
+                qcolor.setAlpha(90)
+                item.setBackground(QtGui.QBrush(qcolor))
+            self.tags_list.addItem(item)
+
+    def _sync_tag_color_icons(self) -> None:
+        for index in range(self.tag_color_combo.count()):
+            color = self.tag_color_combo.itemData(index)
+            if not color:
+                continue
+            pixmap = QtGui.QPixmap(12, 12)
+            pixmap.fill(QtGui.QColor(color))
+            self.tag_color_combo.setItemIcon(index, QtGui.QIcon(pixmap))
+
     def render_unassigned_clients(self, team: Dict) -> None:
         if self.current_role not in {"moderator", "administrator"}:
             self.unassigned_table.setRowCount(0)
@@ -388,7 +465,7 @@ class TeamsPage(QtWidgets.QWidget):
         for client in unassigned:
             row = self.unassigned_table.rowCount()
             self.unassigned_table.insertRow(row)
-            self.unassigned_table.setRowHeight(row, 36)
+            self.unassigned_table.setRowHeight(row, 40)
             name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
             id_item = QtWidgets.QTableWidgetItem(client.get("id", ""))
             ip_item = QtWidgets.QTableWidgetItem(client.get("ip", ""))
@@ -572,6 +649,23 @@ class TeamsPage(QtWidgets.QWidget):
             return
         self.refresh_from_api(team_id or None)
 
+    def create_tag(self) -> None:
+        if self.current_role not in {"moderator", "administrator"}:
+            return
+        team = self.selected_team()
+        if team is None or not self.api:
+            return
+        name = self.tag_name_input.text().strip()
+        if not name:
+            return
+        color = self.tag_color_combo.currentData() or ""
+        try:
+            self.api.create_team_tag(team["id"], name, color)
+        except Exception:
+            return
+        self.tag_name_input.clear()
+        self.refresh_from_api(team["id"])
+
     def delete_team(self) -> None:
         if self.current_role != "moderator" or not self.api:
             return
@@ -594,7 +688,7 @@ class TeamsPage(QtWidgets.QWidget):
             "QPushButton {"
             f"background: {self.theme.colors['card_alt']};"
             f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 8px;"
+            "border-radius: 10px;"
             "padding: 6px 12px;"
             "}"
             "QPushButton:hover {"
