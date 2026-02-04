@@ -338,6 +338,9 @@ class DashboardPage(QtWidgets.QWidget):
             if "connected" not in client:
                 client["connected"] = False
                 updated = True
+            if "work_status" not in client:
+                client["work_status"] = "planning"
+                updated = True
             if "server_connected" in client:
                 client.pop("server_connected", None)
                 updated = True
@@ -352,11 +355,13 @@ class DashboardPage(QtWidgets.QWidget):
         self._render_current_clients()
 
     def _build_column_keys(self) -> list[str]:
-        return ["name", "ip", "region", "team", "operator"]
+        return ["name", "work_status", "tags", "ip", "region", "team", "operator"]
 
     def _column_labels(self) -> dict[str, str]:
         return {
             "name": self.i18n.t("table_name"),
+            "work_status": self.i18n.t("table_work_status"),
+            "tags": self.i18n.t("table_tags"),
             "team": self.i18n.t("table_team"),
             "operator": self.i18n.t("table_operator"),
             "region": self.i18n.t("table_region"),
@@ -523,6 +528,81 @@ class DashboardPage(QtWidgets.QWidget):
         if region_value:
             return self.i18n.t(region_value)
         return "--"
+
+    @staticmethod
+    def _normalize_work_status(value: object) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"planning", "in_work", "worked_out"}:
+            return raw
+        return "planning"
+
+    def _format_work_status(self, value: object) -> str:
+        status = self._normalize_work_status(value)
+        key = f"work_status_{status}"
+        label = self.i18n.t(key)
+        return label if label != key else status.replace("_", " ").title()
+
+    @staticmethod
+    def _format_tag_labels(tags: object) -> str:
+        if not tags:
+            return ""
+        if isinstance(tags, list):
+            names = []
+            for tag in tags:
+                if isinstance(tag, dict):
+                    name = str(tag.get("name") or "").strip()
+                else:
+                    name = str(tag or "").strip()
+                if name:
+                    names.append(name)
+            return ", ".join(names)
+        return str(tags)
+
+    def apply_work_status_style(self, item: QtWidgets.QTableWidgetItem, status: str) -> None:
+        palette = {
+            "planning": ("#f6c970", 90),
+            "in_work": (self.theme.colors.get("accent", "#0091FF"), 110),
+            "worked_out": ("#2dd4bf", 100),
+        }
+        color, alpha = palette.get(status, palette["planning"])
+        fg = QtGui.QColor(color)
+        bg = QtGui.QColor(color)
+        bg.setAlpha(alpha)
+        item.setForeground(QtGui.QBrush(fg))
+        item.setBackground(QtGui.QBrush(bg))
+
+    def build_tags_cell(self, tags: list[dict]) -> QtWidgets.QWidget:
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        max_visible = 3
+        safe_tags: list[dict] = []
+        for tag in tags:
+            if isinstance(tag, dict) and tag.get("name"):
+                safe_tags.append(tag)
+        for tag in safe_tags[:max_visible]:
+            label = QtWidgets.QLabel(str(tag.get("name")))
+            color = str(tag.get("color") or "#64748b")
+            label.setStyleSheet(
+                "QLabel {"
+                f"background: {color};"
+                "color: #0b0f16;"
+                "padding: 2px 8px;"
+                "border-radius: 8px;"
+                "font-size: 11px;"
+                "font-weight: 600;"
+                "}"
+            )
+            layout.addWidget(label)
+        remaining = len(safe_tags) - max_visible
+        if remaining > 0:
+            more = QtWidgets.QLabel(f"+{remaining}")
+            more.setObjectName("Muted")
+            more.setStyleSheet("font-size: 11px;")
+            layout.addWidget(more)
+        layout.addStretch()
+        return container
 
     def _emoji_font(self) -> QtGui.QFont:
         if hasattr(self, "_cached_emoji_font"):
@@ -820,9 +900,12 @@ class DashboardPage(QtWidgets.QWidget):
             return
         filtered = []
         for client in self._visible_clients(self.clients):
+            tags_label = self._format_tag_labels(client.get("tags"))
             values = [
                 client["name"],
                 client["id"],
+                self._format_work_status(client.get("work_status")),
+                tags_label,
                 self._resolve_region_display(client),
                 client["ip"],
                 self._resolve_team_name(client.get("assigned_team_id")),
@@ -848,6 +931,11 @@ class DashboardPage(QtWidgets.QWidget):
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client["id"])
             name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             name_item.setText("")
+            work_status = self._normalize_work_status(client.get("work_status"))
+            status_item = QtWidgets.QTableWidgetItem(self._format_work_status(work_status))
+            status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.apply_work_status_style(status_item, work_status)
+            status_item.setFlags(status_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             ip_item = QtWidgets.QTableWidgetItem(client["ip"])
             region_item = QtWidgets.QTableWidgetItem(self._resolve_region_display(client))
             flags_codes = self._extract_flag_codes(client)
@@ -860,6 +948,15 @@ class DashboardPage(QtWidgets.QWidget):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, column_index["name"], name_item)
             self.table.setCellWidget(row, column_index["name"], self.build_name_cell(client))
+            self.table.setItem(row, column_index["work_status"], status_item)
+            tags = client.get("tags") or []
+            if tags:
+                self.table.setCellWidget(row, column_index["tags"], self.build_tags_cell(tags))
+            else:
+                tags_item = QtWidgets.QTableWidgetItem("--")
+                tags_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                tags_item.setFlags(tags_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, column_index["tags"], tags_item)
             self.table.setItem(row, column_index["region"], region_item)
             self.table.setItem(row, column_index["ip"], ip_item)
             team_item = QtWidgets.QTableWidgetItem(
@@ -932,6 +1029,8 @@ class DashboardPage(QtWidgets.QWidget):
 
         base_config = {
             "name": (3.2, 200),
+            "work_status": (1.4, 130),
+            "tags": (2.2, 180),
             "ip": (1.5, 140),
             "region": (1.7, 160),
             "team": (1.6, 150),
@@ -1007,6 +1106,14 @@ class DashboardPage(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout(container)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
+        status_dot = QtWidgets.QLabel()
+        status_dot.setObjectName("StatusDot")
+        status_dot.setFixedSize(8, 8)
+        connected = client.get("status") == "connected" or client.get("connected")
+        status_dot.setProperty("status", "online" if connected else "offline")
+        status_dot.setToolTip(
+            self.i18n.t("top_status_online") if connected else self.i18n.t("top_status_offline")
+        )
         text_stack = QtWidgets.QVBoxLayout()
         name_button = QtWidgets.QPushButton(client["name"])
         name_button.setObjectName("NameLink")
@@ -1033,6 +1140,7 @@ class DashboardPage(QtWidgets.QWidget):
             button.setIconSize(QtCore.QSize(16, 16))
         button.setToolTip(self.i18n.t("button_edit_name"))
         button.clicked.connect(lambda _, cid=client["id"]: self.edit_client_name(cid))
+        layout.addWidget(status_dot, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(text_stack, 1)
         layout.addWidget(button, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         return container

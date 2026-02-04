@@ -4,6 +4,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
+from ...core.api import RemoteControllerApi
 from ..common import GlassFrame, load_icon, make_button
 
 
@@ -14,12 +15,21 @@ class ClientDetailsPage(QtWidgets.QWidget):
     extra_action_requested = QtCore.pyqtSignal(str, str)
     delete_requested = QtCore.pyqtSignal(str)
     rename_requested = QtCore.pyqtSignal(str)
+    client_updated = QtCore.pyqtSignal(str, dict)
 
-    def __init__(self, i18n: I18n, settings: SettingsStore):
+    def __init__(
+        self,
+        i18n: I18n,
+        settings: SettingsStore,
+        api: RemoteControllerApi | None = None,
+    ):
         super().__init__()
         self.i18n = i18n
         self.settings = settings
+        self.api = api
         self.client: dict | None = None
+        self._work_status_updating = False
+        self._tags_updating = False
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -136,6 +146,9 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.storage_title.setText(self.i18n.t("client_storage_title"))
         self.storage_body.setText(self.i18n.t("client_storage_body"))
         self.storage_action.setText(self.i18n.t("button_storage"))
+        self.work_status_label.setText(self.i18n.t("client_work_status"))
+        self.tags_label.setText(self.i18n.t("client_tags_title"))
+        self._populate_work_status_options()
         self._build_cookies_menu()
         self._update_view()
 
@@ -158,6 +171,24 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.client_info_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         self.client_info_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         client_layout.addLayout(self.client_info_form)
+
+        status_row = QtWidgets.QHBoxLayout()
+        self.work_status_label = QtWidgets.QLabel()
+        self.work_status_combo = QtWidgets.QComboBox()
+        self.work_status_combo.currentIndexChanged.connect(self._handle_work_status_changed)
+        status_row.addWidget(self.work_status_label)
+        status_row.addWidget(self.work_status_combo)
+        status_row.addStretch()
+        client_layout.addLayout(status_row)
+
+        self.tags_label = QtWidgets.QLabel()
+        self.tags_label.setStyleSheet("font-weight: 600;")
+        self.tags_list = QtWidgets.QListWidget()
+        self.tags_list.setMouseTracking(True)
+        self.tags_list.itemChanged.connect(self._handle_tag_changed)
+        self.tags_list.setMinimumHeight(120)
+        client_layout.addWidget(self.tags_label)
+        client_layout.addWidget(self.tags_list, 1)
 
         self.system_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.system_info_card.setObjectName("Card")
@@ -274,6 +305,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._update_actions(connected)
         self._render_client_info()
         self._render_system_info()
+        self._sync_work_status()
+        self._render_tags()
 
     def _render_client_info(self) -> None:
         def _add_row(label: str, value: str) -> None:
@@ -298,6 +331,114 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.i18n.t("client_info_operator"),
             self._resolve_operator_name(client.get("assigned_operator_id")),
         )
+
+    def _populate_work_status_options(self) -> None:
+        self.work_status_combo.blockSignals(True)
+        self.work_status_combo.clear()
+        options = [
+            ("planning", self.i18n.t("work_status_planning")),
+            ("in_work", self.i18n.t("work_status_in_work")),
+            ("worked_out", self.i18n.t("work_status_worked_out")),
+        ]
+        for value, label in options:
+            self.work_status_combo.addItem(label, value)
+        self.work_status_combo.blockSignals(False)
+
+    def _sync_work_status(self) -> None:
+        if not self.client:
+            return
+        status = self._normalize_work_status(self.client.get("work_status"))
+        self._work_status_updating = True
+        index = self.work_status_combo.findData(status)
+        if index >= 0:
+            self.work_status_combo.setCurrentIndex(index)
+        self._work_status_updating = False
+
+    def _handle_work_status_changed(self) -> None:
+        if self._work_status_updating or not self.client or not self.api:
+            return
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+        status = self._normalize_work_status(self.work_status_combo.currentData())
+        try:
+            self.api.update_client_work_status(client_id, status)
+        except Exception:
+            self._sync_work_status()
+            return
+        self.client["work_status"] = status
+        self.client_updated.emit(client_id, {"work_status": status})
+
+    def _available_tags(self) -> list[dict]:
+        if not self.client:
+            return []
+        team_id = self.client.get("assigned_team_id")
+        if not team_id:
+            return []
+        for team in self.settings.get("teams", []):
+            if team.get("id") == team_id:
+                return list(team.get("tags") or [])
+        return []
+
+    def _render_tags(self) -> None:
+        tags = self._available_tags()
+        assigned = {
+            str(tag.get("id"))
+            for tag in (self.client.get("tags") or [])
+            if isinstance(tag, dict) and tag.get("id")
+        }
+        self._tags_updating = True
+        self.tags_list.blockSignals(True)
+        self.tags_list.clear()
+        if not tags:
+            item = QtWidgets.QListWidgetItem(self.i18n.t("tags_empty"))
+            item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+            self.tags_list.addItem(item)
+        else:
+            for tag in tags:
+                name = str(tag.get("name") or "").strip()
+                if not name:
+                    continue
+                item = QtWidgets.QListWidgetItem(name)
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                tag_id = str(tag.get("id") or "")
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, tag_id)
+                item.setCheckState(
+                    QtCore.Qt.CheckState.Checked
+                    if tag_id and tag_id in assigned
+                    else QtCore.Qt.CheckState.Unchecked
+                )
+                color = str(tag.get("color") or "").strip()
+                if color:
+                    qcolor = QtGui.QColor(color)
+                    qcolor.setAlpha(80)
+                    item.setBackground(QtGui.QBrush(qcolor))
+                self.tags_list.addItem(item)
+        self.tags_list.blockSignals(False)
+        self._tags_updating = False
+
+    def _handle_tag_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
+        if self._tags_updating or not self.client or not self.api:
+            return
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+        tag_ids = []
+        for index in range(self.tags_list.count()):
+            item = self.tags_list.item(index)
+            if item.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable:
+                if item.checkState() == QtCore.Qt.CheckState.Checked:
+                    tag_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
+                    if tag_id:
+                        tag_ids.append(str(tag_id))
+        try:
+            self.api.update_client_tags(client_id, tag_ids)
+        except Exception:
+            self._render_tags()
+            return
+        tags = [tag for tag in self._available_tags() if tag.get("id") in tag_ids]
+        self.client["tags"] = tags
+        self.client_updated.emit(client_id, {"tags": tags})
 
     def _render_system_info(self) -> None:
         def _add_row(label: str, value: str) -> None:
@@ -409,6 +550,13 @@ class ClientDetailsPage(QtWidgets.QWidget):
     def _safe_text(value: object) -> str:
         text = str(value or "").strip()
         return text or "--"
+
+    @staticmethod
+    def _normalize_work_status(value: object) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"planning", "in_work", "worked_out"}:
+            return raw
+        return "planning"
 
     @staticmethod
     def _format_last_seen(value: object) -> str:

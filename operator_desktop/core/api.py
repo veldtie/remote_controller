@@ -82,6 +82,20 @@ class RemoteControllerApi:
             {"assigned_operator_id": operator_id, "assigned_team_id": team_id},
         )
 
+    def update_client_work_status(self, client_id: str, work_status: str) -> None:
+        self._request(
+            "PATCH",
+            f"/api/remote-clients/{client_id}",
+            {"work_status": work_status},
+        )
+
+    def update_client_tags(self, client_id: str, tag_ids: list[str]) -> None:
+        self._request(
+            "PATCH",
+            f"/api/remote-clients/{client_id}",
+            {"tag_ids": tag_ids},
+        )
+
     def delete_client(self, client_id: str) -> None:
         self._request("DELETE", f"/api/remote-clients/{client_id}")
 
@@ -109,6 +123,14 @@ class RemoteControllerApi:
 
     def delete_team(self, team_id: str) -> None:
         self._request("DELETE", f"/api/teams/{team_id}")
+
+    def create_team_tag(self, team_id: str, name: str, color: str) -> dict[str, Any]:
+        payload = {"name": name, "color": color}
+        response = self._request("POST", f"/api/teams/{team_id}/tags", payload) or {}
+        return dict(response.get("tag") or {})
+
+    def delete_team_tag(self, tag_id: str) -> None:
+        self._request("DELETE", f"/api/team-tags/{tag_id}")
 
     def upsert_operator(
         self,

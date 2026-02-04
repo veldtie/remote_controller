@@ -155,7 +155,7 @@ class MainShell(QtWidgets.QWidget):
         self.stack = QtWidgets.QStackedWidget()
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
         self.cookies_page = CookiesPage(i18n, settings, api=api)
-        self.client_details = ClientDetailsPage(i18n, settings)
+        self.client_details = ClientDetailsPage(i18n, settings, api=api)
         self.teams_page = TeamsPage(i18n, settings, api=api)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings, api=api)
@@ -186,6 +186,7 @@ class MainShell(QtWidgets.QWidget):
         self.client_details.extra_action_requested.connect(self.handle_extra_action)
         self.client_details.delete_requested.connect(self.dashboard.confirm_delete_client)
         self.client_details.rename_requested.connect(self.rename_client)
+        self.client_details.client_updated.connect(self.handle_client_update)
         self.settings_page.logout_requested.connect(self.logout_requested.emit)
         self.settings_page.language_changed.connect(self.emit_language_change)
         self.settings_page.role_changed.connect(self.handle_role_change)
@@ -275,6 +276,24 @@ class MainShell(QtWidgets.QWidget):
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         if client and self.client_details.client and self.client_details.client.get("id") == client_id:
             self.client_details.set_client(client)
+
+    def handle_client_update(self, client_id: str, updates: dict) -> None:
+        if not client_id:
+            return
+        updated = False
+        for client in self.dashboard.clients:
+            if client.get("id") == client_id:
+                client.update(updates)
+                updated = True
+                break
+        if updated:
+            self.dashboard.refresh_view()
+            if self.client_details.client and self.client_details.client.get("id") == client_id:
+                self.client_details.set_client(
+                    {**self.client_details.client, **updates}
+                )
+            self.settings.set("clients", self.dashboard.clients)
+            self.settings.save()
 
     def update_brand_header(self) -> None:
         window = self.window()
