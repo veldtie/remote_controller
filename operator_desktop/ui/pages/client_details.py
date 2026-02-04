@@ -266,12 +266,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
         name = self.client.get("name") or self.client.get("id") or "--"
         self.title_label.setText(name)
         self.subtitle_label.setText(self.client.get("id", ""))
-        connected = self.client.get("status") == "connected" or self.client.get("connected")
+        online = self.client.get("status") == "connected"
         self.status_text.setText(
-            self.i18n.t("top_status_online") if connected else self.i18n.t("top_status_offline")
+            self.i18n.t("top_status_online") if online else self.i18n.t("top_status_offline")
         )
-        self._set_status_color(connected)
-        self._update_actions(connected)
+        self._set_status_color(online)
+        self._update_actions(bool(self.client.get("connected")))
         self._render_client_info()
         self._render_system_info()
 
@@ -390,8 +390,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         client_id = self.client.get("id")
         if not client_id:
             return
-        connected = self.client.get("status") == "connected" or self.client.get("connected")
-        self.connect_requested.emit(client_id, bool(connected))
+        connected = bool(self.client.get("connected"))
+        self.connect_requested.emit(client_id, connected)
 
     def _emit_rename(self) -> None:
         if not self.client:
