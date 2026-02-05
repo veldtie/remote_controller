@@ -1,17 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+import sys
+from pathlib import Path
 
-datas = [('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_rusrvo45\\remote_client\\rc_server.json', 'remote_client')]
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
+sys.path.insert(0, str(PROJECT_DIR))
+
+datas = []
+for name in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
+    candidate = BASE_DIR / name
+    if candidate.exists():
+        datas.append((str(candidate), "remote_client"))
 binaries = []
 hiddenimports = [
-    'win32crypt',
-    'cryptography',
-    'pynput',
-    'pynput.mouse',
-    'pynput.keyboard',
-    'remote_client.apps.launcher',
-    'remote_client.windows.hidden_desktop',
+    "win32crypt",
+    "cryptography",
+    "pynput",
+    "pynput.mouse",
+    "pynput.keyboard",
+    "remote_client.apps.launcher",
+    "remote_client.session_factory",
+    "remote_client.windows.hidden_desktop",
 ]
+hiddenimports += collect_submodules("remote_client")
 tmp_ret = collect_all('pynput')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('av')
@@ -27,8 +40,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
-    pathex=[],
+    [str(BASE_DIR / "main.py")],
+    pathex=[str(PROJECT_DIR)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

