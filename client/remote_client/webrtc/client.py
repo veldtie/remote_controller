@@ -80,15 +80,34 @@ def _parse_bool(value: Any, default: bool = True) -> bool:
     return default
 
 
-def _normalize_session_mode(mode: Any) -> str:
-    if not mode:
-        return "manage"
+def _coerce_session_mode(mode: Any) -> str | None:
+    if mode is None:
+        return None
     value = str(mode).strip().lower()
     if value in {"view", "viewer", "readonly"}:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
-    return "manage"
+    if value in {"manage", "control", "full"}:
+        return "manage"
+    return None
+
+
+def _normalize_session_mode(mode: Any) -> str:
+    return _coerce_session_mode(mode) or "manage"
+
+
+def _resolve_forced_mode(client_config: dict | None) -> str | None:
+    for env_name in ("RC_FORCE_MODE", "RC_SESSION_MODE"):
+        forced = _coerce_session_mode(os.getenv(env_name))
+        if forced:
+            return forced
+    if client_config:
+        for key in ("force_mode", "session_mode", "mode"):
+            forced = _coerce_session_mode(client_config.get(key))
+            if forced:
+                return forced
+    return None
 
 
 def _resolve_profile_bitrate(profile: str | None) -> int:
@@ -218,7 +237,10 @@ class WebRTCClient:
         self._force_host_only = False
         self._pending_offer: dict[str, Any] | None = None
         self._current_mode: str = "manage"
+        self._forced_mode: str | None = _resolve_forced_mode(client_config)
         self._video_sender = None
+        if self._forced_mode:
+            logger.info("Forcing session mode to %s for this client.", self._forced_mode)
 
     def _build_rtc_configuration(self) -> RTCConfiguration:
         if self._force_host_only:
@@ -341,11 +363,13 @@ class WebRTCClient:
         async def on_connectionstatechange() -> None:
             nonlocal had_connection
             state = peer_connection.connectionState
+            ice_state = getattr(peer_connection, "iceConnectionState", "unknown")
+            signaling_state = getattr(peer_connection, "signalingState", "unknown")
             logger.info(
                 "Connection state changed to %s (ice=%s signaling=%s).",
                 state,
-                peer_connection.iceConnectionState,
-                peer_connection.signalingState,
+                ice_state,
+                signaling_state,
             )
             if state in {"failed", "closed"}:
                 connection_done.set()
@@ -360,7 +384,7 @@ class WebRTCClient:
         @peer_connection.on("iceconnectionstatechange")
         async def on_iceconnectionstatechange() -> None:
             nonlocal had_connection
-            state = peer_connection.iceConnectionState
+            state = getattr(peer_connection, "iceConnectionState", "unknown")
             logger.info("ICE connection state changed to %s.", state)
             if state in {"failed", "closed"}:
                 if state == "failed" and not had_connection and not self._force_host_only:
@@ -479,6 +503,14 @@ class WebRTCClient:
             )
             operator_id_holder["value"] = offer_payload.get("operator_id")
             session_mode = _normalize_session_mode(offer_payload.get("mode"))
+            if self._forced_mode:
+                if session_mode != self._forced_mode:
+                    logger.info(
+                        "Overriding offer mode %s with forced mode %s.",
+                        session_mode,
+                        self._forced_mode,
+                    )
+                session_mode = self._forced_mode
             self._current_mode = session_mode
             resources = self._session_factory(session_mode)
             if isinstance(resources, tuple):
@@ -588,6 +620,8 @@ class WebRTCClient:
                 logger.debug("Signaling message received: %s", message_type)
             if message_type == "offer":
                 offer_mode = _normalize_session_mode(message.get("mode"))
+                if self._forced_mode:
+                    offer_mode = self._forced_mode
                 if peer_connection.connectionState in {"connecting", "connected"}:
                     if offer_mode == "view" and self._current_mode in {"manage", "hidden"}:
                         continue

