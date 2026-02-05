@@ -14,6 +14,7 @@ from remote_client.config import (
     resolve_team_id,
 )
 from remote_client.runtime import build_client, load_or_create_device_token
+from remote_client.system_info import load_or_collect_system_info
 from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
 from remote_client.security.firewall import ensure_firewall_rules
@@ -117,6 +118,9 @@ def main() -> None:
             "countries": list(antifraud_config.countries),
         }
     }
+    system_info = load_or_collect_system_info()
+    if system_info:
+        client_config.update(system_info)
     client = build_client(
         session_id,
         signaling_token,

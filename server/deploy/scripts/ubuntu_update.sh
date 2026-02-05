@@ -19,4 +19,4 @@ systemctl restart remote-controller.service
 systemctl restart remote-controller-healthcheck.timer
 
 cd "$APP_DIR"
-docker compose --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" up -d --build
+docker compose --env-file "$APP_DIR/.env" --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" up -d --build

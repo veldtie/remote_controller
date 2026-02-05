@@ -249,7 +249,11 @@ async def upsert_remote_client(
                     ip = COALESCE(EXCLUDED.ip, remote_clients.ip),
                     assigned_team_id = COALESCE(remote_clients.assigned_team_id, EXCLUDED.assigned_team_id),
                     assigned_operator_id = COALESCE(remote_clients.assigned_operator_id, EXCLUDED.assigned_operator_id),
-                    client_config = COALESCE(EXCLUDED.client_config, remote_clients.client_config),
+                    client_config = CASE
+                        WHEN EXCLUDED.client_config IS NULL THEN remote_clients.client_config
+                        WHEN remote_clients.client_config IS NULL THEN EXCLUDED.client_config
+                        ELSE remote_clients.client_config || EXCLUDED.client_config
+                    END,
                     first_connected_at = CASE
                         WHEN remote_clients.first_connected_at IS NULL
                              AND EXCLUDED.status = 'connected' THEN NOW()
