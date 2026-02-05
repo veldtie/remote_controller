@@ -2,6 +2,9 @@
 import sys
 from pathlib import Path
 
+<<<<<<< HEAD
+datas = [('C:\\Temp\\rc_build_si9dke4d\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_si9dke4d\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_si9dke4d\\remote_client\\rc_server.json', 'remote_client')]
+=======
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -13,6 +16,7 @@ for name in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
     candidate = PACKAGE_DIR / name
     if candidate.exists():
         datas.append((str(candidate), "remote_client"))
+>>>>>>> eefbc7839936ad7dc341ac9da5978f22cce1b545
 binaries = []
 hiddenimports = [
     "win32crypt",
