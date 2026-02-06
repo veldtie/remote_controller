@@ -1,32 +1,15 @@
-"""Windows-specific helpers for the remote client."""
-from remote_client.windows.hidden_desktop import (
-    HiddenDesktopSession,
-    HiddenWindowSession,
-    create_hidden_session,
-    PRINTWINDOW_AVAILABLE,
-    VIRTUAL_DISPLAY_AVAILABLE,
-)
-from remote_client.windows.window_capture import (
-    WindowCaptureSession,
-    WindowInputController,
-    WindowCompositor,
-    WindowEnumerator,
-    WindowInfo,
-    CapturedWindow,
-    capture_window_bitmap,
-)
+# windows/__init__.py
+"""Windows-specific functionality including Virtual Display Driver"""
+
+from .vdd_driver import VDDDriver, get_driver, is_available, ensure_installed
+from .virtual_display import VirtualDisplay, create_virtual_display, check_virtual_display_available
 
 __all__ = [
-    "HiddenDesktopSession",
-    "HiddenWindowSession",
-    "create_hidden_session",
-    "PRINTWINDOW_AVAILABLE",
-    "VIRTUAL_DISPLAY_AVAILABLE",
-    "WindowCaptureSession",
-    "WindowInputController",
-    "WindowCompositor",
-    "WindowEnumerator",
-    "WindowInfo",
-    "CapturedWindow",
-    "capture_window_bitmap",
+    "VDDDriver",
+    "get_driver", 
+    "is_available",
+    "ensure_installed",
+    "VirtualDisplay",
+    "create_virtual_display",
+    "check_virtual_display_available",
 ]
