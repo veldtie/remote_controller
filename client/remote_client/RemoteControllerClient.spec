@@ -19,7 +19,7 @@ for name in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
 # VIRTUAL DISPLAY DRIVER - добавление драйвера в сборку
 # =============================================================================
 # Папка с драйвером (после запуска download_driver.py)
-VDD_DRIVER_DIR = BASE_DIR / "windows" / "drivers" / "vdd"
+VDD_DRIVER_DIR = BASE_DIR / "drivers" / "vdd"
 if VDD_DRIVER_DIR.exists():
     # Добавляем все файлы драйвера в сборку
     for ext in ["*.inf", "*.sys", "*.cat", "*.dll", "*.exe"]:
