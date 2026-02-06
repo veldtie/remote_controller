@@ -111,11 +111,12 @@ class VDDDriver:
                 timeout=30
             )
             output = result.stdout.lower()
-            # Проверяем разные варианты имени драйвера
+            # Проверяем все варианты имени драйвера
             return (
                 "iddsampledriver" in output or 
                 "virtualdisplaydriver" in output or
-                "virtual display" in output
+                "mttvdd" in output or
+                "mikethetech" in output
             )
         except:
             return False

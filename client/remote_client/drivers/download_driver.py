@@ -28,8 +28,10 @@ except ImportError:
 
 # Ссылки на релизы драйвера (попробует по порядку)
 VDD_RELEASES = [
-    "https://github.com/itsmikethetech/Virtual-Display-Driver/releases/download/24.5.13.1/IddSampleDriver.zip",
-    "https://github.com/ge9/IddSampleDriver/releases/download/0.0.1.2/IddSampleDriver_0.0.1.2_x64_Release.zip",
+    # Новая подписанная версия (НЕ нужен тестовый режим!)
+    "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/IddSampleDriver-x64.zip",
+    "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/24.12.24/IddSampleDriver-x64.zip",
+    "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.5.2/IddSampleDriver-x64.zip",
 ]
 
 # Необходимые файлы драйвера
