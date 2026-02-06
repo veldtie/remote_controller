@@ -1,0 +1,5 @@
+# This file keeps the vdd folder in git
+# Driver files will be downloaded here:
+# - IddSampleDriver.inf
+# - IddSampleDriver.dll
+# - IddSampleDriver.cat
