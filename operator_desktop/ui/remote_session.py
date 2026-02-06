@@ -109,6 +109,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
+        available_browsers: list[str] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -121,6 +122,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self.country = country or ""
         self.country_code = country_code or ""
         self.flags = list(flags or [])
+        self.available_browsers = list(available_browsers or [])
         self._open_storage_on_load = open_storage
         self._manage_mode = manage_mode
         self._ice_servers: list[dict[str, object]] | None = (
@@ -242,6 +244,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         country: str | None = None,
         country_code: str | None = None,
         flags: list[str] | None = None,
+        available_browsers: list[str] | None = None,
         auto_connect: bool = True,
         open_storage: bool = False,
         manage_mode: bool | None = None,
@@ -268,6 +271,8 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             self.country_code = country_code
         if flags is not None:
             self.flags = list(flags)
+        if available_browsers is not None:
+            self.available_browsers = list(available_browsers)
         self._refresh_top_info()
         self._apply_desktop_overrides(
             auto_connect=auto_connect,
@@ -613,6 +618,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
                 "country_code": self.country_code,
                 "flags": self.flags,
                 "iceServers": self._ice_servers,
+                "availableBrowsers": self.available_browsers,
                 "autoConnect": auto_connect,
                 "openStorage": open_storage,
                 "desktop": True,
