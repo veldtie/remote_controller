@@ -4,8 +4,8 @@ Virtual Display Driver - установка и управление
 
 Требования:
 - Windows 10/11
-- Тестовый режим: bcdedit /set testsigning on
 - Права администратора для установки
+- Драйвер подписан - тестовый режим НЕ нужен!
 """
 
 import os
@@ -14,10 +14,19 @@ import subprocess
 import ctypes
 import logging
 import time
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Имена файлов драйвера (новая версия от MikeTheTech)
+DRIVER_FILES = {
+    "inf": ["mttvdd.inf", "IddSampleDriver.inf"],
+    "dll": ["mttvdd.dll", "IddSampleDriver.dll"],
+    "cat": ["mttvdd.cat", "IddSampleDriver.cat"],
+}
 
 
 class VDDError(Exception):
@@ -41,30 +50,63 @@ class VDDDriver:
     
     def _find_driver_dir(self) -> Path:
         """Находит папку с драйвером"""
+        # Возможные пути к драйверу
         possible_paths = [
+            # В папке с исполняемым файлом (PyInstaller)
+            Path(sys.executable).parent / "drivers" / "vdd",
+            Path(sys.executable).parent / "vdd",
+            # PyInstaller _MEIPASS (временная папка распаковки)
+            Path(getattr(sys, '_MEIPASS', '')) / "drivers" / "vdd" if hasattr(sys, '_MEIPASS') else None,
+            # Относительно текущего файла
             Path(__file__).parent.parent / "drivers" / "vdd",
             Path(__file__).parent / "drivers" / "vdd",
+            # Относительно рабочей директории
             Path.cwd() / "drivers" / "vdd",
+            Path.cwd() / "vdd",
         ]
         
+        # Фильтруем None
+        possible_paths = [p for p in possible_paths if p is not None]
+        
+        # Ищем папку с INF файлом
         for path in possible_paths:
-            if (path / "IddSampleDriver.inf").exists():
-                return path
+            if path.exists():
+                # Проверяем наличие любого из возможных INF файлов
+                for inf_name in DRIVER_FILES["inf"]:
+                    if (path / inf_name).exists():
+                        logger.debug(f"Found driver at: {path}")
+                        return path
         
         # Возвращаем первый путь для информативной ошибки
-        return possible_paths[0]
+        return possible_paths[0] if possible_paths else Path("drivers/vdd")
     
     @property
-    def inf_path(self) -> Path:
-        return self.driver_dir / "IddSampleDriver.inf"
+    def inf_path(self) -> Optional[Path]:
+        """Путь к INF файлу драйвера"""
+        for name in DRIVER_FILES["inf"]:
+            path = self.driver_dir / name
+            if path.exists():
+                return path
+        # Вернуть первый вариант для ошибки
+        return self.driver_dir / DRIVER_FILES["inf"][0]
     
     @property
-    def dll_path(self) -> Path:
-        return self.driver_dir / "IddSampleDriver.dll"
+    def dll_path(self) -> Optional[Path]:
+        """Путь к DLL файлу драйвера"""
+        for name in DRIVER_FILES["dll"]:
+            path = self.driver_dir / name
+            if path.exists():
+                return path
+        return self.driver_dir / DRIVER_FILES["dll"][0]
     
     @property
-    def cat_path(self) -> Path:
-        return self.driver_dir / "IddSampleDriver.cat"
+    def cat_path(self) -> Optional[Path]:
+        """Путь к CAT файлу драйвера"""
+        for name in DRIVER_FILES["cat"]:
+            path = self.driver_dir / name
+            if path.exists():
+                return path
+        return self.driver_dir / DRIVER_FILES["cat"][0]
     
     # ==========================================
     # Проверки системы
@@ -96,9 +138,40 @@ class VDDDriver:
     
     def is_driver_files_present(self) -> Tuple[bool, list]:
         """Проверяет наличие файлов драйвера"""
-        required = [self.inf_path, self.dll_path, self.cat_path]
-        missing = [str(f) for f in required if not f.exists()]
+        missing = []
+        
+        # Проверяем каждый тип файла
+        for file_type, names in DRIVER_FILES.items():
+            found = False
+            for name in names:
+                if (self.driver_dir / name).exists():
+                    found = True
+                    break
+            if not found:
+                missing.append(f"{file_type}: {names[0]}")
+        
         return len(missing) == 0, missing
+    
+    def get_driver_files_info(self) -> dict:
+        """Возвращает информацию о файлах драйвера"""
+        info = {
+            "driver_dir": str(self.driver_dir),
+            "exists": self.driver_dir.exists(),
+            "files": {}
+        }
+        
+        for file_type, names in DRIVER_FILES.items():
+            for name in names:
+                path = self.driver_dir / name
+                if path.exists():
+                    info["files"][file_type] = {
+                        "name": name,
+                        "path": str(path),
+                        "size": path.stat().st_size
+                    }
+                    break
+        
+        return info
     
     def is_driver_installed(self) -> bool:
         """Проверяет установлен ли драйвер в системе"""
@@ -140,42 +213,61 @@ class VDDDriver:
             logger.info("Driver already installed")
             return True
         
-        # Проверка: есть файлы?
-        files_ok, missing = self.is_driver_files_present()
-        if not files_ok:
-            logger.error(f"Driver files missing: {missing}")
-            logger.error("Run: python -m remote_client.drivers.download_driver")
-            return False
-        
         # Проверка: админ?
         if not self.is_admin():
             logger.error("Administrator rights required to install driver")
             return False
         
-        # Проверка: тестовый режим?
-        if not self.is_testsigning_enabled():
-            logger.error("Test signing not enabled!")
-            logger.error("Run as admin: bcdedit /set testsigning on")
-            logger.error("Then reboot your PC")
+        # Проверка: есть файлы?
+        files_ok, missing = self.is_driver_files_present()
+        if not files_ok:
+            logger.error(f"Driver files missing: {missing}")
+            logger.error(f"Driver dir: {self.driver_dir}")
+            logger.error("Driver files should be embedded in the build")
             return False
         
-        # Устанавливаем
-        logger.info(f"Installing driver from: {self.inf_path}")
+        # Копируем файлы во временную папку (pnputil требует доступную папку)
+        temp_dir = None
+        inf_to_install = self.inf_path
         
         try:
+            # Если запущено из PyInstaller, копируем файлы во временную папку
+            if hasattr(sys, '_MEIPASS') or not self.inf_path.parent.is_relative_to(Path.home()):
+                temp_dir = Path(tempfile.mkdtemp(prefix="vdd_install_"))
+                logger.info(f"Copying driver files to temp: {temp_dir}")
+                
+                # Копируем все файлы драйвера
+                for file_type, names in DRIVER_FILES.items():
+                    for name in names:
+                        src = self.driver_dir / name
+                        if src.exists():
+                            dst = temp_dir / name
+                            shutil.copy2(src, dst)
+                            logger.debug(f"Copied: {src} -> {dst}")
+                            if file_type == "inf":
+                                inf_to_install = dst
+                            break
+                
+            # Устанавливаем
+            logger.info(f"Installing driver from: {inf_to_install}")
+            
             result = subprocess.run(
-                ["pnputil", "/add-driver", str(self.inf_path), "/install"],
+                ["pnputil", "/add-driver", str(inf_to_install), "/install"],
                 capture_output=True,
                 text=True,
                 shell=True,
                 timeout=60
             )
             
-            if result.returncode == 0 or "успешно" in result.stdout.lower() or "successfully" in result.stdout.lower():
+            output = result.stdout.lower() + result.stderr.lower()
+            
+            if result.returncode == 0 or "успешно" in output or "successfully" in output or "added" in output:
                 logger.info("Driver installed successfully")
                 return True
             else:
-                logger.error(f"pnputil error: {result.stdout} {result.stderr}")
+                logger.error(f"pnputil failed (code {result.returncode})")
+                logger.error(f"stdout: {result.stdout}")
+                logger.error(f"stderr: {result.stderr}")
                 return False
                 
         except subprocess.TimeoutExpired:
@@ -184,6 +276,13 @@ class VDDDriver:
         except Exception as e:
             logger.error(f"Driver installation failed: {e}")
             return False
+        finally:
+            # Очищаем временную папку
+            if temp_dir and temp_dir.exists():
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
     
     def uninstall(self) -> bool:
         """Удаляет драйвер из системы"""
