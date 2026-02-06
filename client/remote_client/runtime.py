@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from remote_client.config import resolve_signaling_url
@@ -222,6 +223,34 @@ def build_client(
     team_id: str | None = None,
     client_config: dict | None = None,
 ) -> WebRTCClient:
+    if client_config is None:
+        client_config = {}
+    if isinstance(client_config, dict):
+        system_info: dict[str, object] = {}
+        disabled = os.getenv("RC_DISABLE_SYSTEM_INFO", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not disabled:
+            try:
+                from remote_client.system_info import (
+                    collect_system_info,
+                    load_or_collect_system_info,
+                )
+
+                system_info = collect_system_info()
+                if not system_info:
+                    system_info = load_or_collect_system_info()
+            except Exception as exc:
+                logger.debug("System info collection failed: %s", exc)
+                system_info = {}
+        if system_info:
+            system_info["system_info_updated_at"] = datetime.now(timezone.utc).isoformat()
+            merged = dict(client_config)
+            merged.update(system_info)
+            client_config = merged
     signaling_url = resolve_signaling_url()
     if signaling_url:
         if "://" in signaling_url:

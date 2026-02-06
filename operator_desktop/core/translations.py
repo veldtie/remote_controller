@@ -133,6 +133,7 @@ TRANSLATIONS = {
         "client_system_gpu": "GPU",
         "client_system_storage": "Storage",
         "client_system_browsers": "Browsers",
+        "client_system_updated": "Updated",
         "dialog_delete_title": "Delete client",
         "dialog_delete_body": "This will remove the client from the list and send a silent uninstall command to the remote device. Continue?",
         "dialog_delete_confirm": "Delete",
@@ -456,6 +457,7 @@ TRANSLATIONS.update(
             "client_system_gpu": "GPU",
             "client_system_storage": "Storage",
             "client_system_browsers": "浏览器",
+            "client_system_updated": "\u66f4\u65b0\u65f6\u95f4",
             "dialog_delete_title": "删除客户端",
             "dialog_delete_body": "该操作将从列表中移除客户端，并向远程设备发送静默卸载指令。继续吗？",
             "dialog_delete_confirm": "删除",
@@ -790,6 +792,7 @@ TRANSLATIONS.update(
             "client_system_gpu": "GPU",
             "client_system_storage": "Storage",
             "client_system_browsers": "Navegadores",
+            "client_system_updated": "Actualizado",
             "dialog_delete_title": "Eliminar cliente",
             "dialog_delete_body": "Esto eliminará el cliente de la lista y enviará un comando silencioso de desinstalación al dispositivo remoto. ¿Continuar?",
             "dialog_delete_confirm": "Eliminar",
@@ -1120,6 +1123,7 @@ TRANSLATIONS.update(
             "client_system_gpu": "GPU",
             "client_system_storage": "Хранилище",
             "client_system_browsers": "Браузеры",
+            "client_system_updated": "\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u043e",
             "dialog_delete_title": "Удалить клиента",
             "dialog_delete_body": "Клиент будет удален из списка, а на удаленное устройство будет отправлена команда на тихое удаление. Продолжить?",
             "dialog_delete_confirm": "Удалить",
@@ -1328,4 +1332,3 @@ TRANSLATIONS.update(
         }
     }
 )
-

@@ -271,6 +271,20 @@ class WebRTCClient:
                 {"type": "ping", "session_id": self._session_id, "role": "client"}
             )
 
+    def _build_register_payload(self, client_config: dict | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "type": "register",
+            "session_id": self._session_id,
+            "role": "client",
+        }
+        if self._device_token:
+            payload["device_token"] = self._device_token
+        if self._team_id:
+            payload["team_id"] = self._team_id
+        if client_config:
+            payload["client_config"] = client_config
+        return payload
+
     async def _tune_video_sender(
         self,
         sender,
@@ -480,18 +494,7 @@ class WebRTCClient:
         try:
             await self._signaling.connect()
             logger.info("Signaling connected.")
-            register_payload = {
-                "type": "register",
-                "session_id": self._session_id,
-                "role": "client",
-            }
-            if self._device_token:
-                register_payload["device_token"] = self._device_token
-            if self._team_id:
-                register_payload["team_id"] = self._team_id
-            if self._client_config:
-                register_payload["client_config"] = self._client_config
-            await self._signaling.send(register_payload)
+            await self._signaling.send(self._build_register_payload(self._client_config))
             keepalive_task = asyncio.create_task(self._signaling_keepalive())
             offer_payload = await self._await_offer(pending_ice)
             if offer_payload is None:

@@ -587,6 +587,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
         _add_row(self.i18n.t("client_system_gpu"), self._safe_text(self._config_value(config, ["gpu", "graphics"])))
         _add_row(self.i18n.t("client_system_storage"), self._safe_text(self._config_value(config, ["storage", "disk"])))
         _add_row(self.i18n.t("client_system_browsers"), self._build_browser_value(config.get("browsers")))
+        updated_value = None
+        for key in ("system_info_updated_at", "system_info_updated"):
+            if key in config:
+                updated_value = config.get(key)
+                break
+        _add_row(self.i18n.t("client_system_updated"), self._format_system_info_updated(updated_value))
 
     def _build_browser_value(self, value: object) -> QtWidgets.QWidget:
         items = self._browser_items(value)
@@ -777,6 +783,22 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if lang == "ru":
             return parsed.strftime("%d.%m.%Y")
         return parsed.strftime("%Y-%m-%d")
+
+    def _format_system_info_updated(self, value: object) -> str:
+        parsed = self._parse_datetime(value)
+        if not parsed:
+            return "--"
+        if parsed.tzinfo:
+            parsed = parsed.astimezone()
+            now = datetime.now(parsed.tzinfo)
+        else:
+            now = datetime.now()
+        if parsed.date() == now.date():
+            return parsed.strftime("%H:%M:%S")
+        lang = self.i18n.language()
+        if lang == "ru":
+            return parsed.strftime("%d.%m.%Y %H:%M")
+        return parsed.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     def _parse_datetime(value: object) -> datetime | None:
