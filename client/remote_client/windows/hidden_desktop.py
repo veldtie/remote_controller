@@ -1214,6 +1214,10 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     
     Returns:
         Session instance (HiddenWindowSession or HiddenDesktopSession)
+    
+    Note:
+        PrintWindow mode only works when explicitly requested, as it requires
+        windows to be on the same desktop for capture to work correctly.
     """
     if mode == "printwindow":
         if not PRINTWINDOW_AVAILABLE:
@@ -1226,19 +1230,16 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     if mode == "fallback":
         return HiddenDesktopSession(use_virtual_display=False, **kwargs)
     
-    # Auto mode: try PrintWindow first, then virtual display, then fallback
+    # Auto mode: try virtual display first, then fallback
+    # PrintWindow is NOT used in auto mode because it cannot capture 
+    # windows from a different desktop
     if mode == "auto":
-        if PRINTWINDOW_AVAILABLE:
-            try:
-                return HiddenWindowSession(**kwargs)
-            except Exception as exc:
-                logger.warning("PrintWindow mode failed: %s, trying virtual display", exc)
-        
         try:
             session = HiddenDesktopSession(use_virtual_display=True, **kwargs)
             if session.is_virtual_display_active:
+                logger.info("Using virtual display mode")
                 return session
-            logger.warning("Virtual display not active, using fallback mode")
+            logger.info("Virtual display not active, using fallback mode")
             return session
         except Exception as exc:
             logger.warning("HiddenDesktopSession failed: %s", exc)

@@ -28,6 +28,13 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
+# Define LRESULT if not available in wintypes (Python compatibility)
+if not hasattr(wintypes, 'LRESULT'):
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        wintypes.LRESULT = ctypes.c_longlong
+    else:
+        wintypes.LRESULT = ctypes.c_long
+
 # Windows API constants
 SRCCOPY = 0x00CC0020
 DIB_RGB_COLORS = 0

@@ -4,7 +4,8 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-BASE_DIR = Path(__file__).resolve().parent
+# SPECPATH is provided by PyInstaller - path to the .spec file
+BASE_DIR = Path(SPECPATH).resolve()
 PROJECT_DIR = BASE_DIR.parent
 sys.path.insert(0, str(PROJECT_DIR))
 
@@ -13,6 +14,23 @@ for name in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
     candidate = BASE_DIR / name
     if candidate.exists():
         datas.append((str(candidate), "remote_client"))
+
+# =============================================================================
+# VIRTUAL DISPLAY DRIVER - добавление драйвера в сборку
+# =============================================================================
+# Папка с драйвером (после запуска download_driver.py)
+VDD_DRIVER_DIR = BASE_DIR / "windows" / "drivers" / "vdd"
+if VDD_DRIVER_DIR.exists():
+    # Добавляем все файлы драйвера в сборку
+    for ext in ["*.inf", "*.sys", "*.cat", "*.dll", "*.exe"]:
+        for f in VDD_DRIVER_DIR.glob(ext):
+            datas.append((str(f), "drivers/vdd"))
+    print(f"[VDD] Driver files added from: {VDD_DRIVER_DIR}")
+else:
+    print(f"[VDD] WARNING: Driver not found at {VDD_DRIVER_DIR}")
+    print(f"[VDD] Run: python download_driver.py in windows/drivers/")
+# =============================================================================
+
 binaries = []
 hiddenimports = [
     "win32crypt",
@@ -23,6 +41,9 @@ hiddenimports = [
     "remote_client.apps.launcher",
     "remote_client.session_factory",
     "remote_client.windows.hidden_desktop",
+    "remote_client.windows.virtual_display",
+    "remote_client.windows.vdd_driver",
+    "remote_client.windows.window_capture",
 ]
 hiddenimports += collect_submodules("remote_client")
 tmp_ret = collect_all('pynput')
