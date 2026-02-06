@@ -14,13 +14,11 @@ import logging
 import os
 import platform
 import queue
-import shutil
 import subprocess
 import threading
 import time
 import uuid
 from fractions import Fraction
-from typing import Iterable
 
 from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError, VIDEO_CLOCK_RATE, VIDEO_TIME_BASE
@@ -39,6 +37,7 @@ from remote_client.control.input_controller import (
     KeyUp,
     TextInput,
 )
+from remote_client.apps.launcher import resolve_app_executable
 from remote_client.media.stream_profiles import AdaptiveStreamProfile
 
 logger = logging.getLogger(__name__)
@@ -196,63 +195,7 @@ if platform.system() == "Windows":
 
 
 def _resolve_app_executable(app_name: str) -> str | None:
-    if not app_name:
-        return None
-    candidates: Iterable[str]
-    name = app_name.strip().lower()
-    if name in {"chrome", "google chrome"}:
-        candidates = [
-            "chrome.exe",
-            os.path.join(os.getenv("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
-        ]
-    elif name in {"brave", "brave browser"}:
-        candidates = [
-            "brave.exe",
-            os.path.join(os.getenv("PROGRAMFILES", ""), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-        ]
-    elif name in {"opera"}:
-        candidates = [
-            "launcher.exe",
-            os.path.join(os.getenv("PROGRAMFILES", ""), "Opera", "launcher.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Opera", "launcher.exe"),
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Opera", "launcher.exe"),
-        ]
-    elif name in {"firefox", "mozilla firefox"}:
-        candidates = [
-            "firefox.exe",
-            os.path.join(os.getenv("PROGRAMFILES", ""), "Mozilla Firefox", "firefox.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Mozilla Firefox", "firefox.exe"),
-        ]
-    elif name in {"edge", "microsoft edge"}:
-        candidates = [
-            "msedge.exe",
-            os.path.join(os.getenv("PROGRAMFILES", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-        ]
-    elif name in {"yandex", "yandex browser"}:
-        candidates = [
-            "browser.exe",
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
-            os.path.join(os.getenv("PROGRAMFILES", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
-            os.path.join(os.getenv("PROGRAMFILES(X86)", ""), "Yandex", "YandexBrowser", "Application", "browser.exe"),
-        ]
-    else:
-        candidates = [app_name]
-
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if os.path.isabs(candidate) and os.path.isfile(candidate):
-            return candidate
-        resolved = shutil.which(candidate)
-        if resolved:
-            return resolved
-    return None
+    return resolve_app_executable(app_name)
 
 
 def _create_desktop(name: str):

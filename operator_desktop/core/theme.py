@@ -127,6 +127,14 @@ def build_stylesheet(theme: Theme) -> str:
         font-weight: 600;
         font-size: 13px;
     }}
+    QLabel#BrowserChip {{
+        padding: 4px 10px;
+        border-radius: 10px;
+        border: 1px solid {c["border"]};
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 11px;
+        font-weight: 600;
+    }}
     QFrame#Sidebar {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 rgba(26, 34, 48, 0.62),

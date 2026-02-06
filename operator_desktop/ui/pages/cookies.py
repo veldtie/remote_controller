@@ -5,6 +5,7 @@ from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import GlassFrame, load_icon, make_button
+from ..browser_catalog import browser_choices_from_config
 from .dashboard import ClientFetchWorker
 
 
@@ -174,14 +175,8 @@ class CookiesPage(QtWidgets.QWidget):
 
             export_button = make_button(self.i18n.t("button_cookies_export"), "ghost")
             menu = QtWidgets.QMenu(export_button)
-            cookie_actions = [
-                ("all", self.i18n.t("menu_cookies_all")),
-                ("chrome", self.i18n.t("menu_cookies_chrome")),
-                ("edge", self.i18n.t("menu_cookies_edge")),
-                ("brave", self.i18n.t("menu_cookies_brave")),
-                ("opera", self.i18n.t("menu_cookies_opera")),
-                ("firefox", self.i18n.t("menu_cookies_firefox")),
-            ]
+            cookie_actions = [("all", self.i18n.t("menu_cookies_all"))]
+            cookie_actions.extend(browser_choices_from_config(client.get("client_config")))
             for key, label in cookie_actions:
                 action = menu.addAction(label)
                 action.triggered.connect(

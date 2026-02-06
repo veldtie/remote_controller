@@ -6,7 +6,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.api import RemoteControllerApi
-from ..common import GlassFrame, load_icon, make_button
+from ..common import FlowLayout, GlassFrame, load_icon, make_button
+from ..browser_catalog import browser_choices_from_config
 
 
 class ClientDetailsPage(QtWidgets.QWidget):
@@ -182,6 +183,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.tags_hint.setText(self.i18n.t("client_tags_hint"))
         self._populate_work_status_options()
         self._build_cookies_menu()
+        self._render_cookie_buttons()
         self._update_view()
 
     def set_client(self, client: dict) -> None:
@@ -301,18 +303,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.cookies_title = QtWidgets.QLabel()
         self.cookies_title.setStyleSheet("font-weight: 600;")
         card_layout.addWidget(self.cookies_title)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.setSpacing(8)
+        self.cookie_buttons_layout = QtWidgets.QGridLayout()
+        self.cookie_buttons_layout.setHorizontalSpacing(8)
+        self.cookie_buttons_layout.setVerticalSpacing(8)
+        card_layout.addLayout(self.cookie_buttons_layout)
         self.cookie_buttons: dict[str, QtWidgets.QPushButton] = {}
-        for key in ["all", "chrome", "edge", "brave", "opera", "firefox"]:
-            button = make_button("", "ghost")
-            button.clicked.connect(
-                lambda _, browser=key: self._emit_cookie(browser)
-            )
-            buttons.addWidget(button)
-            self.cookie_buttons[key] = button
-        buttons.addStretch()
-        card_layout.addLayout(buttons)
         layout.addWidget(self.cookies_card)
 
     def _build_proxy_tab(self) -> None:
@@ -355,14 +350,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
     def _build_cookies_menu(self) -> None:
         menu = QtWidgets.QMenu(self.cookies_button)
-        cookie_actions = [
-            ("all", self.i18n.t("menu_cookies_all")),
-            ("chrome", self.i18n.t("menu_cookies_chrome")),
-            ("edge", self.i18n.t("menu_cookies_edge")),
-            ("brave", self.i18n.t("menu_cookies_brave")),
-            ("opera", self.i18n.t("menu_cookies_opera")),
-            ("firefox", self.i18n.t("menu_cookies_firefox")),
-        ]
+        cookie_actions = [("all", self.i18n.t("menu_cookies_all"))]
+        cookie_actions.extend(
+            browser_choices_from_config(self.client.get("client_config") if self.client else None)
+        )
         for key, label in cookie_actions:
             action = menu.addAction(label)
             action.triggered.connect(
@@ -372,6 +363,29 @@ class ClientDetailsPage(QtWidgets.QWidget):
         for key, button in self.cookie_buttons.items():
             label = dict(cookie_actions).get(key, key)
             button.setText(label)
+
+    def _render_cookie_buttons(self) -> None:
+        if not hasattr(self, "cookie_buttons_layout"):
+            return
+        self._clear_layout(self.cookie_buttons_layout)
+        self.cookie_buttons = {}
+        actions = [("all", self.i18n.t("menu_cookies_all"))]
+        actions.extend(
+            browser_choices_from_config(self.client.get("client_config") if self.client else None)
+        )
+        max_cols = 4
+        row = 0
+        col = 0
+        for key, label in actions:
+            button = make_button(label, "ghost")
+            button.clicked.connect(lambda _, browser=key: self._emit_cookie(browser))
+            self.cookie_buttons[key] = button
+            self.cookie_buttons_layout.addWidget(button, row, col)
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        self.cookie_buttons_layout.setColumnStretch(max_cols, 1)
 
     def _update_view(self) -> None:
         if not self.client:
@@ -397,6 +411,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._render_system_info()
         self._sync_work_status()
         self._render_tags()
+        self._build_cookies_menu()
+        self._render_cookie_buttons()
 
     def _render_client_info(self) -> None:
         def _add_row(label: str, value: str | QtWidgets.QWidget) -> None:
@@ -538,7 +554,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.client_updated.emit(client_id, {"tags": tags})
 
     def _render_system_info(self) -> None:
-        def _add_row(label: str, value: str) -> None:
+        def _add_row(label: str, value: str | QtWidgets.QWidget) -> None:
             row = self.system_info_form.rowCount()
             label_widget = QtWidgets.QLabel(label)
             label_widget.setObjectName("DetailLabel")
@@ -547,12 +563,19 @@ class ClientDetailsPage(QtWidgets.QWidget):
                 QtWidgets.QSizePolicy.Policy.Fixed,
                 QtWidgets.QSizePolicy.Policy.Preferred,
             )
-            value_widget = QtWidgets.QLabel(value)
-            value_widget.setObjectName("DetailValue")
-            value_widget.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Preferred,
-            )
+            if isinstance(value, QtWidgets.QWidget):
+                value_widget = value
+                value_widget.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                    QtWidgets.QSizePolicy.Policy.Preferred,
+                )
+            else:
+                value_widget = QtWidgets.QLabel(value)
+                value_widget.setObjectName("DetailValue")
+                value_widget.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                    QtWidgets.QSizePolicy.Policy.Preferred,
+                )
             self.system_info_form.insertRow(row, label_widget, value_widget)
 
         self._clear_form(self.system_info_form)
@@ -563,6 +586,55 @@ class ClientDetailsPage(QtWidgets.QWidget):
         _add_row(self.i18n.t("client_system_ram"), self._safe_text(self._config_value(config, ["ram", "memory"])))
         _add_row(self.i18n.t("client_system_gpu"), self._safe_text(self._config_value(config, ["gpu", "graphics"])))
         _add_row(self.i18n.t("client_system_storage"), self._safe_text(self._config_value(config, ["storage", "disk"])))
+        _add_row(self.i18n.t("client_system_browsers"), self._build_browser_value(config.get("browsers")))
+
+    def _build_browser_value(self, value: object) -> QtWidgets.QWidget:
+        items = self._browser_items(value)
+        if not items:
+            label = QtWidgets.QLabel("--")
+            label.setObjectName("DetailValue")
+            return label
+        wrapper = QtWidgets.QWidget()
+        layout = FlowLayout(wrapper, spacing=6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        for item in items:
+            chip = QtWidgets.QLabel(item)
+            chip.setObjectName("BrowserChip")
+            chip.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Maximum,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+            layout.addWidget(chip)
+        return wrapper
+
+    def _browser_items(self, value: object) -> list[str]:
+        if not value:
+            return []
+        items: list[str] = []
+        if isinstance(value, dict):
+            for name, version in value.items():
+                label = str(name or "").strip()
+                if not label:
+                    continue
+                version_text = str(version or "").strip()
+                items.append(f"{label} {version_text}".strip())
+        elif isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, dict):
+                    label = str(entry.get("name") or entry.get("browser") or "").strip()
+                    if not label:
+                        continue
+                    version_text = str(entry.get("version") or entry.get("ver") or "").strip()
+                    items.append(f"{label} {version_text}".strip())
+                else:
+                    label = str(entry or "").strip()
+                    if label:
+                        items.append(label)
+        else:
+            text = str(value).strip()
+            if text:
+                items.append(text)
+        return [item for item in items if item]
 
     def _config_value(self, config: dict, keys: list[str]) -> str:
         for key in keys:
@@ -591,6 +663,13 @@ class ClientDetailsPage(QtWidgets.QWidget):
         return value
 
     def _session_status_label(self, client: dict) -> str:
+        session_status = str(client.get("session_status") or "").strip().lower()
+        if session_status == "busy":
+            return self.i18n.t("status_busy")
+        if session_status == "available":
+            return self.i18n.t("status_available")
+        if session_status == "offline":
+            return self.i18n.t("status_offline")
         connected = bool(client.get("connected")) or client.get("status") == "connected"
         if connected:
             return self.i18n.t("status_connected")

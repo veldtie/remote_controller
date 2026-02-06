@@ -221,6 +221,12 @@
         state.iceServersPresetSet = false;
       }
     }
+    if (
+      Object.prototype.hasOwnProperty.call(payload, "availableBrowsers") &&
+      remdesk.applyAvailableBrowsers
+    ) {
+      remdesk.applyAvailableBrowsers(payload.availableBrowsers);
+    }
     remdesk.updateTopBar();
     if (payload.stream && dom.streamProfile) {
       remdesk.applyStreamProfile(payload.stream, false);

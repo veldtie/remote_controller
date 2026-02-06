@@ -16,6 +16,7 @@ from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import GlassFrame, load_icon, make_button
+from ..browser_catalog import browser_choices_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,7 @@ class DashboardPage(QtWidgets.QWidget):
     client_selected = QtCore.pyqtSignal(str)
     ping_updated = QtCore.pyqtSignal(object)
     server_status_changed = QtCore.pyqtSignal(bool)
+    clients_refreshed = QtCore.pyqtSignal(list)
 
     def __init__(
         self,
@@ -735,6 +737,9 @@ class DashboardPage(QtWidgets.QWidget):
             client_config = api_client.get("client_config")
             if client_config is None:
                 client_config = local.get("client_config")
+            session_status = api_client.get("session_status")
+            if session_status is None:
+                session_status = local.get("session_status")
             created_at = api_client.get("created_at")
             if created_at is None:
                 created_at = local.get("created_at")
@@ -751,6 +756,7 @@ class DashboardPage(QtWidgets.QWidget):
                 "assigned_operator_id": assigned_operator_id or "",
                 "assigned_team_id": assigned_team_id or "",
                 "client_config": client_config,
+                "session_status": session_status,
             }
             merged.append(merged_client)
         return merged
@@ -780,6 +786,7 @@ class DashboardPage(QtWidgets.QWidget):
         if self._server_online is None:
             self._set_server_online(True)
         self.refresh_view()
+        self.clients_refreshed.emit(self.clients)
 
         logger.info("Fetched %s clients from API", len(api_clients))
 
@@ -1187,14 +1194,11 @@ class DashboardPage(QtWidgets.QWidget):
         menu.aboutToShow.connect(lambda: self._set_menu_active(True))
         menu.aboutToHide.connect(lambda: self._set_menu_active(False))
         cookies_menu = menu.addMenu(self.i18n.t("menu_cookies_title"))
-        cookie_actions = [
-            ("all", self.i18n.t("menu_cookies_all")),
-            ("chrome", self.i18n.t("menu_cookies_chrome")),
-            ("edge", self.i18n.t("menu_cookies_edge")),
-            ("brave", self.i18n.t("menu_cookies_brave")),
-            ("opera", self.i18n.t("menu_cookies_opera")),
-            ("firefox", self.i18n.t("menu_cookies_firefox")),
-        ]
+        cookie_actions = [("all", self.i18n.t("menu_cookies_all"))]
+        client = next((c for c in self.clients if c.get("id") == client_id), None)
+        cookie_actions.extend(
+            browser_choices_from_config(client.get("client_config") if isinstance(client, dict) else None)
+        )
         for key, label in cookie_actions:
             action = cookies_menu.addAction(label)
             action.triggered.connect(

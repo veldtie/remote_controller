@@ -1,3 +1,4 @@
+import json
 import secrets
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -8,10 +9,36 @@ from fastapi.responses import FileResponse
 
 import signaling_config as config
 import signaling_db
+import signaling_registry
 
 
 router = APIRouter()
 WORK_STATUSES = {"planning", "in_work", "worked_out"}
+
+
+def _coerce_json(value: object, fallback: object) -> object:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    return fallback
+
+
+async def _resolve_session_status(client_id: str, row_status: str | None) -> str:
+    if not client_id:
+        return "offline"
+    has_browser, has_client, _ = await signaling_registry.registry.get_session_state(client_id)
+    online = (row_status == "connected") or has_client
+    if not online:
+        return "offline"
+    return "busy" if has_browser else "available"
 
 
 @router.get("/ice-config")
@@ -159,7 +186,17 @@ async def list_remote_clients(request: Request) -> dict[str, list[dict[str, obje
             ORDER BY remote_clients.id;
             """
         )
-    return {"clients": [dict(row) for row in rows]}
+    clients: list[dict[str, object]] = []
+    for row in rows:
+        client = dict(row)
+        client["client_config"] = _coerce_json(client.get("client_config"), None)
+        client["tags"] = _coerce_json(client.get("tags"), [])
+        client["session_status"] = await _resolve_session_status(
+            str(client.get("id") or ""),
+            str(client.get("status") or ""),
+        )
+        clients.append(client)
+    return {"clients": clients}
 
 
 @router.patch("/api/remote-clients/{client_id}")
