@@ -4,9 +4,13 @@ Uses Indirect Display Driver (IDD) to create virtual monitors that can be
 captured even without a physical display connected.
 
 Supports:
+- IddSampleDriver (embedded, auto-install)
 - Virtual-Display-Driver (https://github.com/itsmikethetech/Virtual-Display-Driver)
-- IddSampleDriver
 - Parsec Virtual Display (if installed)
+
+For silent installation without prompts:
+1. Run as Administrator
+2. Driver must be signed (or Windows in test mode)
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -25,6 +30,18 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Try to import embedded driver support
+try:
+    from remote_client.windows.vdd_driver import (
+        EmbeddedVDDSession,
+        VDDDriverInstaller,
+        VDDControl,
+    )
+    EMBEDDED_VDD_AVAILABLE = True
+except ImportError:
+    EMBEDDED_VDD_AVAILABLE = False
+    EmbeddedVDDSession = None
 
 # Virtual Display Driver download URL and paths
 VDD_RELEASE_URL = "https://github.com/itsmikethetech/Virtual-Display-Driver/releases/latest/download/VirtualDisplayDriver.zip"
@@ -341,11 +358,19 @@ class VirtualDisplayManager:
 
 
 class VirtualDisplaySession:
-    """Manages a complete virtual display session for hidden desktop."""
+    """Manages a complete virtual display session for hidden desktop.
+    
+    This class tries multiple methods to create a virtual display:
+    1. Embedded VDD driver (if available in bundle)
+    2. External VDD control utility
+    3. Download and install driver (if admin)
+    """
     
     def __init__(self) -> None:
         self._manager = VirtualDisplayManager()
+        self._embedded_session: EmbeddedVDDSession | None = None
         self._active = False
+        self._resolution = (1920, 1080)
     
     def start(
         self, 
@@ -353,35 +378,70 @@ class VirtualDisplaySession:
         height: int = 1080,
         auto_install: bool = True
     ) -> bool:
-        """Start a virtual display session."""
-        # Check if driver is installed
-        if not self._manager.is_driver_installed():
-            logger.info("Virtual Display Driver not found")
-            if auto_install and _is_admin():
-                logger.info("Attempting to install driver...")
-                if not self._manager.install_driver():
-                    logger.error("Failed to install Virtual Display Driver")
-                    return False
-            else:
-                logger.warning(
-                    "Virtual Display Driver not installed. "
-                    "Run as administrator to auto-install, or install manually from: "
-                    "https://github.com/itsmikethetech/Virtual-Display-Driver"
-                )
-                return False
+        """Start a virtual display session.
         
-        # Create virtual display
-        if not self._manager.create_display(width, height):
-            logger.error("Failed to create virtual display")
-            return False
+        Tries multiple methods:
+        1. If embedded driver available, use it (silent install)
+        2. If external VDD found, use it
+        3. If admin and auto_install, download and install
         
-        self._active = True
-        return True
+        Args:
+            width: Display width in pixels
+            height: Display height in pixels
+            auto_install: Allow automatic driver installation
+        
+        Returns:
+            True if virtual display is ready for capture
+        """
+        self._resolution = (width, height)
+        
+        # Method 1: Try embedded VDD (preferred for silent install)
+        if EMBEDDED_VDD_AVAILABLE and EmbeddedVDDSession:
+            logger.info("Trying embedded VDD driver...")
+            try:
+                self._embedded_session = EmbeddedVDDSession()
+                if self._embedded_session.start(width, height, auto_install=auto_install):
+                    logger.info("Virtual display started via embedded driver")
+                    self._active = True
+                    return True
+                else:
+                    logger.warning("Embedded VDD failed, trying fallback methods")
+                    self._embedded_session = None
+            except Exception as e:
+                logger.warning("Embedded VDD error: %s", e)
+                self._embedded_session = None
+        
+        # Method 2: Try existing VDD installation
+        if self._manager.is_driver_installed():
+            logger.info("Found existing VDD installation")
+            if self._manager.create_display(width, height):
+                self._active = True
+                return True
+        
+        # Method 3: Auto-install if allowed
+        if auto_install and _is_admin():
+            logger.info("Attempting to download and install VDD driver...")
+            if self._manager.install_driver():
+                if self._manager.create_display(width, height):
+                    self._active = True
+                    return True
+        
+        logger.error(
+            "Virtual Display Driver not available. Options:\n"
+            "1. Run as Administrator for auto-install\n"
+            "2. Install manually from: https://github.com/itsmikethetech/Virtual-Display-Driver\n"
+            "3. Embed driver in build (see drivers/download_driver.py)"
+        )
+        return False
     
     def stop(self) -> None:
         """Stop the virtual display session."""
         if self._active:
-            self._manager.remove_display()
+            if self._embedded_session:
+                self._embedded_session.stop()
+                self._embedded_session = None
+            else:
+                self._manager.remove_display()
             self._active = False
     
     @property
@@ -390,14 +450,18 @@ class VirtualDisplaySession:
     
     @property
     def monitor_index(self) -> int | None:
+        if self._embedded_session:
+            return self._embedded_session.get_monitor_index()
         return self._manager.monitor_index
     
     @property
     def resolution(self) -> tuple[int, int]:
-        return self._manager.resolution
+        return self._resolution
     
     def get_capture_region(self) -> dict[str, int] | None:
         """Get the region to capture for mss."""
+        if self._embedded_session:
+            return self._embedded_session.get_capture_region()
         return self._manager.get_monitor_rect()
 
 
