@@ -153,6 +153,7 @@
     pendingAppLaunch: null,
     pendingExport: null,
     pendingExportRetries: 0,
+    availableBrowsers: null,
     isConnected: false,
     e2eeContext: null,
     cursorX: 0,
@@ -455,6 +456,44 @@
     }
     dom.cookieStatus.textContent = message;
     dom.cookieStatus.dataset.state = stateKey;
+  }
+
+  function applyAvailableBrowsers(list) {
+    if (!Array.isArray(list)) {
+      state.availableBrowsers = null;
+      dom.appButtons.forEach((button) => {
+        button.style.display = "";
+      });
+      dom.cookieButtons.forEach((button) => {
+        button.style.display = "";
+      });
+      return;
+    }
+    if (!list.length) {
+      state.availableBrowsers = new Set();
+      dom.appButtons.forEach((button) => {
+        button.style.display = "none";
+      });
+      dom.cookieButtons.forEach((button) => {
+        const key = String(button.dataset.cookie || "").toLowerCase();
+        button.style.display = key === "all" ? "" : "none";
+      });
+      return;
+    }
+    const allowed = new Set(list.map((item) => String(item).toLowerCase()));
+    state.availableBrowsers = allowed;
+    dom.appButtons.forEach((button) => {
+      const key = String(button.dataset.app || "").toLowerCase();
+      button.style.display = allowed.has(key) ? "" : "none";
+    });
+    dom.cookieButtons.forEach((button) => {
+      const key = String(button.dataset.cookie || "").toLowerCase();
+      if (key === "all") {
+        button.style.display = "";
+        return;
+      }
+      button.style.display = allowed.has(key) ? "" : "none";
+    });
   }
 
   function updateAppLaunchAvailability() {
@@ -800,6 +839,7 @@
   remdesk.setDownloadStatus = setDownloadStatus;
   remdesk.setAppStatus = setAppStatus;
   remdesk.setCookieStatus = setCookieStatus;
+  remdesk.applyAvailableBrowsers = applyAvailableBrowsers;
   remdesk.updateAppLaunchAvailability = updateAppLaunchAvailability;
   remdesk.updateCookieAvailability = updateCookieAvailability;
   remdesk.setModeLocked = setModeLocked;

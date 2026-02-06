@@ -16,6 +16,7 @@ from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
 from .pages.client_details import ClientDetailsPage
 from .pages.dashboard import DashboardPage
+from .browser_catalog import browser_keys_from_config
 from .pages.instructions import InstructionsPage
 from .pages.settings import SettingsPage
 from .pages.teams import TeamsPage
@@ -178,6 +179,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.client_selected.connect(self.open_client_details)
         self.dashboard.ping_updated.connect(self.update_ping)
         self.dashboard.server_status_changed.connect(self.handle_server_status)
+        self.dashboard.clients_refreshed.connect(self.handle_clients_refreshed)
         self.cookies_page.extra_action_requested.connect(self.handle_extra_action)
         self.cookies_page.client_selected.connect(self.open_client_details)
         self.client_details.back_requested.connect(self.show_clients)
@@ -294,6 +296,16 @@ class MainShell(QtWidgets.QWidget):
                 )
             self.settings.set("clients", self.dashboard.clients)
             self.settings.save()
+
+    def handle_clients_refreshed(self, clients: list[dict]) -> None:
+        if not self.client_details.client:
+            return
+        current_id = self.client_details.client.get("id")
+        if not current_id:
+            return
+        updated = next((c for c in clients if c.get("id") == current_id), None)
+        if updated:
+            self.client_details.set_client(updated)
 
     def update_brand_header(self) -> None:
         window = self.window()
@@ -547,6 +559,7 @@ class MainShell(QtWidgets.QWidget):
             region = str(client.get("region") or "").strip()
             country = region
             config = client.get("client_config") or {}
+            available_browsers = browser_keys_from_config(config)
             if isinstance(config, dict):
                 antifraud = config.get("antifraud") or {}
                 if isinstance(antifraud, dict):
@@ -555,6 +568,8 @@ class MainShell(QtWidgets.QWidget):
                         flags = [str(code).upper() for code in raw_flags if str(code).strip()]
             if flags:
                 country_code = flags[0]
+        else:
+            available_browsers = []
         if client_id in self._session_windows:
             window = self._session_windows[client_id]
             window.apply_context(
@@ -570,6 +585,7 @@ class MainShell(QtWidgets.QWidget):
                 manage_mode=False,
                 ice_servers=ice_servers,
                 storage_only=False,
+                available_browsers=available_browsers,
             )
             window.raise_()
             window.activateWindow()
@@ -610,6 +626,7 @@ class MainShell(QtWidgets.QWidget):
             country=country or None,
             country_code=country_code or None,
             flags=flags or None,
+            available_browsers=available_browsers,
             parent=self,
         )
         dialog.closed.connect(self._handle_session_closed)
@@ -628,6 +645,10 @@ class MainShell(QtWidgets.QWidget):
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
         ice_servers = self._resolve_ice_servers()
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        available_browsers = browser_keys_from_config(
+            client.get("client_config") if isinstance(client, dict) else None
+        )
         if client_id in self._storage_windows:
             window = self._storage_windows[client_id]
             window.apply_context(
@@ -639,6 +660,7 @@ class MainShell(QtWidgets.QWidget):
                 manage_mode=False,
                 ice_servers=ice_servers,
                 storage_only=True,
+                available_browsers=available_browsers,
             )
             window.raise_()
             window.activateWindow()
@@ -671,6 +693,7 @@ class MainShell(QtWidgets.QWidget):
             ice_servers=ice_servers,
             storage_only=True,
             show_window=True,
+            available_browsers=available_browsers,
             parent=self,
         )
         dialog.closed.connect(self._handle_storage_session_closed)
@@ -689,6 +712,10 @@ class MainShell(QtWidgets.QWidget):
         base_url = self._resolve_server_url()
         token = self._resolve_api_token()
         ice_servers = self._resolve_ice_servers()
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        available_browsers = browser_keys_from_config(
+            client.get("client_config") if isinstance(client, dict) else None
+        )
         if client_id in self._utility_sessions:
             window = self._utility_sessions[client_id]
             window.apply_context(
@@ -700,6 +727,7 @@ class MainShell(QtWidgets.QWidget):
                 manage_mode=False,
                 ice_servers=ice_servers,
                 storage_only=False,
+                available_browsers=available_browsers,
             )
             return window
 
@@ -730,6 +758,7 @@ class MainShell(QtWidgets.QWidget):
             ice_servers=ice_servers,
             storage_only=False,
             show_window=False,
+            available_browsers=available_browsers,
             parent=self,
         )
         dialog.closed.connect(self._handle_utility_session_closed)

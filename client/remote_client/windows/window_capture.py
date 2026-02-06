@@ -64,6 +64,14 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
 
+# Some Python builds omit LRESULT from ctypes.wintypes (seen in PyInstaller).
+# Define it from LONG_PTR when missing to avoid import-time crashes.
+if not hasattr(wintypes, "LRESULT"):
+    if hasattr(wintypes, "LONG_PTR"):
+        wintypes.LRESULT = wintypes.LONG_PTR  # type: ignore[attr-defined]
+    else:
+        wintypes.LRESULT = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long  # type: ignore[attr-defined]
+
 
 class RECT(ctypes.Structure):
     _fields_ = [
