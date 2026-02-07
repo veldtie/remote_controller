@@ -14,6 +14,7 @@ from .common import GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
+from .pages.proxy import ProxyPage
 from .pages.client_details import ClientDetailsPage
 from .pages.dashboard import DashboardPage
 from .browser_catalog import browser_keys_from_config
@@ -67,6 +68,7 @@ class MainShell(QtWidgets.QWidget):
             ("main", "nav_main", "clients"),
             ("teams", "nav_teams", "team"),
             ("cookies", "nav_cookies", "cookies"),
+            ("proxy", "nav_proxy", "more"),
             ("compiler", "nav_compiler", "build"),
         ]
         for key, _, icon_name in nav_items:
@@ -157,6 +159,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
         self.cookies_page = CookiesPage(i18n, settings, api=api)
         self.client_details = ClientDetailsPage(i18n, settings, api=api)
+        self.proxy_page = ProxyPage(i18n, settings, api=api)
         self.teams_page = TeamsPage(i18n, settings, api=api)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings, api=api)
@@ -164,6 +167,7 @@ class MainShell(QtWidgets.QWidget):
         self.stack.addWidget(self.dashboard)
         self.stack.addWidget(self.cookies_page)
         self.stack.addWidget(self.client_details)
+        self.stack.addWidget(self.proxy_page)
         self.stack.addWidget(self.teams_page)
         self.stack.addWidget(self.compiler)
         self.stack.addWidget(self.settings_page)
@@ -182,6 +186,8 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.clients_refreshed.connect(self.handle_clients_refreshed)
         self.cookies_page.extra_action_requested.connect(self.handle_extra_action)
         self.cookies_page.client_selected.connect(self.open_client_details)
+        self.proxy_page.extra_action_requested.connect(self.handle_extra_action)
+        self.proxy_page.client_selected.connect(self.open_client_details)
         self.client_details.back_requested.connect(self.show_clients)
         self.client_details.connect_requested.connect(self.toggle_connection)
         self.client_details.storage_requested.connect(self.open_storage)
@@ -206,6 +212,7 @@ class MainShell(QtWidgets.QWidget):
         self.nav_buttons["compiler"].setText(self.i18n.t("nav_compiler"))
         self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
         self.nav_buttons["cookies"].setText(self.i18n.t("nav_cookies"))
+        self.nav_buttons["proxy"].setText(self.i18n.t("nav_proxy"))
         self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
         self.nav_buttons["settings"].setText(self.i18n.t("nav_settings"))
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
@@ -220,6 +227,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.apply_translations()
         self.cookies_page.apply_translations()
         self.client_details.apply_translations()
+        self.proxy_page.apply_translations()
         self.teams_page.apply_translations()
         self.compiler.apply_translations()
         self.settings_page.apply_translations()
@@ -318,6 +326,7 @@ class MainShell(QtWidgets.QWidget):
             self.i18n.t("nav_main"),
             self.i18n.t("nav_cookies"),
             self.i18n.t("client_details_title"),
+            self.i18n.t("nav_proxy"),
             self.i18n.t("nav_teams"),
             self.i18n.t("nav_compiler"),
             self.i18n.t("nav_settings"),
@@ -342,10 +351,11 @@ class MainShell(QtWidgets.QWidget):
         mapping = {
             "main": 0,
             "cookies": 1,
-            "teams": 3,
-            "compiler": 4,
-            "settings": 5,
-            "instructions": 6,
+            "proxy": 3,
+            "teams": 4,
+            "compiler": 5,
+            "settings": 6,
+            "instructions": 7,
         }
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
@@ -354,6 +364,8 @@ class MainShell(QtWidgets.QWidget):
             self.teams_page.refresh_from_api()
         if key == "cookies":
             self.cookies_page.refresh_clients()
+        if key == "proxy":
+            self.proxy_page.refresh_clients()
         animate_widget(self.stack.currentWidget())
 
     def update_role_visibility(self) -> None:

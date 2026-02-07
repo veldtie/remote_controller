@@ -8,6 +8,7 @@ from ...core.settings import SettingsStore
 from ...core.api import RemoteControllerApi
 from ..common import FlowLayout, GlassFrame, load_icon, make_button
 from ..browser_catalog import browser_choices_from_config
+from ..proxy_check import ProxyCheckWorker
 
 
 class ClientDetailsPage(QtWidgets.QWidget):
@@ -35,6 +36,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._tag_icon_cache: dict[str, QtGui.QIcon] = {}
         self._tag_checks: dict[str, QtWidgets.QCheckBox] = {}
         self._detail_label_width = 150
+        self._proxy_check_worker: ProxyCheckWorker | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
@@ -177,6 +179,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.proxy_action.setText(self.i18n.t("menu_proxy_download"))
         if hasattr(self, "proxy_copy_button"):
             self.proxy_copy_button.setText(self.i18n.t("proxy_copy_button"))
+        if hasattr(self, "proxy_check_button"):
+            self.proxy_check_button.setText(self.i18n.t("proxy_check_button"))
         self.storage_title.setText(self.i18n.t("client_storage_title"))
         self.storage_body.setText(self.i18n.t("client_storage_body"))
         self.storage_action.setText(self.i18n.t("button_storage"))
@@ -330,10 +334,13 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.proxy_action.clicked.connect(self._export_proxy)
         self.proxy_copy_button = make_button("", "ghost")
         self.proxy_copy_button.clicked.connect(self._copy_proxy)
+        self.proxy_check_button = make_button("", "ghost")
+        self.proxy_check_button.clicked.connect(self._check_proxy)
         actions_row = QtWidgets.QHBoxLayout()
         actions_row.setSpacing(8)
         actions_row.addWidget(self.proxy_action)
         actions_row.addWidget(self.proxy_copy_button)
+        actions_row.addWidget(self.proxy_check_button)
         actions_row.addStretch()
         card_layout.addLayout(actions_row)
         layout.addWidget(self.proxy_card)
@@ -365,12 +372,16 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.proxy_body.setText(self.i18n.t("client_proxy_body"))
             if hasattr(self, "proxy_copy_button"):
                 self.proxy_copy_button.setEnabled(False)
+            if hasattr(self, "proxy_check_button"):
+                self.proxy_check_button.setEnabled(False)
             return
         payload = self._proxy_payload()
         if not payload:
             self.proxy_body.setText(self.i18n.t("proxy_status_disabled"))
             if hasattr(self, "proxy_copy_button"):
                 self.proxy_copy_button.setEnabled(False)
+            if hasattr(self, "proxy_check_button"):
+                self.proxy_check_button.setEnabled(False)
             return
         enabled = payload.get("enabled")
         port = payload.get("port")
@@ -378,6 +389,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.proxy_body.setText(self.i18n.t("proxy_status_disabled"))
             if hasattr(self, "proxy_copy_button"):
                 self.proxy_copy_button.setEnabled(False)
+            if hasattr(self, "proxy_check_button"):
+                self.proxy_check_button.setEnabled(False)
             return
         host = payload.get("host") or "--"
         proxy_type = payload.get("type") or "socks5"
@@ -395,6 +408,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.proxy_body.setText("\n".join(lines))
         if hasattr(self, "proxy_copy_button"):
             self.proxy_copy_button.setEnabled(bool(host and port))
+        if hasattr(self, "proxy_check_button"):
+            self.proxy_check_button.setEnabled(bool(host and port))
 
     def _copy_proxy(self) -> None:
         payload = self._proxy_payload()
@@ -407,6 +422,52 @@ class ClientDetailsPage(QtWidgets.QWidget):
         proxy_type = payload.get("type") or "socks5"
         proxy_string = f"{proxy_type}://{host}:{port}"
         QtWidgets.QApplication.clipboard().setText(proxy_string)
+
+    def _check_proxy(self) -> None:
+        payload = self._proxy_payload()
+        if not payload:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("nav_proxy"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+        host = payload.get("host") or ""
+        port = payload.get("port")
+        if not host or not port:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("nav_proxy"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+        if self._proxy_check_worker and self._proxy_check_worker.isRunning():
+            return
+        if hasattr(self, "proxy_check_button"):
+            self.proxy_check_button.setEnabled(False)
+            self.proxy_check_button.setText(self.i18n.t("proxy_checking"))
+        client_id = str(self.client.get("id") if self.client else "") or "client"
+        worker = ProxyCheckWorker(client_id, host, port)
+        worker.finished.connect(self._handle_proxy_check_finished)
+        self._proxy_check_worker = worker
+        worker.start()
+
+    def _handle_proxy_check_finished(
+        self, _client_id: str, ok: bool, detail: str, latency_ms: int
+    ) -> None:
+        self._proxy_check_worker = None
+        if hasattr(self, "proxy_check_button"):
+            self.proxy_check_button.setEnabled(True)
+            self.proxy_check_button.setText(self.i18n.t("proxy_check_button"))
+        if ok:
+            message = f"{self.i18n.t('proxy_check_ok')} ({latency_ms} ms)"
+            QtWidgets.QMessageBox.information(self, self.i18n.t("nav_proxy"), message)
+            return
+        suffix = detail.strip() if isinstance(detail, str) else ""
+        message = self.i18n.t("proxy_check_failed")
+        if suffix:
+            message = f"{message}: {suffix}"
+        QtWidgets.QMessageBox.warning(self, self.i18n.t("nav_proxy"), message)
 
     def _build_storage_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.storage_tab)
