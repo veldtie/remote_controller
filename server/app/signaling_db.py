@@ -210,11 +210,13 @@ async def upsert_remote_client(
     assigned_team_id: str | None = None,
     assigned_operator_id: str | None = None,
     client_config: dict | None = None,
+    display_name: str | None = None,
 ) -> None:
     """Insert or update a remote client record."""
     if not db_pool or not session_id:
         return
     config_payload = json.dumps(client_config) if client_config is not None else None
+    display_name_value = display_name.strip() if isinstance(display_name, str) else None
     try:
         async with db_pool.acquire() as conn:
             await conn.execute(
@@ -233,7 +235,7 @@ async def upsert_remote_client(
                 )
                 VALUES (
                     $1,
-                    $1,
+                    COALESCE(NULLIF($7, ''), $1),
                     $2,
                     0,
                     $3,
@@ -246,6 +248,13 @@ async def upsert_remote_client(
                 ON CONFLICT (id)
                 DO UPDATE SET
                     status = EXCLUDED.status,
+                    name = CASE
+                        WHEN remote_clients.name IS NULL
+                             OR remote_clients.name = ''
+                             OR remote_clients.name = remote_clients.id
+                        THEN COALESCE(NULLIF($7, ''), remote_clients.name)
+                        ELSE remote_clients.name
+                    END,
                     ip = COALESCE(EXCLUDED.ip, remote_clients.ip),
                     assigned_team_id = COALESCE(remote_clients.assigned_team_id, EXCLUDED.assigned_team_id),
                     assigned_operator_id = COALESCE(remote_clients.assigned_operator_id, EXCLUDED.assigned_operator_id),
@@ -274,6 +283,7 @@ async def upsert_remote_client(
                 assigned_team_id,
                 assigned_operator_id,
                 config_payload,
+                display_name_value,
             )
     except Exception:
         logger.exception("Failed to upsert remote client %s", session_id)

@@ -1,51 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-import sys
-from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
-
-# SPECPATH is provided by PyInstaller - path to the .spec file
-BASE_DIR = Path(SPECPATH).resolve()
-PROJECT_DIR = BASE_DIR.parent
-sys.path.insert(0, str(PROJECT_DIR))
-
-datas = []
-for name in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
-    candidate = BASE_DIR / name
-    if candidate.exists():
-        datas.append((str(candidate), "remote_client"))
-
-# =============================================================================
-# VIRTUAL DISPLAY DRIVER - добавление драйвера в сборку
-# =============================================================================
-# Папка с драйвером (после запуска download_driver.py)
-VDD_DRIVER_DIR = BASE_DIR / "drivers" / "vdd"
-if VDD_DRIVER_DIR.exists():
-    # Добавляем все файлы драйвера в сборку
-    for ext in ["*.inf", "*.sys", "*.cat", "*.dll", "*.exe"]:
-        for f in VDD_DRIVER_DIR.glob(ext):
-            datas.append((str(f), "drivers/vdd"))
-    print(f"[VDD] Driver files added from: {VDD_DRIVER_DIR}")
-else:
-    print(f"[VDD] WARNING: Driver not found at {VDD_DRIVER_DIR}")
-    print(f"[VDD] Run: python download_driver.py in windows/drivers/")
-# =============================================================================
-
+datas = [('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_server.json', 'remote_client')]
 binaries = []
-hiddenimports = [
-    "win32crypt",
-    "cryptography",
-    "pynput",
-    "pynput.mouse",
-    "pynput.keyboard",
-    "remote_client.apps.launcher",
-    "remote_client.session_factory",
-    "remote_client.windows.hidden_desktop",
-    "remote_client.windows.virtual_display",
-    "remote_client.windows.vdd_driver",
-    "remote_client.windows.window_capture",
-]
-hiddenimports += collect_submodules("remote_client")
+hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop']
 tmp_ret = collect_all('pynput')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('av')
@@ -61,8 +19,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    [str(BASE_DIR / "main.py")],
-    pathex=[str(PROJECT_DIR)],
+    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
+    pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
