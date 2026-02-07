@@ -18,6 +18,19 @@ cleanup_task: asyncio.Task | None = None
 connected_time_task: asyncio.Task | None = None
 
 
+def _extract_display_name(client_config: dict | None) -> str | None:
+    if not client_config:
+        return None
+    for key in ("pc_name", "pc", "device_name", "device"):
+        value = client_config.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
 def _client_label(websocket: WebSocket) -> str:
     """Format a client label for logging."""
     if websocket.client:
@@ -160,6 +173,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                         client_config = payload.get("client_config")
                         if client_config is not None and not isinstance(client_config, dict):
                             client_config = None
+                        display_name = _extract_display_name(client_config)
                         if device_token:
                             has_browser, _ = await registry.set_device_token(
                                 session_id, device_token
@@ -182,6 +196,7 @@ async def websocket_signaling(websocket: WebSocket) -> None:
                             team_id,
                             assigned_operator_id,
                             client_config,
+                            display_name,
                         )
                     elif role == "browser":
                         _, has_client, device_token = await registry.get_session_state(
