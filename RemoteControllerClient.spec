@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_azaa_irs\\remote_client\\rc_server.json', 'remote_client')]
+datas = []
 binaries = []
-hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop']
-tmp_ret = collect_all('pynput')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.session_factory', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop']
+hiddenimports += collect_submodules('remote_client')
 tmp_ret = collect_all('av')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('aiortc')
@@ -19,7 +19,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
+    ['client\\client.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -27,7 +27,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['numpy.f2py.tests', 'pytest'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

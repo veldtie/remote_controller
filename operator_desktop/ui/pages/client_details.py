@@ -175,6 +175,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.proxy_title.setText(self.i18n.t("client_proxy_title"))
         self.proxy_body.setText(self.i18n.t("client_proxy_body"))
         self.proxy_action.setText(self.i18n.t("menu_proxy_download"))
+        if hasattr(self, "proxy_copy_button"):
+            self.proxy_copy_button.setText(self.i18n.t("proxy_copy_button"))
         self.storage_title.setText(self.i18n.t("client_storage_title"))
         self.storage_body.setText(self.i18n.t("client_storage_body"))
         self.storage_action.setText(self.i18n.t("button_storage"))
@@ -326,8 +328,85 @@ class ClientDetailsPage(QtWidgets.QWidget):
         card_layout.addWidget(self.proxy_body)
         self.proxy_action = make_button("", "primary")
         self.proxy_action.clicked.connect(self._export_proxy)
-        card_layout.addWidget(self.proxy_action, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.proxy_copy_button = make_button("", "ghost")
+        self.proxy_copy_button.clicked.connect(self._copy_proxy)
+        actions_row = QtWidgets.QHBoxLayout()
+        actions_row.setSpacing(8)
+        actions_row.addWidget(self.proxy_action)
+        actions_row.addWidget(self.proxy_copy_button)
+        actions_row.addStretch()
+        card_layout.addLayout(actions_row)
         layout.addWidget(self.proxy_card)
+
+    def _proxy_payload(self) -> dict | None:
+        if not self.client:
+            return None
+        config = (
+            self.client.get("client_config")
+            if isinstance(self.client.get("client_config"), dict)
+            else {}
+        )
+        proxy = config.get("proxy")
+        if not isinstance(proxy, dict):
+            return None
+        host = proxy.get("host") or self.client.get("ip") or ""
+        return {
+            "enabled": bool(proxy.get("enabled") or proxy.get("port")),
+            "host": host,
+            "port": proxy.get("port"),
+            "type": proxy.get("type") or "socks5",
+            "udp": proxy.get("udp"),
+        }
+
+    def _render_proxy_info(self) -> None:
+        if not hasattr(self, "proxy_body"):
+            return
+        if not self.client:
+            self.proxy_body.setText(self.i18n.t("client_proxy_body"))
+            if hasattr(self, "proxy_copy_button"):
+                self.proxy_copy_button.setEnabled(False)
+            return
+        payload = self._proxy_payload()
+        if not payload:
+            self.proxy_body.setText(self.i18n.t("proxy_status_disabled"))
+            if hasattr(self, "proxy_copy_button"):
+                self.proxy_copy_button.setEnabled(False)
+            return
+        enabled = payload.get("enabled")
+        port = payload.get("port")
+        if not enabled and not port:
+            self.proxy_body.setText(self.i18n.t("proxy_status_disabled"))
+            if hasattr(self, "proxy_copy_button"):
+                self.proxy_copy_button.setEnabled(False)
+            return
+        host = payload.get("host") or "--"
+        proxy_type = payload.get("type") or "socks5"
+        udp_enabled = payload.get("udp")
+        lines = [
+            f"{self.i18n.t('proxy_status_label')}: {self.i18n.t('proxy_status_ready')}",
+            f"{self.i18n.t('proxy_host_label')}: {host}",
+            f"{self.i18n.t('proxy_port_label')}: {port or '--'}",
+            f"{self.i18n.t('proxy_type_label')}: {proxy_type}",
+        ]
+        if udp_enabled is not None:
+            lines.append(
+                f"{self.i18n.t('proxy_udp_label')}: {self._format_proxy_bool(udp_enabled)}"
+            )
+        self.proxy_body.setText("\n".join(lines))
+        if hasattr(self, "proxy_copy_button"):
+            self.proxy_copy_button.setEnabled(bool(host and port))
+
+    def _copy_proxy(self) -> None:
+        payload = self._proxy_payload()
+        if not payload:
+            return
+        host = payload.get("host") or ""
+        port = payload.get("port")
+        if not host or not port:
+            return
+        proxy_type = payload.get("type") or "socks5"
+        proxy_string = f"{proxy_type}://{host}:{port}"
+        QtWidgets.QApplication.clipboard().setText(proxy_string)
 
     def _build_storage_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.storage_tab)
@@ -409,6 +488,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._update_actions(bool(self.client.get("connected")))
         self._render_client_info()
         self._render_system_info()
+        self._render_proxy_info()
         self._sync_work_status()
         self._render_tags()
         self._build_cookies_menu()
@@ -587,6 +667,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
         _add_row(self.i18n.t("client_system_gpu"), self._safe_text(self._config_value(config, ["gpu", "graphics"])))
         _add_row(self.i18n.t("client_system_storage"), self._safe_text(self._config_value(config, ["storage", "disk"])))
         _add_row(self.i18n.t("client_system_browsers"), self._build_browser_value(config.get("browsers")))
+        updated_value = None
+        for key in ("system_info_updated_at", "system_info_updated"):
+            if key in config:
+                updated_value = config.get(key)
+                break
+        _add_row(self.i18n.t("client_system_updated"), self._format_system_info_updated(updated_value))
 
     def _build_browser_value(self, value: object) -> QtWidgets.QWidget:
         items = self._browser_items(value)
@@ -777,6 +863,25 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if lang == "ru":
             return parsed.strftime("%d.%m.%Y")
         return parsed.strftime("%Y-%m-%d")
+
+    def _format_proxy_bool(self, value: object) -> str:
+        return self.i18n.t("proxy_bool_yes") if bool(value) else self.i18n.t("proxy_bool_no")
+
+    def _format_system_info_updated(self, value: object) -> str:
+        parsed = self._parse_datetime(value)
+        if not parsed:
+            return "--"
+        if parsed.tzinfo:
+            parsed = parsed.astimezone()
+            now = datetime.now(parsed.tzinfo)
+        else:
+            now = datetime.now()
+        if parsed.date() == now.date():
+            return parsed.strftime("%H:%M:%S")
+        lang = self.i18n.language()
+        if lang == "ru":
+            return parsed.strftime("%d.%m.%Y %H:%M")
+        return parsed.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     def _parse_datetime(value: object) -> datetime | None:

@@ -316,6 +316,7 @@ class HiddenDesktopCapture:
         self._monitor = None
         self._target_monitor_index = monitor_index
         self._target_monitor_region = monitor_region
+        self._monitor_selected = False  # Track if monitor was already selected
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -334,7 +335,7 @@ class HiddenDesktopCapture:
         """Change the monitor to capture from."""
         self._target_monitor_index = index
         self._target_monitor_region = region
-        # Will be applied on next capture cycle
+        self._monitor_selected = False  # Force re-selection and logging
 
     def get_frame(self, timeout: float = 0.6) -> tuple[bytes | None, tuple[int, int]]:
         deadline = time.monotonic() + timeout
@@ -366,8 +367,12 @@ class HiddenDesktopCapture:
             logger.warning("Hidden desktop: mss init failed: %s", exc)
             return False
     
-    def _select_monitor(self) -> bool:
-        """Select the monitor to capture from."""
+    def _select_monitor(self, force_log: bool = False) -> bool:
+        """Select the monitor to capture from.
+        
+        Args:
+            force_log: If True, log even if monitor was already selected
+        """
         if not self._sct:
             return False
         
@@ -376,6 +381,8 @@ class HiddenDesktopCapture:
             logger.warning("Hidden desktop: no monitors found")
             return False
         
+        should_log = force_log or not self._monitor_selected
+        
         # Priority 1: Use specified region (for virtual display)
         if self._target_monitor_region:
             self._monitor = self._target_monitor_region
@@ -383,8 +390,15 @@ class HiddenDesktopCapture:
                 int(self._monitor["width"]),
                 int(self._monitor["height"]),
             )
-            logger.info("Hidden desktop: using custom region, size=%dx%d", 
-                        self._frame_size[0], self._frame_size[1])
+            if should_log:
+                logger.info(
+                    "Hidden desktop: using custom region at (%d, %d) size=%dx%d", 
+                    self._monitor.get("left", 0),
+                    self._monitor.get("top", 0),
+                    self._frame_size[0], 
+                    self._frame_size[1],
+                )
+            self._monitor_selected = True
             return True
         
         # Priority 2: Use specified monitor index
@@ -395,9 +409,16 @@ class HiddenDesktopCapture:
                     int(self._monitor["width"]),
                     int(self._monitor["height"]),
                 )
-                logger.info("Hidden desktop: using monitor %d, size=%dx%d", 
-                            self._target_monitor_index, 
-                            self._frame_size[0], self._frame_size[1])
+                if should_log:
+                    logger.info(
+                        "Hidden desktop: using monitor %d at (%d, %d) size=%dx%d", 
+                        self._target_monitor_index,
+                        self._monitor.get("left", 0),
+                        self._monitor.get("top", 0),
+                        self._frame_size[0], 
+                        self._frame_size[1],
+                    )
+                self._monitor_selected = True
                 return True
         
         # Fallback: Use primary monitor (index 1) or full virtual screen (index 0)
@@ -407,8 +428,16 @@ class HiddenDesktopCapture:
             int(self._monitor["width"]),
             int(self._monitor["height"]),
         )
-        logger.info("Hidden desktop: using primary monitor %d, size=%dx%d", 
-                    index, self._frame_size[0], self._frame_size[1])
+        if should_log:
+            logger.info(
+                "Hidden desktop: using primary monitor %d at (%d, %d) size=%dx%d", 
+                index,
+                self._monitor.get("left", 0),
+                self._monitor.get("top", 0),
+                self._frame_size[0], 
+                self._frame_size[1],
+            )
+        self._monitor_selected = True
         return True
 
     def _capture_mss(self) -> bytes | None:
@@ -691,7 +720,13 @@ class HiddenDesktopSession:
             self._virtual_display_active = self._init_virtual_display()
             if self._virtual_display_active and self._virtual_display:
                 monitor_region = self._virtual_display.get_capture_region()
-                logger.info("Hidden desktop: using virtual display for capture")
+                logger.info(
+                    "Hidden desktop: using virtual display for capture at (%d, %d) size %dx%d",
+                    monitor_region.get("left", 0),
+                    monitor_region.get("top", 0),
+                    monitor_region.get("width", 0),
+                    monitor_region.get("height", 0),
+                )
             else:
                 logger.info("Hidden desktop: virtual display not available, using primary monitor")
         
