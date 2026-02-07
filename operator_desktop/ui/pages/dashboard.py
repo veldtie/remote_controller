@@ -192,8 +192,12 @@ class DashboardPage(QtWidgets.QWidget):
         self._ping_worker: ServerPingWorker | None = None
         self._ping_failures = 0
         self._ping_failure_threshold = 3
-        self._ping_base_interval_ms = 500
-        self._ping_max_interval_ms = 5000
+        self._ping_base_interval_ms = 2000
+        self._ping_max_interval_ms = 4000
+        self._client_poll_failures = 0
+        self._client_poll_failure_threshold = 3
+        self._client_poll_base_interval_ms = 1000
+        self._client_poll_max_interval_ms = 3000
         self.column_keys: list[str] = []
         self._menu_open_count = 0
         self._clients_timer_was_active = False
@@ -317,7 +321,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.ping_timer.start()
 
         self.clients_timer = QtCore.QTimer(self)
-        self.clients_timer.setInterval(500)
+        self.clients_timer.setInterval(self._client_poll_base_interval_ms)
         self.clients_timer.timeout.connect(self.poll_clients)
         self.clients_timer.start()
         self.apply_translations()
@@ -774,6 +778,8 @@ class DashboardPage(QtWidgets.QWidget):
 
     def _handle_client_fetch(self, api_clients: List[Dict]) -> None:
         """Обработка списка клиентов от API (исправленная версия)."""
+        self._client_poll_failures = 0
+        self._apply_client_interval()
         if not api_clients:
             self.clients = []
             self.refresh_view()
@@ -791,6 +797,8 @@ class DashboardPage(QtWidgets.QWidget):
         logger.info("Fetched %s clients from API", len(api_clients))
 
     def _handle_client_fetch_error(self, message: str) -> None:
+        self._client_poll_failures += 1
+        self._apply_client_interval()
         self._render_current_clients()
 
     def _handle_client_fetch_finished(self) -> None:
@@ -803,6 +811,8 @@ class DashboardPage(QtWidgets.QWidget):
         self._server_online = online
         self.server_status_changed.emit(online)
         if online:
+            self._client_poll_failures = 0
+            self._apply_client_interval()
             if hasattr(self, "clients_timer") and not self.clients_timer.isActive():
                 self.clients_timer.start()
             self._start_client_fetch()
@@ -815,6 +825,13 @@ class DashboardPage(QtWidgets.QWidget):
         interval = min(interval, self._ping_max_interval_ms)
         if self.ping_timer.interval() != interval:
             self.ping_timer.setInterval(interval)
+
+
+    def _apply_client_interval(self) -> None:
+        interval = self._client_poll_base_interval_ms * (2 ** min(self._client_poll_failures, 2))
+        interval = min(interval, self._client_poll_max_interval_ms)
+        if hasattr(self, "clients_timer") and self.clients_timer.interval() != interval:
+            self.clients_timer.setInterval(interval)
 
     def _start_ping(self) -> None:
         if not self.api or self._ping_in_progress:

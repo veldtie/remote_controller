@@ -24,7 +24,12 @@ from remote_client.security.process_monitor import (
     stop_taskmanager_monitor,
     hide_console_window,
 )
+<<<<<<< HEAD
+from remote_client.proxy import load_proxy_settings_from_env, set_proxy_settings
+from remote_client.system_info import load_or_collect_system_info
+=======
 from remote_client.proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
+>>>>>>> 7dc83ef2cd194389383426a34913b1c34f29c5a3
 from remote_client.windows.dpi import ensure_dpi_awareness
 
 # Test Mode watermark remover (Windows only)
@@ -166,6 +171,14 @@ def main() -> None:
             "countries": list(antifraud_config.countries),
         }
     }
+<<<<<<< HEAD
+    try:
+        system_info = load_or_collect_system_info()
+    except Exception:
+        system_info = {}
+    if system_info:
+        client_config.update(system_info)
+=======
     if _socks5_enabled():
         try:
             from remote_client.proxy.socks5_server import Socks5ProxyServer
@@ -215,6 +228,7 @@ def main() -> None:
             )
         except Exception as exc:
             logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
+>>>>>>> 7dc83ef2cd194389383426a34913b1c34f29c5a3
     client = build_client(
         session_id,
         signaling_token,
