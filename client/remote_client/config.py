@@ -12,6 +12,7 @@ from dataclasses import dataclass
 TEAM_ID_FILENAME = "rc_team_id.txt"
 ANTIFRAUD_CONFIG_FILENAME = "rc_antifraud.json"
 SERVER_CONFIG_FILENAME = "rc_server.json"
+SESSION_ID_FILENAME = "session_id"
 
 DEFAULT_ANTIFRAUD_COUNTRIES = [
     "AM",
@@ -50,13 +51,61 @@ def _candidate_config_dirs() -> list[str]:
     return candidates
 
 
+def _resolve_session_id_path() -> str:
+    env_path = os.getenv("RC_SESSION_ID_PATH")
+    if env_path:
+        return os.path.expanduser(env_path)
+    return os.path.join(
+        os.path.expanduser("~"),
+        ".remote_controller",
+        SESSION_ID_FILENAME,
+    )
+
+
+def _persist_session_id(value: str) -> None:
+    if not value:
+        return
+    path = _resolve_session_id_path()
+    try:
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(value)
+    except OSError:
+        return
+
+
 def resolve_session_id(session_id: str | None) -> str:
     if session_id:
-        return session_id
-    env_session = os.getenv("RC_SIGNALING_SESSION")
+        cleaned = str(session_id).strip()
+        _persist_session_id(cleaned)
+        return cleaned
+    env_session = os.getenv("RC_SESSION_ID") or os.getenv("RC_SIGNALING_SESSION")
     if env_session:
-        return env_session
-    return uuid.uuid4().hex
+        cleaned = env_session.strip()
+        _persist_session_id(cleaned)
+        return cleaned
+    path = _resolve_session_id_path()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            stored = handle.read().strip()
+            if stored:
+                return stored
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return uuid.uuid4().hex
+    new_id = uuid.uuid4().hex
+    try:
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(new_id)
+    except OSError:
+        pass
+    return new_id
 
 
 @dataclass(frozen=True)

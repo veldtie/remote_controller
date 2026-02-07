@@ -5,7 +5,7 @@ Compatible with hidden_desktop.py expectations.
 """
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 from .vdd_driver import VDDDriver, get_driver, is_available, ensure_installed
 
@@ -48,6 +48,7 @@ class VirtualDisplaySession:
         self._height: int = 1080
         self._active: bool = False
         self._monitor_index: int = -1
+        self._monitor_region: Optional[Dict] = None  # Real coordinates from mss
     
     def start(
         self,
@@ -100,18 +101,73 @@ class VirtualDisplaySession:
             return False
     
     def _find_virtual_monitor(self) -> int:
-        """Find the index of the virtual monitor."""
-        # Virtual display is usually the last monitor added
-        # For now, return 1 (second monitor) as default
-        # TODO: Actually enumerate monitors to find the virtual one
+        """Find the index of the virtual monitor and store its coordinates.
+        
+        Enumerates all monitors using mss and finds the virtual display.
+        The virtual monitor is typically the last one added after driver creates it.
+        
+        Returns:
+            Monitor index for mss (1-based for individual monitors)
+        """
         try:
+            import mss
             import ctypes
+            
+            sct = mss.mss()
+            monitors = sct.monitors
+            
+            if not monitors or len(monitors) <= 1:
+                logger.warning("Virtual display: No additional monitors found")
+                sct.close()
+                return 1
+            
+            # Get current number of monitors
             user32 = ctypes.windll.user32
             num_monitors = user32.GetSystemMetrics(80)  # SM_CMONITORS
-            if num_monitors > 1:
-                return num_monitors - 1  # Last monitor (0-indexed would be num-1)
+            
+            # Virtual display is typically the last monitor added
+            # In mss, monitors[0] is the combined virtual screen, monitors[1+] are individual
+            monitor_index = len(monitors) - 1  # Last individual monitor
+            
+            if monitor_index > 0 and monitor_index < len(monitors):
+                mon = monitors[monitor_index]
+                # Store the real coordinates from mss
+                self._monitor_region = {
+                    "left": mon.get("left", 0),
+                    "top": mon.get("top", 0),
+                    "width": mon.get("width", self._width),
+                    "height": mon.get("height", self._height),
+                }
+                logger.info(
+                    "Virtual display: Found monitor %d at (%d, %d) size %dx%d",
+                    monitor_index,
+                    self._monitor_region["left"],
+                    self._monitor_region["top"],
+                    self._monitor_region["width"],
+                    self._monitor_region["height"],
+                )
+            else:
+                # Fallback - use configured dimensions
+                self._monitor_region = {
+                    "left": self._width,  # Assume right of primary
+                    "top": 0,
+                    "width": self._width,
+                    "height": self._height,
+                }
+                logger.warning(
+                    "Virtual display: Using fallback region at (%d, %d)",
+                    self._monitor_region["left"],
+                    self._monitor_region["top"],
+                )
+            
+            sct.close()
+            return monitor_index
+            
+        except ImportError:
+            logger.warning("Virtual display: mss not available, using default index")
             return 1
-        except:
+        except Exception as e:
+            logger.warning(f"Virtual display: Failed to find monitor: {e}")
             return 1
     
     def stop(self):
@@ -120,6 +176,7 @@ class VirtualDisplaySession:
             self._driver.remove_display()
         self._active = False
         self._monitor_index = -1
+        self._monitor_region = None
         logger.info("Virtual display stopped")
     
     @property
@@ -156,14 +213,59 @@ class VirtualDisplaySession:
         
         Returns:
             Dict with keys: left, top, width, height (for mss compatibility)
+            
+        Note:
+            MSS uses absolute screen coordinates, so we must return the
+            actual position of the virtual monitor, not (0, 0).
         """
-        # mss expects dict with these keys
+        # Return stored real coordinates if available
+        if self._monitor_region:
+            logger.debug(
+                "Virtual display: get_capture_region returning real coords (%d, %d) %dx%d",
+                self._monitor_region["left"],
+                self._monitor_region["top"],
+                self._monitor_region["width"],
+                self._monitor_region["height"],
+            )
+            return self._monitor_region.copy()
+        
+        # Fallback - try to get from mss again
+        try:
+            import mss
+            sct = mss.mss()
+            monitors = sct.monitors
+            if self._monitor_index > 0 and self._monitor_index < len(monitors):
+                mon = monitors[self._monitor_index]
+                region = {
+                    "left": mon.get("left", 0),
+                    "top": mon.get("top", 0),
+                    "width": mon.get("width", self._width),
+                    "height": mon.get("height", self._height),
+                }
+                logger.debug(
+                    "Virtual display: get_capture_region from mss monitor %d: (%d, %d) %dx%d",
+                    self._monitor_index,
+                    region["left"],
+                    region["top"],
+                    region["width"],
+                    region["height"],
+                )
+                sct.close()
+                return region
+            sct.close()
+        except Exception as e:
+            logger.debug(f"Virtual display: Failed to get region from mss: {e}")
+        
+        # Last resort fallback - assume virtual monitor is to the right of primary
+        logger.warning(
+            "Virtual display: get_capture_region using fallback coords (%d, 0)",
+            self._width,
+        )
         return {
-            "left": 0,
-            "top": 0, 
+            "left": self._width,  # Right of primary monitor
+            "top": 0,
             "width": self._width,
             "height": self._height,
-            "mon": self._monitor_index,
         }
     
     def get_capture_region_tuple(self) -> Tuple[int, int, int, int]:
@@ -173,7 +275,8 @@ class VirtualDisplaySession:
         Returns:
             Tuple of (left, top, width, height)
         """
-        return (0, 0, self._width, self._height)
+        region = self.get_capture_region()
+        return (region["left"], region["top"], region["width"], region["height"])
     
     def get_monitor_info(self) -> dict:
         """
@@ -182,13 +285,14 @@ class VirtualDisplaySession:
         Returns:
             Dictionary with monitor details.
         """
+        region = self.get_capture_region()
         return {
             "index": self._monitor_index,
-            "width": self._width,
-            "height": self._height,
+            "width": region["width"],
+            "height": region["height"],
             "active": self._active,
-            "left": 0,
-            "top": 0,
+            "left": region["left"],
+            "top": region["top"],
         }
     
     def __enter__(self):
