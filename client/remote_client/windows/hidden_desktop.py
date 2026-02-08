@@ -1185,8 +1185,9 @@ class HiddenWindowSession:
             height=height,
         )
         
-        # Override capture to only track our windows
-        self._capture._session._our_hwnds = self._our_hwnds
+        # Don't filter windows initially - capture all visible windows
+        # Once we launch apps, we'll filter to only our windows
+        # self._capture._session._our_hwnds stays None = capture all
         
         # Wait for capture to initialize
         size = self._capture.frame_size
@@ -1291,15 +1292,10 @@ class HiddenWindowSession:
         if not exe:
             raise FileNotFoundError(f"Application not found: {app_name}")
         
-        # Normal startupinfo - we'll move window offscreen after creation
+        # Normal startupinfo
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 5  # SW_SHOW
-        
-        # Set window position to offscreen
-        startupinfo.dwFlags |= subprocess.STARTF_USEPOSITION
-        startupinfo.dwX = self.OFFSCREEN_X
-        startupinfo.dwY = self.OFFSCREEN_Y
+        startupinfo.wShowWindow = 5  # SW_SHOW - window must be visible for PrintWindow
         
         app_lower = app_name.lower()
         cmd = [exe]
@@ -1314,6 +1310,7 @@ class HiddenWindowSession:
                 "--no-first-run",
                 "--no-default-browser-check",
                 f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
+                f"--window-size={self._width},{self._height}",
             ])
         elif "edge" in app_lower:
             cmd.extend([
@@ -1322,6 +1319,7 @@ class HiddenWindowSession:
                 "--disable-software-rasterizer",
                 "--no-first-run",
                 f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
+                f"--window-size={self._width},{self._height}",
             ])
         elif "firefox" in app_lower:
             # Firefox doesn't have window-position flag, we'll move it via API
@@ -1330,15 +1328,24 @@ class HiddenWindowSession:
         if url:
             cmd.append(url)
         
-        proc = subprocess.Popen(cmd, startupinfo=startupinfo)
-        self._processes.append(proc)
-        self._our_pids.add(proc.pid)
-        
-        # Wait for window to appear and move it offscreen
-        time.sleep(1.0)
-        self._move_our_windows_offscreen()
-        
-        logger.info("Launched %s offscreen (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
+        try:
+            proc = subprocess.Popen(cmd, startupinfo=startupinfo)
+            self._processes.append(proc)
+            self._our_pids.add(proc.pid)
+            
+            # Wait for window to appear and move it offscreen
+            time.sleep(1.5)
+            self._move_our_windows_offscreen()
+            
+            # Now that we have windows, enable filtering to only capture our windows
+            if self._our_hwnds:
+                self._capture._session._our_hwnds = self._our_hwnds
+                logger.debug("Enabled window filtering, tracking %d windows", len(self._our_hwnds))
+            
+            logger.info("Launched %s offscreen (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
+        except Exception as exc:
+            logger.error("Failed to launch %s: %s", app_name, exc)
+            raise
     
     def get_windows(self) -> list:
         """Get list of tracked windows."""
