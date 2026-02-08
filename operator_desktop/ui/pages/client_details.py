@@ -195,6 +195,17 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.abe_version_label.setText(self.i18n.t("abe_version_label"))
             self.abe_check_button.setText(self.i18n.t("abe_check_support"))
             self.abe_help_button.setText(self.i18n.t("abe_help"))
+        if hasattr(self, "abe_features_title"):
+            self.abe_features_title.setText(self.i18n.t("abe_features_title"))
+            self.abe_feature_abe_key_detection_label.setText(self.i18n.t("abe_feature_key_detection"))
+            self.abe_feature_v20_value_detection_label.setText(self.i18n.t("abe_feature_v20_detection"))
+            self.abe_feature_support_check_label.setText(self.i18n.t("abe_feature_support_check"))
+            self.abe_feature_aes_gcm_decryption_label.setText(self.i18n.t("abe_feature_aes_gcm"))
+            self.abe_feature_dpapi_fallback_label.setText(self.i18n.t("abe_feature_dpapi_fallback"))
+            self.abe_feature_logging_label.setText(self.i18n.t("abe_feature_logging"))
+            self.abe_feature_statistics_label.setText(self.i18n.t("abe_feature_statistics"))
+            self.abe_limitations_label.setText(self.i18n.t("abe_limitations_title"))
+            self.abe_limitations_list.setText(self.i18n.t("abe_limitations_text"))
         self._populate_work_status_options()
         self._build_cookies_menu()
         self._render_cookie_buttons()
@@ -382,6 +393,68 @@ class ClientDetailsPage(QtWidgets.QWidget):
         abe_layout.addLayout(actions_row)
         layout.addWidget(self.abe_card)
 
+        # ABE Features status card
+        self.abe_features_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
+        self.abe_features_card.setObjectName("Card")
+        features_layout = QtWidgets.QVBoxLayout(self.abe_features_card)
+        features_layout.setContentsMargins(14, 14, 14, 14)
+        features_layout.setSpacing(8)
+
+        self.abe_features_title = QtWidgets.QLabel()
+        self.abe_features_title.setStyleSheet("font-weight: 600;")
+        features_layout.addWidget(self.abe_features_title)
+
+        self.abe_feature_items: dict[str, tuple[QtWidgets.QLabel, QtWidgets.QLabel]] = {}
+        features_form = QtWidgets.QFormLayout()
+        features_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        features_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        features_form.setHorizontalSpacing(12)
+        features_form.setVerticalSpacing(4)
+
+        feature_keys = [
+            "abe_key_detection",
+            "v20_value_detection",
+            "support_check",
+            "aes_gcm_decryption",
+            "dpapi_fallback",
+            "logging",
+            "statistics",
+        ]
+        for key in feature_keys:
+            status_widget = QtWidgets.QWidget()
+            status_layout = QtWidgets.QHBoxLayout(status_widget)
+            status_layout.setContentsMargins(0, 0, 0, 0)
+            status_layout.setSpacing(6)
+            status_dot = QtWidgets.QLabel()
+            status_dot.setFixedSize(8, 8)
+            status_dot.setStyleSheet("border-radius: 4px; background: #9fb0c3;")
+            desc_label = QtWidgets.QLabel()
+            desc_label.setObjectName("Muted")
+            status_layout.addWidget(status_dot, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+            status_layout.addWidget(desc_label)
+            status_layout.addStretch()
+            self.abe_feature_items[key] = (status_dot, desc_label)
+
+            func_label = QtWidgets.QLabel()
+            func_label.setObjectName("DetailLabel")
+            features_form.addRow(func_label, status_widget)
+            setattr(self, f"abe_feature_{key}_label", func_label)
+
+        features_layout.addLayout(features_form)
+
+        # Limitations section
+        self.abe_limitations_label = QtWidgets.QLabel()
+        self.abe_limitations_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
+        features_layout.addWidget(self.abe_limitations_label)
+
+        self.abe_limitations_list = QtWidgets.QLabel()
+        self.abe_limitations_list.setObjectName("Muted")
+        self.abe_limitations_list.setWordWrap(True)
+        features_layout.addWidget(self.abe_limitations_list)
+
+        layout.addWidget(self.abe_features_card)
+        layout.addStretch()
+
     def _build_proxy_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.proxy_tab)
         layout.setSpacing(12)
@@ -539,6 +612,54 @@ class ClientDetailsPage(QtWidgets.QWidget):
         enabled = bool(payload)
         self.abe_check_button.setEnabled(enabled)
         self.abe_help_button.setEnabled(True)
+
+        self._render_abe_features(payload)
+
+    def _render_abe_features(self, payload: dict) -> None:
+        if not hasattr(self, "abe_features_card"):
+            return
+
+        feature_status = {
+            "abe_key_detection": {
+                "active": True,
+                "desc": self.i18n.t("abe_feature_key_detection_desc"),
+            },
+            "v20_value_detection": {
+                "active": True,
+                "desc": self.i18n.t("abe_feature_v20_detection_desc"),
+            },
+            "support_check": {
+                "active": True,
+                "desc": "check_abe_support()",
+            },
+            "aes_gcm_decryption": {
+                "active": bool(payload.get("detected") and payload.get("available")),
+                "desc": self.i18n.t("abe_feature_aes_gcm_desc"),
+            },
+            "dpapi_fallback": {
+                "active": bool(payload.get("dpapi_available")),
+                "desc": self.i18n.t("abe_feature_dpapi_fallback_desc"),
+            },
+            "logging": {
+                "active": True,
+                "desc": self.i18n.t("abe_feature_logging_desc"),
+            },
+            "statistics": {
+                "active": True,
+                "desc": self.i18n.t("abe_feature_statistics_desc"),
+            },
+        }
+
+        active_color = "#37d67a"
+        inactive_color = "#9fb0c3"
+
+        for key, item in self.abe_feature_items.items():
+            status_dot, desc_label = item
+            info = feature_status.get(key, {"active": False, "desc": "--"})
+            is_active = info.get("active", False)
+            color = active_color if is_active else inactive_color
+            status_dot.setStyleSheet(f"border-radius: 4px; background: {color};")
+            desc_label.setText(info.get("desc", "--"))
 
     def _copy_proxy(self) -> None:
         payload = self._proxy_payload()
