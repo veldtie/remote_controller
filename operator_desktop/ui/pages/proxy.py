@@ -1,15 +1,15 @@
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
 from ...core.theme import THEMES
 from ..common import GlassFrame, load_icon, make_button
-from ..browser_catalog import browser_choices_from_config
+from ..proxy_check import ProxyCheckWorker
 from .dashboard import ClientFetchWorker
 
 
-class CookiesPage(QtWidgets.QWidget):
+class ProxyPage(QtWidgets.QWidget):
     extra_action_requested = QtCore.pyqtSignal(str, str)
     client_selected = QtCore.pyqtSignal(str)
 
@@ -26,6 +26,9 @@ class CookiesPage(QtWidgets.QWidget):
         self.clients: list[dict] = []
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
         self._fetch_worker: ClientFetchWorker | None = None
+        self._check_workers: dict[str, ProxyCheckWorker] = {}
+        self._status_items: dict[str, QtWidgets.QTableWidgetItem] = {}
+        self._check_buttons: dict[str, QtWidgets.QPushButton] = {}
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(14)
@@ -71,7 +74,7 @@ class CookiesPage(QtWidgets.QWidget):
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
         table_layout.setContentsMargins(12, 12, 12, 12)
         table_layout.setSpacing(8)
-        self.table = QtWidgets.QTableWidget(0, 6)
+        self.table = QtWidgets.QTableWidget(0, 7)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -81,11 +84,8 @@ class CookiesPage(QtWidgets.QWidget):
         self.table.setShowGrid(False)
         header_view = self.table.horizontalHeader()
         header_view.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        header_view.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        for index in range(1, 7):
+            header_view.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         table_layout.addWidget(self.table)
@@ -95,18 +95,19 @@ class CookiesPage(QtWidgets.QWidget):
         self.refresh_from_settings()
 
     def apply_translations(self) -> None:
-        self.title_label.setText(self.i18n.t("cookies_title"))
-        self.subtitle_label.setText(self.i18n.t("cookies_subtitle"))
-        self.search_input.setPlaceholderText(self.i18n.t("cookies_search_placeholder"))
+        self.title_label.setText(self.i18n.t("proxy_title"))
+        self.subtitle_label.setText(self.i18n.t("proxy_subtitle"))
+        self.search_input.setPlaceholderText(self.i18n.t("proxy_search_placeholder"))
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
         self.table.setHorizontalHeaderLabels(
             [
                 self.i18n.t("table_name"),
                 self.i18n.t("table_id"),
-                self.i18n.t("table_region"),
-                self.i18n.t("table_ip"),
-                self.i18n.t("table_abe"),
-                self.i18n.t("table_cookies"),
+                self.i18n.t("proxy_host_label"),
+                self.i18n.t("proxy_port_label"),
+                self.i18n.t("proxy_type_label"),
+                self.i18n.t("proxy_status_label"),
+                self.i18n.t("table_actions"),
             ]
         )
 
@@ -141,121 +142,149 @@ class CookiesPage(QtWidgets.QWidget):
             return
         filtered: list[dict] = []
         for client in self.clients:
+            payload = self._proxy_payload(client)
             values = [
                 client.get("name", ""),
                 client.get("id", ""),
                 client.get("ip", ""),
-                self._resolve_region_display(client),
+                (payload or {}).get("host", ""),
+                (payload or {}).get("port", ""),
             ]
             if any(text in str(value).lower() for value in values):
                 filtered.append(client)
         self.render_clients(filtered)
 
-    def _resolve_region_display(self, client: dict) -> str:
-        region_value = str(client.get("region") or "").strip()
-        if region_value:
-            return self.i18n.t(region_value)
-        return "--"
-
     @staticmethod
-    def _abe_payload(client: dict) -> dict | None:
+    def _proxy_payload(client: dict) -> dict | None:
         config = client.get("client_config") if isinstance(client.get("client_config"), dict) else {}
-        abe = config.get("abe")
-        return abe if isinstance(abe, dict) else None
+        proxy = config.get("proxy")
+        if not isinstance(proxy, dict):
+            return None
+        host = proxy.get("host") or client.get("ip") or ""
+        return {
+            "enabled": bool(proxy.get("enabled") or proxy.get("port")),
+            "host": host,
+            "port": proxy.get("port"),
+            "type": proxy.get("type") or "socks5",
+            "udp": proxy.get("udp"),
+        }
 
-    def _abe_status_label(self, status: str) -> str:
-        if status == "available":
-            return self.i18n.t("abe_status_available")
-        if status == "detected":
-            return self.i18n.t("abe_status_detected")
-        if status == "blocked":
-            return self.i18n.t("abe_status_blocked")
-        return self.i18n.t("abe_status_unknown")
-
-    def _abe_status_color(self, status: str) -> str:
-        if status == "available":
-            return "#37d67a"
-        if status == "detected":
-            return "#f5c542"
-        if status == "blocked":
-            return self.theme.colors.get("danger", "#ff6b6b")
-        return self.theme.colors.get("muted", "#9fb0c3")
-
-    def _build_abe_cell(self, client: dict) -> QtWidgets.QWidget:
-        payload = self._abe_payload(client) or {}
-        status = str(payload.get("status") or "unknown").strip().lower()
-        label = self._abe_status_label(status)
-        color = self._abe_status_color(status)
-
-        wrapper = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(wrapper)
-        layout.setContentsMargins(6, 0, 6, 0)
-        layout.setSpacing(6)
-
-        dot = QtWidgets.QLabel()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"border-radius: 4px; background: {color};")
-        text = QtWidgets.QLabel(label)
-        text.setObjectName("Muted")
-        layout.addWidget(dot, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(text)
-        layout.addStretch()
-
-        tooltip_parts: list[str] = [label]
-        chrome_version = payload.get("chrome_version")
-        if chrome_version:
-            tooltip_parts.append(f"Chrome {chrome_version}")
-        method = payload.get("method")
-        if method:
-            tooltip_parts.append(f"{self.i18n.t('abe_method_label')}: {method}")
-        wrapper.setToolTip("\n".join(tooltip_parts))
-        return wrapper
+    def _resolve_status_label(self, payload: dict | None) -> str:
+        if not payload:
+            return self.i18n.t("proxy_status_disabled")
+        host = payload.get("host") or ""
+        port = payload.get("port")
+        if not host or not port:
+            return self.i18n.t("proxy_status_disabled")
+        return self.i18n.t("proxy_status_ready")
 
     def render_clients(self, clients: list[dict]) -> None:
         self.table.setRowCount(0)
+        self._status_items = {}
+        self._check_buttons = {}
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setRowHeight(row, 46)
+            client_id = client.get("id", "")
+            payload = self._proxy_payload(client)
+
             name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
-            name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client.get("id"))
-            id_item = QtWidgets.QTableWidgetItem(client.get("id", ""))
-            region_item = QtWidgets.QTableWidgetItem(self._resolve_region_display(client))
-            ip_item = QtWidgets.QTableWidgetItem(client.get("ip", ""))
-            for item in (name_item, id_item, region_item, ip_item):
+            name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client_id)
+            id_item = QtWidgets.QTableWidgetItem(client_id)
+            host_item = QtWidgets.QTableWidgetItem((payload or {}).get("host", "") or "--")
+            port_item = QtWidgets.QTableWidgetItem(
+                str((payload or {}).get("port", "") or "--")
+            )
+            type_item = QtWidgets.QTableWidgetItem((payload or {}).get("type", "") or "--")
+            status_item = QtWidgets.QTableWidgetItem(self._resolve_status_label(payload))
+            for item in (name_item, id_item, host_item, port_item, type_item, status_item):
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, id_item)
-            self.table.setItem(row, 2, region_item)
-            self.table.setItem(row, 3, ip_item)
-            self.table.setCellWidget(row, 4, self._build_abe_cell(client))
+            self.table.setItem(row, 2, host_item)
+            self.table.setItem(row, 3, port_item)
+            self.table.setItem(row, 4, type_item)
+            self.table.setItem(row, 5, status_item)
+            if client_id:
+                self._status_items[client_id] = status_item
 
-            export_button = make_button(self.i18n.t("button_cookies_export"), "ghost")
-            menu = QtWidgets.QMenu(export_button)
-            cookie_actions = [("all", self.i18n.t("menu_cookies_all"))]
-            cookie_actions.extend(browser_choices_from_config(client.get("client_config")))
-            for key, label in cookie_actions:
-                action = menu.addAction(label)
-                action.triggered.connect(
-                    lambda _, cid=client.get("id", ""), browser=key: self.extra_action_requested.emit(
-                        cid, f"cookies:{browser}"
-                    )
-                )
-            menu.addSeparator()
-            diagnostics_action = menu.addAction(self.i18n.t("abe_diagnostics"))
-            diagnostics_action.triggered.connect(
-                lambda _, cid=client.get("id", ""): self.extra_action_requested.emit(
-                    cid, "abe_diagnostics"
-                )
+            actions = QtWidgets.QWidget()
+            actions_layout = QtWidgets.QHBoxLayout(actions)
+            actions_layout.setContentsMargins(0, 0, 0, 0)
+            actions_layout.setSpacing(6)
+
+            download_button = make_button(self.i18n.t("menu_proxy_download"), "ghost")
+            download_button.clicked.connect(
+                lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy")
             )
-            stats_action = menu.addAction(self.i18n.t("abe_cookies_stats"))
-            stats_action.triggered.connect(
-                lambda _, cid=client.get("id", ""): self.extra_action_requested.emit(
-                    cid, "abe_stats"
-                )
+            actions_layout.addWidget(download_button)
+
+            check_button = make_button(self.i18n.t("proxy_check_button"), "ghost")
+            check_button.clicked.connect(
+                lambda _, c=client: self._start_proxy_check(c)
             )
-            export_button.setMenu(menu)
-            self.table.setCellWidget(row, 5, export_button)
+            actions_layout.addWidget(check_button)
+            actions_layout.addStretch()
+            self.table.setCellWidget(row, 6, actions)
+            if client_id:
+                self._check_buttons[client_id] = check_button
+
+    def _start_proxy_check(self, client: dict) -> None:
+        client_id = str(client.get("id") or "")
+        if not client_id:
+            return
+        if client_id in self._check_workers and self._check_workers[client_id].isRunning():
+            return
+        payload = self._proxy_payload(client)
+        if not payload:
+            self._update_status(client_id, self.i18n.t("proxy_status_disabled"))
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("nav_proxy"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+        host = payload.get("host") or ""
+        port = payload.get("port")
+        if not host or not port:
+            self._update_status(client_id, self.i18n.t("proxy_status_disabled"))
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("nav_proxy"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+        self._update_status(client_id, self.i18n.t("proxy_checking"))
+        button = self._check_buttons.get(client_id)
+        if button:
+            button.setEnabled(False)
+        worker = ProxyCheckWorker(client_id, host, port)
+        worker.finished.connect(self._handle_check_finished)
+        self._check_workers[client_id] = worker
+        worker.start()
+
+    def _handle_check_finished(self, client_id: str, ok: bool, detail: str, latency_ms: int) -> None:
+        self._check_workers.pop(client_id, None)
+        button = self._check_buttons.get(client_id)
+        if button:
+            button.setEnabled(True)
+        if ok:
+            status = f"{self.i18n.t('proxy_check_ok')} ({latency_ms} ms)"
+        else:
+            suffix = detail.strip() if isinstance(detail, str) else ""
+            status = self.i18n.t("proxy_check_failed")
+            if suffix:
+                status = f"{status}: {suffix}"
+        self._update_status(client_id, status)
+
+    def _update_status(self, client_id: str, text: str) -> None:
+        item = self._status_items.get(client_id)
+        if not item or item.tableWidget() is None:
+            return
+        item.setText(text)
+        if text and text != self.i18n.t("proxy_status_ready"):
+            item.setToolTip(text)
 
     def _emit_client_selected(self, row: int, _column: int) -> None:
         item = self.table.item(row, 0)

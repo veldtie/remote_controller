@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 
 from fastapi import WebSocket
+
+logger = logging.getLogger("signaling_server")
 
 
 @dataclass
@@ -99,8 +102,20 @@ class SessionRegistry:
                 else:
                     peer = None
         if peer is not None:
-            await peer.send_text(message)
-            return True
+            try:
+                await peer.send_text(message)
+                return True
+            except Exception:
+                logger.warning(
+                    "Failed to forward signaling message for session %s", session_id, exc_info=True
+                )
+                peer_role = "client" if role == "browser" else "browser"
+                try:
+                    await self.unregister(session_id, peer_role, peer)
+                except Exception:
+                    logger.exception(
+                        "Failed to unregister stale websocket for session %s", session_id
+                    )
         return False
 
     async def queue_for_client(self, session_id: str, message: str, message_type: str | None) -> None:

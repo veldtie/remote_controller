@@ -51,6 +51,19 @@ async def ice_config(request: Request) -> dict[str, list[dict[str, object]]]:
     return {"iceServers": config.ICE_SERVERS}
 
 
+@router.get("/public-ip")
+async def public_ip(request: Request) -> dict[str, str]:
+    """Return the requester public IP (respects TRUST_PROXY)."""
+    if config.SIGNALING_TOKEN:
+        provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
+        if not config.is_valid_signaling_token(provided_token):
+            raise HTTPException(status_code=403, detail="Invalid token")
+    resolved = config.resolve_client_ip(request.headers, request.client)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="IP unavailable")
+    return {"ip": resolved}
+
+
 def _require_api_token(request: Request) -> None:
     if not config.API_TOKEN:
         return
@@ -119,6 +132,11 @@ class TeamTagCreate(BaseModel):
     color: str
 
 
+class TeamTagUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
 class OperatorUpsert(BaseModel):
     name: str
     password: str
@@ -129,6 +147,10 @@ class OperatorUpsert(BaseModel):
 class OperatorProfileUpdate(BaseModel):
     name: str | None = None
     password: str | None = None
+
+
+class OperatorLoginUpdate(BaseModel):
+    account_id: str
 
 
 class AuthRequest(BaseModel):
@@ -437,6 +459,56 @@ async def delete_team_tag(tag_id: str, request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
+@router.patch("/api/team-tags/{tag_id}")
+async def update_team_tag(
+    tag_id: str, payload: TeamTagUpdate, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    name = payload.name.strip() if payload.name is not None else None
+    color = payload.color.strip() if payload.color is not None else None
+    if payload.name is not None and not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    if payload.color is not None and not color:
+        raise HTTPException(status_code=400, detail="Color required")
+    if name is None and color is None:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    async with signaling_db.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, team_id FROM team_tags WHERE id = $1;",
+            tag_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        team_id = row["team_id"]
+        if name is not None:
+            exists = await conn.fetchrow(
+                """
+                SELECT 1
+                FROM team_tags
+                WHERE team_id = $1 AND lower(name) = lower($2) AND id <> $3;
+                """,
+                team_id,
+                name,
+                tag_id,
+            )
+            if exists:
+                raise HTTPException(status_code=409, detail="Tag already exists")
+        await conn.execute(
+            """
+            UPDATE team_tags
+            SET name = COALESCE($2, name),
+                color = COALESCE($3, color)
+            WHERE id = $1;
+            """,
+            tag_id,
+            name,
+            color,
+        )
+    return {"ok": True}
+
+
 @router.post("/api/auth/login")
 async def login_operator(payload: AuthRequest, request: Request) -> dict[str, dict[str, object]]:
     _require_api_token(request)
@@ -509,6 +581,44 @@ async def update_operator_profile(
             operator_id,
             name,
             password,
+        )
+    return {"ok": True}
+
+
+@router.patch("/api/operators/{operator_id}/login")
+async def update_operator_login(
+    operator_id: str, payload: OperatorLoginUpdate, request: Request
+) -> dict[str, bool]:
+    _require_api_token(request)
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    new_id = payload.account_id.strip()
+    if not new_id:
+        raise HTTPException(status_code=400, detail="Account id required")
+    if new_id == operator_id:
+        return {"ok": True}
+    async with signaling_db.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id FROM operators WHERE id = $1;",
+            operator_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Operator not found")
+        exists = await conn.fetchrow(
+            "SELECT 1 FROM operators WHERE id = $1;",
+            new_id,
+        )
+        if exists:
+            raise HTTPException(status_code=409, detail="Login already exists")
+        await conn.execute(
+            "UPDATE operators SET id = $2 WHERE id = $1;",
+            operator_id,
+            new_id,
+        )
+        await conn.execute(
+            "UPDATE remote_clients SET assigned_operator_id = $2 WHERE assigned_operator_id = $1;",
+            operator_id,
+            new_id,
         )
     return {"ok": True}
 

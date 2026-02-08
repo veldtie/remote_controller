@@ -12,8 +12,10 @@ from ..core.settings import SettingsStore
 from ..core.translations import LANGUAGE_NAMES
 from .common import GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
+from .dialogs import AbeDiagnosticsDialog
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
+from .pages.proxy import ProxyPage
 from .pages.client_details import ClientDetailsPage
 from .pages.dashboard import DashboardPage
 from .browser_catalog import browser_keys_from_config
@@ -67,6 +69,7 @@ class MainShell(QtWidgets.QWidget):
             ("main", "nav_main", "clients"),
             ("teams", "nav_teams", "team"),
             ("cookies", "nav_cookies", "cookies"),
+            ("proxy", "nav_proxy", "more"),
             ("compiler", "nav_compiler", "build"),
         ]
         for key, _, icon_name in nav_items:
@@ -157,6 +160,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard = DashboardPage(i18n, settings, logger, api=api)
         self.cookies_page = CookiesPage(i18n, settings, api=api)
         self.client_details = ClientDetailsPage(i18n, settings, api=api)
+        self.proxy_page = ProxyPage(i18n, settings, api=api)
         self.teams_page = TeamsPage(i18n, settings, api=api)
         self.compiler = CompilerPage(i18n, settings, logger)
         self.settings_page = SettingsPage(i18n, settings, api=api)
@@ -164,6 +168,7 @@ class MainShell(QtWidgets.QWidget):
         self.stack.addWidget(self.dashboard)
         self.stack.addWidget(self.cookies_page)
         self.stack.addWidget(self.client_details)
+        self.stack.addWidget(self.proxy_page)
         self.stack.addWidget(self.teams_page)
         self.stack.addWidget(self.compiler)
         self.stack.addWidget(self.settings_page)
@@ -182,6 +187,8 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.clients_refreshed.connect(self.handle_clients_refreshed)
         self.cookies_page.extra_action_requested.connect(self.handle_extra_action)
         self.cookies_page.client_selected.connect(self.open_client_details)
+        self.proxy_page.extra_action_requested.connect(self.handle_extra_action)
+        self.proxy_page.client_selected.connect(self.open_client_details)
         self.client_details.back_requested.connect(self.show_clients)
         self.client_details.connect_requested.connect(self.toggle_connection)
         self.client_details.storage_requested.connect(self.open_storage)
@@ -206,6 +213,7 @@ class MainShell(QtWidgets.QWidget):
         self.nav_buttons["compiler"].setText(self.i18n.t("nav_compiler"))
         self.nav_buttons["main"].setText(self.i18n.t("nav_main"))
         self.nav_buttons["cookies"].setText(self.i18n.t("nav_cookies"))
+        self.nav_buttons["proxy"].setText(self.i18n.t("nav_proxy"))
         self.nav_buttons["teams"].setText(self.i18n.t("nav_teams"))
         self.nav_buttons["settings"].setText(self.i18n.t("nav_settings"))
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
@@ -220,6 +228,7 @@ class MainShell(QtWidgets.QWidget):
         self.dashboard.apply_translations()
         self.cookies_page.apply_translations()
         self.client_details.apply_translations()
+        self.proxy_page.apply_translations()
         self.teams_page.apply_translations()
         self.compiler.apply_translations()
         self.settings_page.apply_translations()
@@ -318,6 +327,7 @@ class MainShell(QtWidgets.QWidget):
             self.i18n.t("nav_main"),
             self.i18n.t("nav_cookies"),
             self.i18n.t("client_details_title"),
+            self.i18n.t("nav_proxy"),
             self.i18n.t("nav_teams"),
             self.i18n.t("nav_compiler"),
             self.i18n.t("nav_settings"),
@@ -342,10 +352,11 @@ class MainShell(QtWidgets.QWidget):
         mapping = {
             "main": 0,
             "cookies": 1,
-            "teams": 3,
-            "compiler": 4,
-            "settings": 5,
-            "instructions": 6,
+            "proxy": 3,
+            "teams": 4,
+            "compiler": 5,
+            "settings": 6,
+            "instructions": 7,
         }
         index = mapping.get(key, 0)
         self.stack.setCurrentIndex(index)
@@ -354,6 +365,8 @@ class MainShell(QtWidgets.QWidget):
             self.teams_page.refresh_from_api()
         if key == "cookies":
             self.cookies_page.refresh_clients()
+        if key == "proxy":
+            self.proxy_page.refresh_clients()
         animate_widget(self.stack.currentWidget())
 
     def update_role_visibility(self) -> None:
@@ -415,6 +428,12 @@ class MainShell(QtWidgets.QWidget):
         if action == "proxy":
             self.request_proxy_export(client_id)
             return
+        if action == "abe_diagnostics":
+            self.show_abe_diagnostics(client_id)
+            return
+        if action == "abe_stats":
+            self.show_abe_stats(client_id)
+            return
 
     def request_cookie_export(self, client_id: str, browsers: list[str]) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -453,6 +472,30 @@ class MainShell(QtWidgets.QWidget):
             self._schedule_utility_close(client_id)
         window.request_proxy_export(client_id, filename=filename, download_dir=folder)
         self.logger.log("log_proxy_request", client=client_name, path=folder)
+
+    def _abe_payload_from_client(self, client: dict | None) -> dict:
+        if not client:
+            return {}
+        config = client.get("client_config") if isinstance(client.get("client_config"), dict) else {}
+        payload = config.get("abe")
+        return payload if isinstance(payload, dict) else {}
+
+    def show_abe_diagnostics(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        payload = self._abe_payload_from_client(client)
+        dialog = AbeDiagnosticsDialog(self.i18n, payload, parent=self)
+        dialog.exec()
+
+    def show_abe_stats(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        payload = self._abe_payload_from_client(client)
+        total = payload.get("cookies_total")
+        v20 = payload.get("cookies_v20")
+        if isinstance(total, int) and isinstance(v20, int):
+            message = f"{self.i18n.t('abe_v20_count')}: {v20} / {total}"
+        else:
+            message = self.i18n.t("abe_stats_empty")
+        QtWidgets.QMessageBox.information(self, self.i18n.t("abe_cookies_stats"), message)
 
     @staticmethod
     def _sanitize_filename_token(value: str) -> str:
