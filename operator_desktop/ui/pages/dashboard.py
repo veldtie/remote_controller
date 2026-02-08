@@ -738,6 +738,12 @@ class DashboardPage(QtWidgets.QWidget):
             assigned_team_id = api_client.get("assigned_team_id")
             if assigned_team_id is None:
                 assigned_team_id = local.get("assigned_team_id", "")
+            work_status = api_client.get("work_status")
+            if work_status is None:
+                work_status = local.get("work_status", "planning")
+            tags = api_client.get("tags")
+            if tags is None:
+                tags = local.get("tags", [])
             client_config = api_client.get("client_config")
             if client_config is None:
                 client_config = local.get("client_config")
@@ -759,6 +765,8 @@ class DashboardPage(QtWidgets.QWidget):
                 "connected": local.get("connected", False),
                 "assigned_operator_id": assigned_operator_id or "",
                 "assigned_team_id": assigned_team_id or "",
+                "work_status": work_status,
+                "tags": tags,
                 "client_config": client_config,
                 "session_status": session_status,
             }
