@@ -168,6 +168,8 @@ user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, w
 user32.SendMessageW.restype = wintypes.LRESULT
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.PostMessageW.restype = wintypes.BOOL
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
 gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
 gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -304,8 +306,40 @@ def should_capture_window(hwnd: int) -> bool:
     return True
 
 
+def _force_window_redraw(hwnd: int) -> None:
+    """Force a window to redraw itself."""
+    WM_PAINT = 0x000F
+    WM_NCPAINT = 0x0085
+    RDW_INVALIDATE = 0x0001
+    RDW_UPDATENOW = 0x0100
+    RDW_ALLCHILDREN = 0x0080
+    RDW_FRAME = 0x0400
+    
+    # Try RedrawWindow for full repaint
+    try:
+        user32.RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME)
+    except Exception:
+        pass
+    
+    # Also try UpdateWindow
+    try:
+        user32.UpdateWindow(hwnd)
+    except Exception:
+        pass
+
+
+# Setup RedrawWindow and UpdateWindow
+try:
+    user32.RedrawWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
+    user32.RedrawWindow.restype = wintypes.BOOL
+    user32.UpdateWindow.argtypes = [wintypes.HWND]
+    user32.UpdateWindow.restype = wintypes.BOOL
+except Exception:
+    pass
+
+
 def capture_window_bitmap(hwnd: int, use_client_area: bool = False) -> tuple[bytes | None, int, int]:
-    """Capture a window using PrintWindow API.
+    """Capture a window using PrintWindow API with WM_PRINT fallback.
     
     Args:
         hwnd: Window handle to capture
@@ -330,6 +364,9 @@ def capture_window_bitmap(hwnd: int, use_client_area: bool = False) -> tuple[byt
     if width <= 0 or height <= 0:
         return None, 0, 0
     
+    # Force window to redraw before capture
+    _force_window_redraw(hwnd)
+    
     # Get window DC
     hwnd_dc = user32.GetWindowDC(hwnd)
     if not hwnd_dc:
@@ -349,7 +386,7 @@ def capture_window_bitmap(hwnd: int, use_client_area: bool = False) -> tuple[byt
             try:
                 old_bitmap = gdi32.SelectObject(mem_dc, bitmap)
                 
-                # Use PrintWindow with PW_RENDERFULLCONTENT for better capture
+                # Try PrintWindow with PW_RENDERFULLCONTENT first (best for hardware-accelerated windows)
                 flags = PW_RENDERFULLCONTENT if not use_client_area else (PW_CLIENTONLY | PW_RENDERFULLCONTENT)
                 result = user32.PrintWindow(hwnd, mem_dc, flags)
                 
@@ -358,9 +395,19 @@ def capture_window_bitmap(hwnd: int, use_client_area: bool = False) -> tuple[byt
                     flags = 0 if not use_client_area else PW_CLIENTONLY
                     result = user32.PrintWindow(hwnd, mem_dc, flags)
                 
+                # If PrintWindow failed, try WM_PRINT message
                 if not result:
-                    gdi32.SelectObject(mem_dc, old_bitmap)
-                    return None, 0, 0
+                    WM_PRINT = 0x0317
+                    PRF_CLIENT = 0x00000004
+                    PRF_NONCLIENT = 0x00000002
+                    PRF_CHILDREN = 0x00000010
+                    PRF_ERASEBKGND = 0x00000008
+                    
+                    print_flags = PRF_CLIENT | PRF_NONCLIENT | PRF_CHILDREN | PRF_ERASEBKGND
+                    user32.SendMessageW(hwnd, WM_PRINT, mem_dc, print_flags)
+                
+                # Always try BitBlt as additional capture (catches content that PrintWindow might miss)
+                gdi32.BitBlt(mem_dc, 0, 0, width, height, hwnd_dc, 0, 0, SRCCOPY)
                 
                 # Prepare bitmap info for DIB extraction
                 bmi = BITMAPINFO()
@@ -508,7 +555,13 @@ class WindowCompositor:
 
 
 class WindowCaptureSession:
-    """Manages continuous capture of windows on a hidden desktop."""
+    """Manages continuous capture of windows.
+    
+    Can capture:
+    - Windows on a specific desktop (desktop_handle != None)
+    - Only specific windows by hwnd (filter_hwnds != None)
+    - All visible windows on main desktop (both None)
+    """
     
     def __init__(
         self,
@@ -530,6 +583,9 @@ class WindowCaptureSession:
         
         self._windows_lock = threading.Lock()
         self._window_list: list[WindowInfo] = []
+        
+        # Optional filter: only capture windows in this set
+        self._our_hwnds: set[int] | None = None
         
         self._thread: threading.Thread | None = None
         self._started = False
@@ -578,6 +634,77 @@ class WindowCaptureSession:
             self._thread.join(timeout=2.0)
         self._started = False
     
+    def _capture_desktop_screen(self) -> bytes | None:
+        """Capture entire desktop screen using GetDC(NULL).
+        
+        This works when the thread is attached to the target desktop.
+        Returns BGRA bitmap data or None.
+        """
+        width, height = self._compositor.size
+        
+        # Get screen DC for current thread's desktop
+        screen_dc = user32.GetDC(None)
+        if not screen_dc:
+            return None
+        
+        try:
+            mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+            if not mem_dc:
+                return None
+            
+            try:
+                bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
+                if not bitmap:
+                    return None
+                
+                try:
+                    old_bitmap = gdi32.SelectObject(mem_dc, bitmap)
+                    
+                    # BitBlt from screen DC
+                    gdi32.BitBlt(mem_dc, 0, 0, width, height, screen_dc, 0, 0, SRCCOPY)
+                    
+                    # Prepare bitmap info
+                    bmi = BITMAPINFO()
+                    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                    bmi.bmiHeader.biWidth = width
+                    bmi.bmiHeader.biHeight = -height
+                    bmi.bmiHeader.biPlanes = 1
+                    bmi.bmiHeader.biBitCount = 32
+                    bmi.bmiHeader.biCompression = BI_RGB
+                    
+                    buffer_size = width * height * 4
+                    buffer = ctypes.create_string_buffer(buffer_size)
+                    
+                    gdi32.GetDIBits(mem_dc, bitmap, 0, height, buffer, ctypes.byref(bmi), DIB_RGB_COLORS)
+                    gdi32.SelectObject(mem_dc, old_bitmap)
+                    
+                    return bytes(buffer)
+                finally:
+                    gdi32.DeleteObject(bitmap)
+            finally:
+                gdi32.DeleteDC(mem_dc)
+        finally:
+            user32.ReleaseDC(None, screen_dc)
+    
+    def _is_frame_empty(self, frame_data: bytes) -> bool:
+        """Check if frame is mostly empty (all same color)."""
+        if not frame_data or len(frame_data) < 1000:
+            return True
+        
+        # Sample pixels from different areas
+        samples = []
+        stride = len(frame_data) // 20
+        for i in range(0, len(frame_data) - 4, stride):
+            samples.append(frame_data[i:i+4])
+        
+        # If all samples are the same, frame is likely empty
+        if samples:
+            first = samples[0]
+            same_count = sum(1 for s in samples if s == first)
+            return same_count > len(samples) * 0.9
+        
+        return True
+    
     def _capture_loop(self) -> None:
         """Main capture loop."""
         logger.info("Window capture started (PrintWindow mode)")
@@ -590,8 +717,13 @@ class WindowCaptureSession:
                 original_desktop = user32.GetThreadDesktop(thread_id)
                 if not user32.SetThreadDesktop(self._desktop_handle):
                     logger.warning("Failed to switch to hidden desktop for capture")
+                else:
+                    logger.debug("Switched to hidden desktop for capture")
             except Exception as exc:
                 logger.warning("Desktop switch failed: %s", exc)
+        
+        _logged_window_count = -1
+        _logged_fallback = False
         
         try:
             while not self._stop_event.is_set():
@@ -601,6 +733,18 @@ class WindowCaptureSession:
                     # Enumerate windows
                     windows = self._enumerator.enumerate()
                     
+                    # Filter windows if we have a hwnd filter
+                    if self._our_hwnds is not None:
+                        windows = [w for w in windows if w.hwnd in self._our_hwnds]
+                    
+                    # Log window count changes
+                    if len(windows) != _logged_window_count:
+                        filter_msg = f" (filtered from {len(self._enumerator._windows)})" if self._our_hwnds else ""
+                        logger.debug("Found %d capturable windows%s", len(windows), filter_msg)
+                        for w in windows[:5]:  # Log first 5
+                            logger.debug("  Window: hwnd=%d %s (%s)", w.hwnd, w.title[:50] if w.title else "(no title)", w.class_name)
+                        _logged_window_count = len(windows)
+                    
                     with self._windows_lock:
                         self._window_list = windows
                     
@@ -608,7 +752,7 @@ class WindowCaptureSession:
                     captured_windows: list[CapturedWindow] = []
                     for win_info in windows:
                         bitmap_data, width, height = capture_window_bitmap(win_info.hwnd)
-                        if bitmap_data:
+                        if bitmap_data and not self._is_frame_empty(bitmap_data):
                             captured_windows.append(CapturedWindow(
                                 info=win_info,
                                 bitmap_data=bitmap_data,
@@ -619,9 +763,18 @@ class WindowCaptureSession:
                     # Composite into single frame
                     if captured_windows:
                         frame = self._compositor.composite(captured_windows)
+                        _logged_fallback = False
                     else:
-                        # Create empty frame if no windows
-                        frame = self._create_empty_frame()
+                        # Try desktop screen capture as fallback
+                        frame = self._capture_desktop_screen()
+                        
+                        if frame and not self._is_frame_empty(frame):
+                            if not _logged_fallback:
+                                logger.debug("Using desktop screen capture fallback")
+                                _logged_fallback = True
+                        else:
+                            # Create empty frame if everything fails
+                            frame = self._create_empty_frame()
                     
                     with self._frame_lock:
                         self._frame = frame
