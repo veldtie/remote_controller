@@ -655,154 +655,230 @@ class WindowCaptureSession:
         return bytes(frame)
 
 
+# =============================================================================
+# SendInput structures for low-level hardware input simulation
+# =============================================================================
+
+class MOUSEINPUT(ctypes.Structure):
+    """Mouse input structure for SendInput."""
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    """Keyboard input structure for SendInput."""
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    """Hardware input structure for SendInput."""
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class INPUT_UNION(ctypes.Union):
+    """Union for INPUT structure."""
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    """INPUT structure for SendInput API."""
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("union", INPUT_UNION),
+    ]
+
+
+# SendInput constants
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+INPUT_HARDWARE = 2
+
+# Mouse event flags
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x1000
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
+# Keyboard event flags
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
+# Setup SendInput
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), wintypes.INT]
+user32.SendInput.restype = wintypes.UINT
+user32.GetSystemMetrics.argtypes = [wintypes.INT]
+user32.GetSystemMetrics.restype = wintypes.INT
+user32.SetCursorPos.argtypes = [wintypes.INT, wintypes.INT]
+user32.SetCursorPos.restype = wintypes.BOOL
+
+SM_CXSCREEN = 0
+SM_CYSCREEN = 1
+
+
 class WindowInputController:
-    """Sends input to windows on hidden desktop using SendMessage/PostMessage."""
+    """Low-level input controller using SendInput API.
     
-    # Windows messages
-    WM_MOUSEMOVE = 0x0200
-    WM_LBUTTONDOWN = 0x0201
-    WM_LBUTTONUP = 0x0202
-    WM_RBUTTONDOWN = 0x0204
-    WM_RBUTTONUP = 0x0205
-    WM_MBUTTONDOWN = 0x0207
-    WM_MBUTTONUP = 0x0208
-    WM_MOUSEWHEEL = 0x020A
-    WM_KEYDOWN = 0x0100
-    WM_KEYUP = 0x0101
-    WM_CHAR = 0x0102
-    WM_SETFOCUS = 0x0007
-    WM_ACTIVATE = 0x0006
-    WM_KILLFOCUS = 0x0008
-    
-    MK_LBUTTON = 0x0001
-    MK_RBUTTON = 0x0002
-    MK_MBUTTON = 0x0010
-    
-    WA_ACTIVE = 1
+    Sends input through the hardware input queue (via processor/driver),
+    not through window messages. This is the proper way to simulate
+    real user input that works with all applications.
+    """
     
     def __init__(self, window_list_provider: Callable[[], list[WindowInfo]]):
         self._get_windows = window_list_provider
-        self._active_hwnd: int | None = None
-        self._mouse_buttons_down = 0
+        self._screen_width = user32.GetSystemMetrics(SM_CXSCREEN) or 1920
+        self._screen_height = user32.GetSystemMetrics(SM_CYSCREEN) or 1080
+        logger.info("WindowInputController initialized (SendInput mode), screen: %dx%d",
+                    self._screen_width, self._screen_height)
     
-    def _find_window_at(self, x: int, y: int) -> int | None:
-        """Find the topmost window at given coordinates."""
-        windows = self._get_windows()
-        # Windows are sorted by z_order, lowest z_order = topmost
-        for win in sorted(windows, key=lambda w: w.z_order):
-            left, top, right, bottom = win.rect
-            if left <= x < right and top <= y < bottom:
-                return win.hwnd
-        return None
+    def _normalize_coords(self, x: int, y: int) -> tuple[int, int]:
+        """Convert screen coordinates to absolute coordinates for SendInput.
+        
+        SendInput with MOUSEEVENTF_ABSOLUTE uses coordinates in range 0-65535.
+        """
+        abs_x = int((x * 65535) / self._screen_width)
+        abs_y = int((y * 65535) / self._screen_height)
+        return abs_x, abs_y
     
-    def _make_lparam(self, x: int, y: int, hwnd: int) -> int:
-        """Create LPARAM for mouse messages (client coordinates)."""
-        # Convert screen coords to window client coords
-        left, top, _, _ = get_window_rect(hwnd)
-        client_x = x - left
-        client_y = y - top
-        # LPARAM is LOWORD=x, HIWORD=y
-        return (client_y << 16) | (client_x & 0xFFFF)
+    def _send_mouse_input(self, flags: int, x: int = 0, y: int = 0, data: int = 0) -> None:
+        """Send mouse input using SendInput API."""
+        abs_x, abs_y = self._normalize_coords(x, y)
+        
+        inp = INPUT()
+        inp.type = INPUT_MOUSE
+        inp.union.mi.dx = abs_x
+        inp.union.mi.dy = abs_y
+        inp.union.mi.mouseData = data
+        inp.union.mi.dwFlags = flags | MOUSEEVENTF_ABSOLUTE
+        inp.union.mi.time = 0
+        inp.union.mi.dwExtraInfo = None
+        
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     
-    def _activate_window(self, hwnd: int) -> None:
-        """Activate a window for input."""
-        if hwnd and hwnd != self._active_hwnd:
-            # Deactivate old window
-            if self._active_hwnd:
-                user32.PostMessageW(self._active_hwnd, self.WM_KILLFOCUS, 0, 0)
-            
-            # Activate new window
-            user32.PostMessageW(hwnd, self.WM_ACTIVATE, self.WA_ACTIVE, 0)
-            user32.PostMessageW(hwnd, self.WM_SETFOCUS, 0, 0)
-            self._active_hwnd = hwnd
+    def _send_keyboard_input(self, vk_code: int, scan_code: int = 0, flags: int = 0) -> None:
+        """Send keyboard input using SendInput API."""
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.union.ki.wVk = vk_code
+        inp.union.ki.wScan = scan_code
+        inp.union.ki.dwFlags = flags
+        inp.union.ki.time = 0
+        inp.union.ki.dwExtraInfo = None
+        
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     
     def mouse_move(self, x: int, y: int) -> None:
-        """Move mouse to position."""
-        hwnd = self._find_window_at(x, y)
-        if hwnd:
-            lparam = self._make_lparam(x, y, hwnd)
-            user32.PostMessageW(hwnd, self.WM_MOUSEMOVE, self._mouse_buttons_down, lparam)
+        """Move mouse to position using SendInput."""
+        self._send_mouse_input(MOUSEEVENTF_MOVE, x, y)
     
     def mouse_down(self, x: int, y: int, button: str = "left") -> None:
-        """Press mouse button."""
-        hwnd = self._find_window_at(x, y)
-        if not hwnd:
-            return
+        """Press mouse button using SendInput."""
+        # First move to position
+        self._send_mouse_input(MOUSEEVENTF_MOVE, x, y)
         
-        self._activate_window(hwnd)
-        lparam = self._make_lparam(x, y, hwnd)
-        
+        # Then press button
         if button == "left":
-            self._mouse_buttons_down |= self.MK_LBUTTON
-            user32.PostMessageW(hwnd, self.WM_LBUTTONDOWN, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_LEFTDOWN, x, y)
         elif button == "right":
-            self._mouse_buttons_down |= self.MK_RBUTTON
-            user32.PostMessageW(hwnd, self.WM_RBUTTONDOWN, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_RIGHTDOWN, x, y)
         elif button == "middle":
-            self._mouse_buttons_down |= self.MK_MBUTTON
-            user32.PostMessageW(hwnd, self.WM_MBUTTONDOWN, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_MIDDLEDOWN, x, y)
     
     def mouse_up(self, x: int, y: int, button: str = "left") -> None:
-        """Release mouse button."""
-        hwnd = self._find_window_at(x, y)
-        if not hwnd:
-            return
-        
-        lparam = self._make_lparam(x, y, hwnd)
-        
+        """Release mouse button using SendInput."""
         if button == "left":
-            self._mouse_buttons_down &= ~self.MK_LBUTTON
-            user32.PostMessageW(hwnd, self.WM_LBUTTONUP, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_LEFTUP, x, y)
         elif button == "right":
-            self._mouse_buttons_down &= ~self.MK_RBUTTON
-            user32.PostMessageW(hwnd, self.WM_RBUTTONUP, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_RIGHTUP, x, y)
         elif button == "middle":
-            self._mouse_buttons_down &= ~self.MK_MBUTTON
-            user32.PostMessageW(hwnd, self.WM_MBUTTONUP, self._mouse_buttons_down, lparam)
+            self._send_mouse_input(MOUSEEVENTF_MIDDLEUP, x, y)
     
     def mouse_click(self, x: int, y: int, button: str = "left") -> None:
-        """Click at position."""
+        """Click at position using SendInput."""
         self.mouse_down(x, y, button)
         time.sleep(0.02)
         self.mouse_up(x, y, button)
     
     def mouse_scroll(self, x: int, y: int, delta_x: int, delta_y: int) -> None:
-        """Scroll at position."""
-        hwnd = self._find_window_at(x, y)
-        if not hwnd:
-            return
+        """Scroll at position using SendInput."""
+        # Move to position first
+        self._send_mouse_input(MOUSEEVENTF_MOVE, x, y)
         
-        # WPARAM: HIWORD = wheel delta (positive = up), LOWORD = key state
-        # LPARAM: screen coordinates
+        # Vertical scroll
         if delta_y != 0:
-            wparam = (delta_y << 16) | self._mouse_buttons_down
-            lparam = (y << 16) | (x & 0xFFFF)
-            user32.PostMessageW(hwnd, self.WM_MOUSEWHEEL, wparam, lparam)
+            # WHEEL_DELTA is 120, scale accordingly
+            wheel_delta = delta_y * 120
+            self._send_mouse_input(MOUSEEVENTF_WHEEL, x, y, wheel_delta)
+        
+        # Horizontal scroll
+        if delta_x != 0:
+            wheel_delta = delta_x * 120
+            self._send_mouse_input(MOUSEEVENTF_HWHEEL, x, y, wheel_delta)
     
     def key_down(self, vk_code: int, scan_code: int = 0) -> None:
-        """Press key."""
-        hwnd = self._active_hwnd or (self._get_windows()[0].hwnd if self._get_windows() else None)
-        if hwnd:
-            # LPARAM: repeat count (1), scan code, extended key flag, etc.
-            lparam = 1 | (scan_code << 16)
-            user32.PostMessageW(hwnd, self.WM_KEYDOWN, vk_code, lparam)
+        """Press key using SendInput."""
+        flags = 0
+        # Extended keys (arrows, home, end, etc.)
+        if vk_code in (0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E):
+            flags |= KEYEVENTF_EXTENDEDKEY
+        self._send_keyboard_input(vk_code, scan_code, flags)
     
     def key_up(self, vk_code: int, scan_code: int = 0) -> None:
-        """Release key."""
-        hwnd = self._active_hwnd or (self._get_windows()[0].hwnd if self._get_windows() else None)
-        if hwnd:
-            # LPARAM with key-up flags
-            lparam = 1 | (scan_code << 16) | (1 << 30) | (1 << 31)
-            user32.PostMessageW(hwnd, self.WM_KEYUP, vk_code, lparam)
+        """Release key using SendInput."""
+        flags = KEYEVENTF_KEYUP
+        if vk_code in (0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E):
+            flags |= KEYEVENTF_EXTENDEDKEY
+        self._send_keyboard_input(vk_code, scan_code, flags)
     
     def type_char(self, char: str) -> None:
-        """Type a character."""
-        hwnd = self._active_hwnd or (self._get_windows()[0].hwnd if self._get_windows() else None)
-        if hwnd and char:
-            user32.PostMessageW(hwnd, self.WM_CHAR, ord(char), 0)
+        """Type a character using SendInput with Unicode support."""
+        if not char:
+            return
+        
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.union.ki.wVk = 0
+        inp.union.ki.wScan = ord(char)
+        inp.union.ki.dwFlags = KEYEVENTF_UNICODE
+        inp.union.ki.time = 0
+        inp.union.ki.dwExtraInfo = None
+        
+        # Key down
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        
+        # Key up
+        inp.union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     
     def type_text(self, text: str) -> None:
-        """Type a string of characters."""
+        """Type a string of characters using SendInput."""
         for char in text:
             self.type_char(char)
             time.sleep(0.01)

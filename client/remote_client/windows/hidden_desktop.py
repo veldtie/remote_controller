@@ -1177,6 +1177,13 @@ class HiddenWindowSession:
         Args:
             app_name: Application name (chrome, firefox, etc.) or full path
             url: Optional URL to open (for browsers)
+        
+        Supported applications with hidden mode:
+            - chrome, chromium: --no-sandbox --disable-gpu
+            - firefox: (runs in hidden desktop)
+            - edge: --no-sandbox --disable-gpu
+            - powershell, pwsh: -WindowStyle Hidden
+            - cmd: runs hidden via startupinfo
         """
         exe = _resolve_app_executable(app_name)
         if not exe:
@@ -1187,7 +1194,32 @@ class HiddenWindowSession:
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 5  # SW_SHOW - need visible for PrintWindow
         
+        app_lower = app_name.lower()
         cmd = [exe]
+        
+        # Add application-specific flags for hidden/headless operation
+        if any(b in app_lower for b in ("chrome", "chromium")):
+            cmd.extend([
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ])
+        elif "edge" in app_lower:
+            cmd.extend([
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--no-first-run",
+            ])
+        elif "firefox" in app_lower:
+            # Firefox works on hidden desktop without special flags
+            pass
+        elif "powershell" in app_lower or "pwsh" in app_lower:
+            cmd.extend(["-WindowStyle", "Hidden"])
+        
         if url:
             cmd.append(url)
         
@@ -1197,7 +1229,7 @@ class HiddenWindowSession:
         # Give app time to create window
         time.sleep(1.0)
         
-        logger.info("Launched %s on hidden desktop (PID: %d)", app_name, proc.pid)
+        logger.info("Launched %s on hidden desktop (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
     
     def get_windows(self) -> list:
         """Get list of tracked windows."""
@@ -1262,9 +1294,11 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     Returns:
         Session instance (HiddenWindowSession or HiddenDesktopSession)
     
-    Note:
-        PrintWindow mode only works when explicitly requested, as it requires
-        windows to be on the same desktop for capture to work correctly.
+    Modes:
+        - "auto": Try PrintWindow first (no driver needed), then virtual display
+        - "printwindow": Use PrintWindow API (recommended, no driver)
+        - "virtual_display": Use VDD driver (requires installation)
+        - "fallback": Capture from primary monitor (client sees actions)
     """
     if mode == "printwindow":
         if not PRINTWINDOW_AVAILABLE:
@@ -1277,10 +1311,18 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     if mode == "fallback":
         return HiddenDesktopSession(use_virtual_display=False, **kwargs)
     
-    # Auto mode: try virtual display first, then fallback
-    # PrintWindow is NOT used in auto mode because it cannot capture 
-    # windows from a different desktop
+    # Auto mode: try PrintWindow first (no driver needed), then virtual display
     if mode == "auto":
+        # First try PrintWindow mode - no driver required
+        if PRINTWINDOW_AVAILABLE:
+            try:
+                session = HiddenWindowSession(**kwargs)
+                logger.info("Using PrintWindow mode (no driver required)")
+                return session
+            except Exception as exc:
+                logger.warning("PrintWindow session failed: %s, trying virtual display", exc)
+        
+        # Fallback to virtual display / fallback mode
         try:
             session = HiddenDesktopSession(use_virtual_display=True, **kwargs)
             if session.is_virtual_display_active:
