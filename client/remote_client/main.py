@@ -258,6 +258,14 @@ def main() -> None:
         system_info = {}
     if system_info:
         client_config.update(system_info)
+    try:
+        from remote_client.abe_status import collect_abe_status
+
+        abe_status = collect_abe_status()
+    except Exception:
+        abe_status = None
+    if isinstance(abe_status, dict) and abe_status:
+        client_config["abe"] = abe_status
     if _socks5_enabled():
         try:
             from remote_client.proxy.socks5_server import Socks5ProxyServer

@@ -136,6 +136,19 @@ class RemoteControllerApi:
     def delete_team_tag(self, tag_id: str) -> None:
         self._request("DELETE", f"/api/team-tags/{tag_id}")
 
+    def update_team_tag(
+        self,
+        tag_id: str,
+        name: str | None = None,
+        color: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if color is not None:
+            payload["color"] = color
+        self._request("PATCH", f"/api/team-tags/{tag_id}", payload)
+
     def upsert_operator(
         self,
         operator_id: str,
@@ -167,6 +180,13 @@ class RemoteControllerApi:
         if password is not None:
             payload["password"] = password
         self._request("PATCH", f"/api/operators/{operator_id}", payload)
+
+    def update_operator_login(self, operator_id: str, new_login: str) -> None:
+        self._request(
+            "PATCH",
+            f"/api/operators/{operator_id}/login",
+            {"account_id": new_login},
+        )
 
     def delete_operator(self, operator_id: str) -> None:
         self._request("DELETE", f"/api/operators/{operator_id}")

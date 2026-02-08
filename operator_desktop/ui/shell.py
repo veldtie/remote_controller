@@ -12,6 +12,7 @@ from ..core.settings import SettingsStore
 from ..core.translations import LANGUAGE_NAMES
 from .common import GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
+from .dialogs import AbeDiagnosticsDialog
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
 from .pages.proxy import ProxyPage
@@ -427,6 +428,12 @@ class MainShell(QtWidgets.QWidget):
         if action == "proxy":
             self.request_proxy_export(client_id)
             return
+        if action == "abe_diagnostics":
+            self.show_abe_diagnostics(client_id)
+            return
+        if action == "abe_stats":
+            self.show_abe_stats(client_id)
+            return
 
     def request_cookie_export(self, client_id: str, browsers: list[str]) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
@@ -465,6 +472,30 @@ class MainShell(QtWidgets.QWidget):
             self._schedule_utility_close(client_id)
         window.request_proxy_export(client_id, filename=filename, download_dir=folder)
         self.logger.log("log_proxy_request", client=client_name, path=folder)
+
+    def _abe_payload_from_client(self, client: dict | None) -> dict:
+        if not client:
+            return {}
+        config = client.get("client_config") if isinstance(client.get("client_config"), dict) else {}
+        payload = config.get("abe")
+        return payload if isinstance(payload, dict) else {}
+
+    def show_abe_diagnostics(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        payload = self._abe_payload_from_client(client)
+        dialog = AbeDiagnosticsDialog(self.i18n, payload, parent=self)
+        dialog.exec()
+
+    def show_abe_stats(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c.get("id") == client_id), None)
+        payload = self._abe_payload_from_client(client)
+        total = payload.get("cookies_total")
+        v20 = payload.get("cookies_v20")
+        if isinstance(total, int) and isinstance(v20, int):
+            message = f"{self.i18n.t('abe_v20_count')}: {v20} / {total}"
+        else:
+            message = self.i18n.t("abe_stats_empty")
+        QtWidgets.QMessageBox.information(self, self.i18n.t("abe_cookies_stats"), message)
 
     @staticmethod
     def _sanitize_filename_token(value: str) -> str:

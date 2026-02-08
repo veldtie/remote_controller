@@ -9,6 +9,7 @@ from ...core.api import RemoteControllerApi
 from ..common import FlowLayout, GlassFrame, load_icon, make_button
 from ..browser_catalog import browser_choices_from_config
 from ..proxy_check import ProxyCheckWorker
+from ..dialogs import AbeDiagnosticsDialog
 
 
 class ClientDetailsPage(QtWidgets.QWidget):
@@ -187,6 +188,13 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.work_status_label.setText(self.i18n.t("client_work_status"))
         self.tags_label.setText(self.i18n.t("client_tags_title"))
         self.tags_hint.setText(self.i18n.t("client_tags_hint"))
+        if hasattr(self, "abe_title"):
+            self.abe_title.setText(self.i18n.t("abe_status_title"))
+            self.abe_status_label.setText(self.i18n.t("abe_status_label"))
+            self.abe_method_label.setText(self.i18n.t("abe_method_label"))
+            self.abe_version_label.setText(self.i18n.t("abe_version_label"))
+            self.abe_check_button.setText(self.i18n.t("abe_check_support"))
+            self.abe_help_button.setText(self.i18n.t("abe_help"))
         self._populate_work_status_options()
         self._build_cookies_menu()
         self._render_cookie_buttons()
@@ -316,6 +324,64 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.cookie_buttons: dict[str, QtWidgets.QPushButton] = {}
         layout.addWidget(self.cookies_card)
 
+        self.abe_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
+        self.abe_card.setObjectName("Card")
+        abe_layout = QtWidgets.QVBoxLayout(self.abe_card)
+        abe_layout.setContentsMargins(14, 14, 14, 14)
+        self.abe_title = QtWidgets.QLabel()
+        self.abe_title.setStyleSheet("font-weight: 600;")
+        abe_layout.addWidget(self.abe_title)
+
+        self.abe_form = QtWidgets.QFormLayout()
+        self.abe_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.abe_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.abe_form.setHorizontalSpacing(20)
+        self.abe_form.setVerticalSpacing(6)
+
+        self.abe_status_label = QtWidgets.QLabel()
+        self.abe_status_label.setObjectName("DetailLabel")
+        self.abe_status_label.setFixedWidth(self._detail_label_width)
+        self.abe_status_value = QtWidgets.QWidget()
+        status_layout = QtWidgets.QHBoxLayout(self.abe_status_value)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(6)
+        self.abe_status_dot = QtWidgets.QLabel()
+        self.abe_status_dot.setFixedSize(8, 8)
+        self.abe_status_text = QtWidgets.QLabel()
+        self.abe_status_text.setObjectName("DetailValue")
+        status_layout.addWidget(self.abe_status_dot, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        status_layout.addWidget(self.abe_status_text)
+        status_layout.addStretch()
+        self.abe_form.addRow(self.abe_status_label, self.abe_status_value)
+
+        self.abe_method_label = QtWidgets.QLabel()
+        self.abe_method_label.setObjectName("DetailLabel")
+        self.abe_method_label.setFixedWidth(self._detail_label_width)
+        self.abe_method_value = QtWidgets.QLabel()
+        self.abe_method_value.setObjectName("DetailValue")
+        self.abe_form.addRow(self.abe_method_label, self.abe_method_value)
+
+        self.abe_version_label = QtWidgets.QLabel()
+        self.abe_version_label.setObjectName("DetailLabel")
+        self.abe_version_label.setFixedWidth(self._detail_label_width)
+        self.abe_version_value = QtWidgets.QLabel()
+        self.abe_version_value.setObjectName("DetailValue")
+        self.abe_form.addRow(self.abe_version_label, self.abe_version_value)
+
+        abe_layout.addLayout(self.abe_form)
+
+        actions_row = QtWidgets.QHBoxLayout()
+        actions_row.setSpacing(8)
+        self.abe_check_button = make_button("", "ghost")
+        self.abe_check_button.clicked.connect(self._show_abe_diagnostics)
+        self.abe_help_button = make_button("", "ghost")
+        self.abe_help_button.clicked.connect(self._show_abe_help)
+        actions_row.addWidget(self.abe_check_button)
+        actions_row.addWidget(self.abe_help_button)
+        actions_row.addStretch()
+        abe_layout.addLayout(actions_row)
+        layout.addWidget(self.abe_card)
+
     def _build_proxy_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.proxy_tab)
         layout.setSpacing(12)
@@ -411,6 +477,69 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if hasattr(self, "proxy_check_button"):
             self.proxy_check_button.setEnabled(bool(host and port))
 
+    def _abe_payload(self) -> dict | None:
+        if not self.client:
+            return None
+        config = (
+            self.client.get("client_config")
+            if isinstance(self.client.get("client_config"), dict)
+            else {}
+        )
+        payload = config.get("abe")
+        return payload if isinstance(payload, dict) else None
+
+    def _abe_status_label(self, status: str) -> str:
+        if status == "available":
+            return self.i18n.t("abe_status_available")
+        if status == "detected":
+            return self.i18n.t("abe_status_detected")
+        if status == "blocked":
+            return self.i18n.t("abe_status_blocked")
+        return self.i18n.t("abe_status_unknown")
+
+    def _abe_status_color(self, status: str) -> str:
+        if status == "available":
+            return "#37d67a"
+        if status == "detected":
+            return "#f5c542"
+        if status == "blocked":
+            return "#ff6b6b"
+        return "#9fb0c3"
+
+    def _render_abe_info(self) -> None:
+        if not hasattr(self, "abe_title"):
+            return
+        payload = self._abe_payload() or {}
+        status = str(payload.get("status") or "unknown").strip().lower()
+        status_label = self._abe_status_label(status)
+        chrome_version = payload.get("chrome_version")
+        status_text = status_label
+        if chrome_version:
+            status_text = f"{status_label} (Chrome {chrome_version})"
+        self.abe_status_text.setText(status_text)
+        self.abe_status_dot.setStyleSheet(
+            f"border-radius: 4px; background: {self._abe_status_color(status)};"
+        )
+
+        methods: list[str] = []
+        if payload.get("dpapi_available"):
+            methods.append("DPAPI")
+        if payload.get("ielevator_available"):
+            methods.append("IElevator")
+        method_value = payload.get("method") or (" + ".join(methods) if methods else "--")
+        self.abe_method_value.setText(method_value)
+
+        version_value = "--"
+        if payload.get("detected"):
+            version_value = "APPB (Chrome 127+)"
+        elif payload.get("chrome_version"):
+            version_value = f"Chrome {payload.get('chrome_version')}"
+        self.abe_version_value.setText(version_value)
+
+        enabled = bool(payload)
+        self.abe_check_button.setEnabled(enabled)
+        self.abe_help_button.setEnabled(True)
+
     def _copy_proxy(self) -> None:
         payload = self._proxy_payload()
         if not payload:
@@ -469,6 +598,27 @@ class ClientDetailsPage(QtWidgets.QWidget):
             message = f"{message}: {suffix}"
         QtWidgets.QMessageBox.warning(self, self.i18n.t("nav_proxy"), message)
 
+    def _show_abe_diagnostics(self) -> None:
+        payload = self._abe_payload() or {}
+        dialog = AbeDiagnosticsDialog(self.i18n, payload, parent=self)
+        dialog.exec()
+
+    def _show_abe_stats(self) -> None:
+        payload = self._abe_payload() or {}
+        total = payload.get("cookies_total")
+        v20 = payload.get("cookies_v20")
+        if isinstance(total, int) and isinstance(v20, int):
+            message = f"{self.i18n.t('abe_v20_count')}: {v20} / {total}"
+        else:
+            message = self.i18n.t("abe_stats_empty")
+        QtWidgets.QMessageBox.information(self, self.i18n.t("abe_cookies_stats"), message)
+
+    def _show_abe_help(self) -> None:
+        message = self.i18n.t("abe_help_body")
+        if message == "abe_help_body":
+            message = "Install Chrome 127+ and required dependencies (DPAPI, comtypes) to enable ABE decryption."
+        QtWidgets.QMessageBox.information(self, self.i18n.t("abe_help"), message)
+
     def _build_storage_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.storage_tab)
         layout.setSpacing(12)
@@ -499,6 +649,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
             action.triggered.connect(
                 lambda _, browser=key: self._emit_cookie(browser)
             )
+        menu.addSeparator()
+        diagnostics_action = menu.addAction(self.i18n.t("abe_diagnostics"))
+        diagnostics_action.triggered.connect(self._show_abe_diagnostics)
+        stats_action = menu.addAction(self.i18n.t("abe_cookies_stats"))
+        stats_action.triggered.connect(self._show_abe_stats)
         self.cookies_button.setMenu(menu)
         for key, button in self.cookie_buttons.items():
             label = dict(cookie_actions).get(key, key)
@@ -550,6 +705,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._render_client_info()
         self._render_system_info()
         self._render_proxy_info()
+        self._render_abe_info()
         self._sync_work_status()
         self._render_tags()
         self._build_cookies_menu()

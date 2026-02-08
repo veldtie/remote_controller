@@ -71,7 +71,7 @@ class CookiesPage(QtWidgets.QWidget):
         table_layout = QtWidgets.QVBoxLayout(self.table_card)
         table_layout.setContentsMargins(12, 12, 12, 12)
         table_layout.setSpacing(8)
-        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table = QtWidgets.QTableWidget(0, 6)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -85,6 +85,7 @@ class CookiesPage(QtWidgets.QWidget):
         header_view.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         table_layout.addWidget(self.table)
@@ -104,6 +105,7 @@ class CookiesPage(QtWidgets.QWidget):
                 self.i18n.t("table_id"),
                 self.i18n.t("table_region"),
                 self.i18n.t("table_ip"),
+                self.i18n.t("table_abe"),
                 self.i18n.t("table_cookies"),
             ]
         )
@@ -155,6 +157,60 @@ class CookiesPage(QtWidgets.QWidget):
             return self.i18n.t(region_value)
         return "--"
 
+    @staticmethod
+    def _abe_payload(client: dict) -> dict | None:
+        config = client.get("client_config") if isinstance(client.get("client_config"), dict) else {}
+        abe = config.get("abe")
+        return abe if isinstance(abe, dict) else None
+
+    def _abe_status_label(self, status: str) -> str:
+        if status == "available":
+            return self.i18n.t("abe_status_available")
+        if status == "detected":
+            return self.i18n.t("abe_status_detected")
+        if status == "blocked":
+            return self.i18n.t("abe_status_blocked")
+        return self.i18n.t("abe_status_unknown")
+
+    def _abe_status_color(self, status: str) -> str:
+        if status == "available":
+            return "#37d67a"
+        if status == "detected":
+            return "#f5c542"
+        if status == "blocked":
+            return self.theme.colors.get("danger", "#ff6b6b")
+        return self.theme.colors.get("muted", "#9fb0c3")
+
+    def _build_abe_cell(self, client: dict) -> QtWidgets.QWidget:
+        payload = self._abe_payload(client) or {}
+        status = str(payload.get("status") or "unknown").strip().lower()
+        label = self._abe_status_label(status)
+        color = self._abe_status_color(status)
+
+        wrapper = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(wrapper)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(6)
+
+        dot = QtWidgets.QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"border-radius: 4px; background: {color};")
+        text = QtWidgets.QLabel(label)
+        text.setObjectName("Muted")
+        layout.addWidget(dot, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(text)
+        layout.addStretch()
+
+        tooltip_parts: list[str] = [label]
+        chrome_version = payload.get("chrome_version")
+        if chrome_version:
+            tooltip_parts.append(f"Chrome {chrome_version}")
+        method = payload.get("method")
+        if method:
+            tooltip_parts.append(f"{self.i18n.t('abe_method_label')}: {method}")
+        wrapper.setToolTip("\n".join(tooltip_parts))
+        return wrapper
+
     def render_clients(self, clients: list[dict]) -> None:
         self.table.setRowCount(0)
         for client in clients:
@@ -172,6 +228,7 @@ class CookiesPage(QtWidgets.QWidget):
             self.table.setItem(row, 1, id_item)
             self.table.setItem(row, 2, region_item)
             self.table.setItem(row, 3, ip_item)
+            self.table.setCellWidget(row, 4, self._build_abe_cell(client))
 
             export_button = make_button(self.i18n.t("button_cookies_export"), "ghost")
             menu = QtWidgets.QMenu(export_button)
@@ -184,8 +241,21 @@ class CookiesPage(QtWidgets.QWidget):
                         cid, f"cookies:{browser}"
                     )
                 )
+            menu.addSeparator()
+            diagnostics_action = menu.addAction(self.i18n.t("abe_diagnostics"))
+            diagnostics_action.triggered.connect(
+                lambda _, cid=client.get("id", ""): self.extra_action_requested.emit(
+                    cid, "abe_diagnostics"
+                )
+            )
+            stats_action = menu.addAction(self.i18n.t("abe_cookies_stats"))
+            stats_action.triggered.connect(
+                lambda _, cid=client.get("id", ""): self.extra_action_requested.emit(
+                    cid, "abe_stats"
+                )
+            )
             export_button.setMenu(menu)
-            self.table.setCellWidget(row, 4, export_button)
+            self.table.setCellWidget(row, 5, export_button)
 
     def _emit_client_selected(self, row: int, _column: int) -> None:
         item = self.table.item(row, 0)

@@ -224,3 +224,192 @@ class AddMemberDialog(QtWidgets.QDialog):
             "password": self.password_input.text(),
             "tag": self.tag_combo.currentData(),
         }
+
+
+class EditMemberDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        i18n: I18n,
+        member: dict,
+        parent=None,
+        allowed_roles: list[str] | None = None,
+    ):
+        super().__init__(parent)
+        self.i18n = i18n
+        self.member = member or {}
+        self.setWindowTitle(self.i18n.t("team_edit_dialog_title"))
+        self.setMinimumWidth(360)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.name_input = QtWidgets.QLineEdit(str(self.member.get("name") or ""))
+        self.account_input = QtWidgets.QLineEdit(str(self.member.get("account_id") or ""))
+        self.password_input = QtWidgets.QLineEdit()
+        self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.password_input.setPlaceholderText(self.i18n.t("team_edit_password_placeholder"))
+
+        self.tag_combo = QtWidgets.QComboBox()
+        roles = list(allowed_roles or ["operator", "administrator", "moderator"])
+        current_role = str(self.member.get("tag") or "operator")
+        if current_role and current_role not in roles:
+            roles.append(current_role)
+        for role in roles:
+            key = f"tag_{role}"
+            label = self.i18n.t(key)
+            if label == key:
+                label = role
+            self.tag_combo.addItem(label, role)
+        index = self.tag_combo.findData(current_role)
+        if index >= 0:
+            self.tag_combo.setCurrentIndex(index)
+        if allowed_roles is not None and len(allowed_roles) <= 1:
+            self.tag_combo.setEnabled(False)
+
+        form.addRow(self.i18n.t("team_add_name"), self.name_input)
+        form.addRow(self.i18n.t("team_add_account_id"), self.account_input)
+        form.addRow(self.i18n.t("team_add_password"), self.password_input)
+        form.addRow(self.i18n.t("team_add_tag"), self.tag_combo)
+        layout.addLayout(form)
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch()
+        self.cancel_button = make_button(self.i18n.t("team_edit_cancel"), "ghost")
+        self.confirm_button = make_button(self.i18n.t("team_edit_confirm"), "primary")
+        self.cancel_button.clicked.connect(self.reject)
+        self.confirm_button.clicked.connect(self.accept)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+
+    def member_data(self) -> Dict[str, str]:
+        return {
+            "name": self.name_input.text().strip(),
+            "account_id": self.account_input.text().strip(),
+            "password": self.password_input.text(),
+            "tag": self.tag_combo.currentData(),
+        }
+
+
+class AbeDiagnosticsDialog(QtWidgets.QDialog):
+    def __init__(self, i18n: I18n, payload: dict | None = None, parent=None):
+        super().__init__(parent)
+        self.i18n = i18n
+        self.payload = payload or {}
+
+        self.setWindowTitle(self.i18n.t("abe_diagnostics_title"))
+        self.setMinimumWidth(440)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QtWidgets.QLabel(self.i18n.t("abe_diagnostics_title"))
+        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        layout.addWidget(title)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(8)
+
+        self._add_bool_row(form, "abe_diag_windows", self.payload.get("windows"))
+        self._add_bool_row(form, "abe_diag_chrome", self.payload.get("chrome_installed"))
+        self._add_bool_row(form, "abe_diag_elevation", self.payload.get("elevation_service"))
+        self._add_bool_row(form, "abe_diag_dpapi", self.payload.get("dpapi_available"))
+        self._add_bool_row(form, "abe_diag_ielevator", self.payload.get("ielevator_available"))
+
+        form.addRow(QtWidgets.QLabel(""), QtWidgets.QLabel(""))
+
+        form.addRow(
+            self._label("abe_diag_version"),
+            self._value(self._resolve_version_text()),
+        )
+        form.addRow(
+            self._label("abe_diag_cookies_v20"),
+            self._value(self._resolve_v20_text()),
+        )
+        form.addRow(
+            self._label("abe_diag_success_rate"),
+            self._value(self._resolve_success_text()),
+        )
+        form.addRow(
+            self._label("abe_diag_recommendation"),
+            self._value(self._resolve_recommendation_text(), wrap=True),
+        )
+
+        layout.addLayout(form)
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch()
+        self.copy_button = make_button(self.i18n.t("abe_diag_copy"), "ghost")
+        self.close_button = make_button(self.i18n.t("abe_diag_close"), "primary")
+        self.copy_button.clicked.connect(self._copy_summary)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addWidget(self.copy_button)
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
+
+    def _label(self, key: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(self.i18n.t(key))
+        label.setObjectName("DetailLabel")
+        return label
+
+    def _value(self, text: str, wrap: bool = False) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("DetailValue")
+        label.setWordWrap(wrap)
+        return label
+
+    def _format_bool(self, value: object) -> tuple[str, str]:
+        if value is True:
+            return self.i18n.t("proxy_bool_yes"), "#37d67a"
+        if value is False:
+            return self.i18n.t("proxy_bool_no"), "#ff6b6b"
+        return "--", "#9fb0c3"
+
+    def _add_bool_row(self, form: QtWidgets.QFormLayout, key: str, value: object) -> None:
+        label = self._label(key)
+        text, color = self._format_bool(value)
+        value_label = self._value(text)
+        value_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+        form.addRow(label, value_label)
+
+    def _resolve_version_text(self) -> str:
+        if self.payload.get("detected"):
+            return "APPB (Chrome 127+)"
+        chrome_version = self.payload.get("chrome_version")
+        if chrome_version:
+            return f"Chrome {chrome_version}"
+        return "--"
+
+    def _resolve_v20_text(self) -> str:
+        total = self.payload.get("cookies_total")
+        v20 = self.payload.get("cookies_v20")
+        if isinstance(total, int) and isinstance(v20, int):
+            return f"{v20} / {total}"
+        return "--"
+
+    def _resolve_success_text(self) -> str:
+        value = self.payload.get("success_rate")
+        if isinstance(value, (int, float)):
+            return f"{value:.0f}%"
+        return "--"
+
+    def _resolve_recommendation_text(self) -> str:
+        recommendation = str(self.payload.get("recommendation") or "").strip()
+        return recommendation or "--"
+
+    def _copy_summary(self) -> None:
+        lines = [
+            f"{self.i18n.t('abe_diag_windows')}: {self._format_bool(self.payload.get('windows'))[0]}",
+            f"{self.i18n.t('abe_diag_chrome')}: {self._format_bool(self.payload.get('chrome_installed'))[0]}",
+            f"{self.i18n.t('abe_diag_elevation')}: {self._format_bool(self.payload.get('elevation_service'))[0]}",
+            f"{self.i18n.t('abe_diag_dpapi')}: {self._format_bool(self.payload.get('dpapi_available'))[0]}",
+            f"{self.i18n.t('abe_diag_ielevator')}: {self._format_bool(self.payload.get('ielevator_available'))[0]}",
+            f"{self.i18n.t('abe_diag_version')}: {self._resolve_version_text()}",
+            f"{self.i18n.t('abe_diag_cookies_v20')}: {self._resolve_v20_text()}",
+            f"{self.i18n.t('abe_diag_success_rate')}: {self._resolve_success_text()}",
+            f"{self.i18n.t('abe_diag_recommendation')}: {self._resolve_recommendation_text()}",
+        ]
+        QtWidgets.QApplication.clipboard().setText("\n".join(lines))
