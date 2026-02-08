@@ -24,21 +24,44 @@ from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError, VIDEO_CLOCK_RATE, VIDEO_TIME_BASE
 from av.video.frame import VideoFrame
 
-from remote_client.control.input_controller import (
-    _SendInputFallback,
-    ControlCommand,
-    MouseClick,
-    MouseDown,
-    MouseMove,
-    MouseScroll,
-    MouseUp,
-    KeyDown,
-    KeyPress,
-    KeyUp,
-    TextInput,
-)
-from remote_client.apps.launcher import resolve_app_executable
-from remote_client.media.stream_profiles import AdaptiveStreamProfile
+try:
+    from remote_client.control.input_controller import (
+        _SendInputFallback,
+        ControlCommand,
+        MouseClick,
+        MouseDown,
+        MouseMove,
+        MouseScroll,
+        MouseUp,
+        KeyDown,
+        KeyPress,
+        KeyUp,
+        TextInput,
+    )
+except ImportError:
+    from ..control.input_controller import (
+        _SendInputFallback,
+        ControlCommand,
+        MouseClick,
+        MouseDown,
+        MouseMove,
+        MouseScroll,
+        MouseUp,
+        KeyDown,
+        KeyPress,
+        KeyUp,
+        TextInput,
+    )
+
+try:
+    from remote_client.apps.launcher import resolve_app_executable
+except ImportError:
+    from ..apps.launcher import resolve_app_executable
+
+try:
+    from remote_client.media.stream_profiles import AdaptiveStreamProfile
+except ImportError:
+    from ..media.stream_profiles import AdaptiveStreamProfile
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +73,15 @@ try:
     )
     VIRTUAL_DISPLAY_AVAILABLE = True
 except ImportError:
-    VIRTUAL_DISPLAY_AVAILABLE = False
-    VirtualDisplaySession = None
+    try:
+        from .virtual_display import (
+            VirtualDisplaySession,
+            check_virtual_display_support,
+        )
+        VIRTUAL_DISPLAY_AVAILABLE = True
+    except ImportError:
+        VIRTUAL_DISPLAY_AVAILABLE = False
+        VirtualDisplaySession = None
 
 if platform.system() == "Windows":
     from ctypes import wintypes
@@ -150,6 +180,14 @@ if platform.system() == "Windows":
     user32.ReleaseDC.restype = wintypes.INT
     user32.GetSystemMetrics.argtypes = [wintypes.INT]
     user32.GetSystemMetrics.restype = wintypes.INT
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -867,9 +905,17 @@ try:
     )
     PRINTWINDOW_AVAILABLE = True
 except ImportError:
-    PRINTWINDOW_AVAILABLE = False
-    WindowCaptureSession = None
-    WindowInputController = None
+    try:
+        from .window_capture import (
+            WindowCaptureSession,
+            WindowInputController,
+            WindowInfo,
+        )
+        PRINTWINDOW_AVAILABLE = True
+    except ImportError:
+        PRINTWINDOW_AVAILABLE = False
+        WindowCaptureSession = None
+        WindowInputController = None
 
 
 class PrintWindowCapture:
