@@ -89,18 +89,25 @@ def build_stylesheet(theme: Theme) -> str:
         letter-spacing: 1px;
         text-transform: uppercase;
     }}
-    QLabel#ChromeDot {{
+    QLabel#ChromeDot,
+    QToolButton#ChromeDot {{
         border-radius: 5px;
         border: 1px solid rgba(0, 0, 0, 0.25);
         background: rgba(255, 255, 255, 0.2);
     }}
-    QLabel#ChromeDot[dot="close"] {{
+    QToolButton#ChromeDot {{
+        padding: 0px;
+    }}
+    QLabel#ChromeDot[dot="close"],
+    QToolButton#ChromeDot[dot="close"] {{
         background: #ff5f57;
     }}
-    QLabel#ChromeDot[dot="minimize"] {{
+    QLabel#ChromeDot[dot="minimize"],
+    QToolButton#ChromeDot[dot="minimize"] {{
         background: #febc2e;
     }}
-    QLabel#ChromeDot[dot="zoom"] {{
+    QLabel#ChromeDot[dot="zoom"],
+    QToolButton#ChromeDot[dot="zoom"] {{
         background: #28c840;
     }}
     QLabel#PageTitle {{

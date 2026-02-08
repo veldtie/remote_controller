@@ -10,6 +10,7 @@ DEFAULT_OPERATORS = []
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "language": "en",
+    "window_size": {"width": 1280, "height": 800},
     "api_url": "",
     "api_token": "",
     "role": "operator",
