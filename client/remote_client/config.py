@@ -12,6 +12,7 @@ from dataclasses import dataclass
 TEAM_ID_FILENAME = "rc_team_id.txt"
 ANTIFRAUD_CONFIG_FILENAME = "rc_antifraud.json"
 SERVER_CONFIG_FILENAME = "rc_server.json"
+ACTIVITY_ENV_FILENAME = "rc_activity.env"
 SESSION_ID_FILENAME = "session_id"
 
 DEFAULT_ANTIFRAUD_COUNTRIES = [
@@ -288,3 +289,26 @@ def resolve_team_id(team_id: str | None) -> str | None:
     if file_team:
         return file_team
     return None
+
+
+def load_activity_env() -> None:
+    """Load activity tracker environment from embedded config file."""
+    for base_dir in _candidate_config_dirs():
+        path = os.path.join(base_dir, ACTIVITY_ENV_FILENAME)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        value = value.strip()
+                        if key and not os.getenv(key):
+                            os.environ[key] = value
+            return
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return

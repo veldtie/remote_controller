@@ -662,3 +662,133 @@ async def delete_operator(operator_id: str, request: Request) -> dict[str, bool]
     async with signaling_db.db_pool.acquire() as conn:
         await conn.execute("DELETE FROM operators WHERE id = $1;", operator_id)
     return {"ok": True}
+
+
+# ============================================================
+# Activity Logs API
+# ============================================================
+
+class ActivityLogEntry(BaseModel):
+    timestamp: str | None = None
+    application: str
+    window_title: str
+    input_text: str
+    entry_type: str = "keystroke"
+
+
+class ActivityLogCreate(BaseModel):
+    session_id: str
+    entries: list[ActivityLogEntry]
+
+
+class ActivityLogDelete(BaseModel):
+    log_ids: list[int] | None = None
+
+
+@router.post("/api/activity-logs")
+async def create_activity_logs(payload: ActivityLogCreate, request: Request) -> dict[str, object]:
+    """Create activity log entries from client."""
+    if config.SIGNALING_TOKEN:
+        provided_token = request.query_params.get("token") or request.headers.get("x-rc-token")
+        if not config.is_valid_signaling_token(provided_token):
+            raise HTTPException(status_code=403, detail="Invalid token")
+    
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    if not payload.session_id or not payload.entries:
+        raise HTTPException(status_code=400, detail="Session ID and entries required")
+    
+    entries_data = [entry.model_dump() for entry in payload.entries]
+    inserted = await signaling_db.insert_activity_logs(payload.session_id, entries_data)
+    
+    return {"ok": True, "inserted": inserted}
+
+
+@router.get("/api/activity-logs/{session_id}")
+async def get_activity_logs(
+    session_id: str,
+    request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    entry_type: str | None = None,
+    application: str | None = None,
+    search: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, object]:
+    """Get activity logs for a session with filtering."""
+    _require_api_token(request)
+    
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    # Cap limit to prevent large responses
+    limit = min(limit, 500)
+    
+    logs = await signaling_db.get_activity_logs(
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+        entry_type=entry_type,
+        application=application,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    
+    total = await signaling_db.get_activity_logs_count(
+        session_id=session_id,
+        entry_type=entry_type,
+        application=application,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    
+    # Convert datetime objects to ISO strings
+    for log in logs:
+        for key in ("timestamp", "created_at"):
+            if key in log and log[key]:
+                if hasattr(log[key], "isoformat"):
+                    log[key] = log[key].isoformat()
+    
+    return {
+        "logs": logs,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/api/activity-logs/{session_id}/applications")
+async def get_activity_applications(
+    session_id: str,
+    request: Request,
+) -> dict[str, list[str]]:
+    """Get list of unique applications for a session."""
+    _require_api_token(request)
+    
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    applications = await signaling_db.get_activity_applications(session_id)
+    return {"applications": applications}
+
+
+@router.delete("/api/activity-logs/{session_id}")
+async def delete_activity_logs(
+    session_id: str,
+    request: Request,
+    payload: ActivityLogDelete | None = None,
+) -> dict[str, object]:
+    """Delete activity logs for a session."""
+    _require_api_token(request)
+    
+    if not signaling_db.db_pool:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    
+    log_ids = payload.log_ids if payload else None
+    deleted = await signaling_db.delete_activity_logs(session_id, log_ids)
+    
+    return {"ok": True, "deleted": deleted}
