@@ -940,6 +940,36 @@
         }
         return;
       }
+      // Remote Shell: Handle all shell_ prefixed actions and shell_output
+      if (parsed.action && (parsed.action.startsWith("shell_") || parsed.action === "shell_output")) {
+        if (remdesk.shell && remdesk.shell.handleResponse) {
+          remdesk.shell.handleResponse(parsed);
+        }
+        return;
+      }
+      // Browser Profiles: Handle all profile_ prefixed actions
+      if (parsed.action && parsed.action.startsWith("profile_")) {
+        if (remdesk.profiles && remdesk.profiles.handleResponse) {
+          remdesk.profiles.handleResponse(parsed);
+        }
+        return;
+      }
+      // Handle chunked download (used for profiles and other large data)
+      if (parsed.action === "download_chunk") {
+        if (parsed.kind === "profile") {
+          if (remdesk.profiles && remdesk.profiles.handleChunk) {
+            remdesk.profiles.handleChunk(parsed);
+          }
+        }
+        return;
+      }
+      // Profile data chunks (legacy)
+      if (parsed.kind === "profile" || (state.pendingDownload && state.pendingDownload.kind === "profile")) {
+        if (remdesk.profiles && remdesk.profiles.handleResponse) {
+          remdesk.profiles.handleResponse(parsed);
+        }
+        return;
+      }
       if (Array.isArray(parsed.files)) {
         if (typeof parsed.path === "string") {
           state.remoteCurrentPath = parsed.path;

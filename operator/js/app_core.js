@@ -766,7 +766,7 @@
    * @param {boolean} enabled - Whether to enable input blocking.
    */
   function toggleInputBlocking(enabled) {
-    if (!state.dataChannel || state.dataChannel.readyState !== "open") {
+    if (!state.controlChannel || state.controlChannel.readyState !== "open") {
       setInputBlockingStatus(false, "error");
       return;
     }
@@ -780,7 +780,7 @@
       if (remdesk.sendEncrypted) {
         remdesk.sendEncrypted(message);
       } else {
-        state.dataChannel.send(JSON.stringify(message));
+        state.controlChannel.send(JSON.stringify(message));
       }
     } catch (err) {
       console.error("Failed to toggle input blocking:", err);

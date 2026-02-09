@@ -22,6 +22,7 @@ from .browser_catalog import browser_keys_from_config
 from .pages.instructions import InstructionsPage
 from .pages.settings import SettingsPage
 from .pages.teams import TeamsPage
+from .local_desktop import LocalDesktopWindow
 
 
 class MainShell(QtWidgets.QWidget):
@@ -47,6 +48,7 @@ class MainShell(QtWidgets.QWidget):
         self._storage_windows: Dict[str, RemoteSessionDialog] = {}
         self._utility_sessions: Dict[str, RemoteSessionDialog] = {}
         self._ice_servers_cache: list[dict[str, object]] | None = None
+        self._local_desktop_window: LocalDesktopWindow | None = None
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(18)
@@ -113,6 +115,13 @@ class MainShell(QtWidgets.QWidget):
         self._apply_nav_icon(self.clear_data_button, "trash")
         self.clear_data_button.clicked.connect(self.clear_local_data)
         sidebar_layout.addWidget(self.clear_data_button)
+
+        # Local Desktop button
+        self.local_desktop_button = make_button("🖥️ Local Desktop", "nav")
+        self.local_desktop_button.setProperty("nav", True)
+        self.local_desktop_button.setToolTip("Open local desktop for working with client profiles")
+        self.local_desktop_button.clicked.connect(self.open_local_desktop)
+        sidebar_layout.addWidget(self.local_desktop_button)
 
         sidebar_layout.addStretch()
         self.operator_label = QtWidgets.QLabel()
@@ -267,6 +276,20 @@ class MainShell(QtWidgets.QWidget):
     def clear_local_data(self) -> None:
         self.settings.clear_user_data()
         self.logout_requested.emit()
+
+    def open_local_desktop(self) -> None:
+        """Open or focus the local desktop window."""
+        if self._local_desktop_window is None or not self._local_desktop_window.isVisible():
+            self._local_desktop_window = LocalDesktopWindow(self)
+            self._local_desktop_window.closed.connect(self._on_local_desktop_closed)
+            self._local_desktop_window.show()
+        else:
+            self._local_desktop_window.raise_()
+            self._local_desktop_window.activateWindow()
+
+    def _on_local_desktop_closed(self) -> None:
+        """Handle local desktop window closed."""
+        self._local_desktop_window = None
 
     def open_client_details(self, client_id: str) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
