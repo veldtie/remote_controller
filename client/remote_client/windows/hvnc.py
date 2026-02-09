@@ -193,13 +193,14 @@ class INPUT(ctypes.Structure):
 
 
 # Function signatures
+# Note: Using LPVOID for lpsa parameter to allow passing ctypes.byref() or None
 user32.CreateDesktopW.argtypes = [
     wintypes.LPCWSTR,
     wintypes.LPCWSTR,
     wintypes.LPVOID,
     wintypes.DWORD,
     wintypes.DWORD,
-    ctypes.POINTER(SECURITY_ATTRIBUTES),
+    wintypes.LPVOID,  # LPSECURITY_ATTRIBUTES - use LPVOID for compatibility with byref()
 ]
 user32.CreateDesktopW.restype = wintypes.HANDLE
 
