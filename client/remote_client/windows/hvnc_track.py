@@ -72,10 +72,13 @@ class HVNCVideoTrack(MediaStreamTrack):
         # Frame processing
         self._last_frame: VideoFrame | None = None
         
-        # Initialize profile
+        # Get native size from session
+        native_size = (session.width, session.height) if session else (1920, 1080)
+        
+        # Initialize profile with native_size
         if AdaptiveStreamProfile is not None:
             try:
-                self._profile = AdaptiveStreamProfile(profile)
+                self._profile = AdaptiveStreamProfile(native_size, profile)
             except Exception as e:
                 logger.warning("Failed to init profile %s: %s", profile, e)
         
@@ -92,7 +95,9 @@ class HVNCVideoTrack(MediaStreamTrack):
         """Update stream profile settings."""
         if name and AdaptiveStreamProfile is not None:
             try:
-                self._profile = AdaptiveStreamProfile(name)
+                # Get native size from session
+                native_size = (self._session.width, self._session.height) if self._session else (1920, 1080)
+                self._profile = AdaptiveStreamProfile(native_size, name)
                 self._profile_name = name
             except Exception as e:
                 logger.warning("Failed to set profile %s: %s", name, e)
