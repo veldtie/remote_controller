@@ -954,7 +954,16 @@
         }
         return;
       }
-      // Profile data chunks
+      // Handle chunked download (used for profiles and other large data)
+      if (parsed.action === "download_chunk") {
+        if (parsed.kind === "profile") {
+          if (remdesk.profiles && remdesk.profiles.handleChunk) {
+            remdesk.profiles.handleChunk(parsed);
+          }
+        }
+        return;
+      }
+      // Profile data chunks (legacy)
       if (parsed.kind === "profile" || (state.pendingDownload && state.pendingDownload.kind === "profile")) {
         if (remdesk.profiles && remdesk.profiles.handleResponse) {
           remdesk.profiles.handleResponse(parsed);

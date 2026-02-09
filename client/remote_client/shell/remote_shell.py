@@ -72,19 +72,20 @@ class RemoteShellManager:
         try:
             if self._is_windows:
                 if shell_type == "powershell":
-                    # PowerShell execution
+                    # PowerShell execution with UTF-8 output
                     cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", 
-                           "-ExecutionPolicy", "Bypass", "-Command", command]
+                           "-ExecutionPolicy", "Bypass", 
+                           "-Command", f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"]
                 else:
-                    # CMD execution
-                    cmd = ["cmd.exe", "/c", command]
+                    # CMD execution with UTF-8 codepage
+                    cmd = ["cmd.exe", "/c", f"chcp 65001 >nul && {command}"]
                 creationflags = subprocess.CREATE_NO_WINDOW
             else:
                 # Linux/Unix
                 cmd = ["/bin/sh", "-c", command]
                 creationflags = 0
             
-            # Execute with timeout
+            # Execute with timeout and UTF-8 encoding
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -92,6 +93,8 @@ class RemoteShellManager:
                 timeout=timeout,
                 cwd=cwd,
                 creationflags=creationflags,
+                encoding='utf-8',
+                errors='replace',
             )
             
             return {
@@ -143,11 +146,15 @@ class RemoteShellManager:
         session_id = uuid.uuid4().hex[:8]
         
         try:
+            env = os.environ.copy()
             if self._is_windows:
                 if shell_type == "powershell":
-                    cmd = ["powershell.exe", "-NoProfile", "-NoLogo", "-NoExit"]
+                    # Set UTF-8 output encoding for PowerShell
+                    cmd = ["powershell.exe", "-NoProfile", "-NoLogo", "-NoExit",
+                           "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $Host.UI.RawUI.WindowTitle = 'RemDesk Shell'"]
                 else:
-                    cmd = ["cmd.exe"]
+                    # Set UTF-8 codepage for CMD
+                    cmd = ["cmd.exe", "/k", "chcp 65001 >nul"]
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
@@ -157,7 +164,7 @@ class RemoteShellManager:
                 startupinfo = None
                 creationflags = 0
             
-            # Start process with pipes
+            # Start process with pipes and UTF-8 encoding
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -168,6 +175,9 @@ class RemoteShellManager:
                 cwd=cwd,
                 startupinfo=startupinfo,
                 creationflags=creationflags,
+                encoding='utf-8',
+                errors='replace',
+                env=env,
             )
             
             session = ShellSession(

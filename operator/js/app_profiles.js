@@ -16,6 +16,7 @@
     downloadedProfiles: {},
     pendingExport: null,
     profileChunks: [],
+    chunkTransfers: {},  // Track chunked transfers by transfer_id
   };
 
   // DOM Elements
@@ -113,14 +114,14 @@
   }
 
   /**
-   * Handle chunked profile data
+   * Handle chunked profile data (legacy format)
    */
   function handleProfileChunk(payload) {
     if (typeof payload === "string") {
       // Complete data in single message
       saveProfile(profileState.pendingExport, payload);
     } else if (payload.chunk !== undefined) {
-      // Chunked transfer
+      // Chunked transfer (legacy)
       profileState.profileChunks.push(payload.chunk);
       if (payload.final) {
         const fullData = profileState.profileChunks.join("");
@@ -130,6 +131,42 @@
     } else if (payload.data) {
       // Data in payload
       saveProfile(profileState.pendingExport, payload.data);
+    }
+  }
+
+  /**
+   * Handle chunked download from client (new format with transfer_id)
+   */
+  function handleChunkedDownload(payload) {
+    const { transfer_id, index, total, data } = payload;
+    
+    if (!transfer_id) {
+      console.error("Chunk without transfer_id");
+      return;
+    }
+    
+    // Initialize transfer tracking
+    if (!profileState.chunkTransfers[transfer_id]) {
+      profileState.chunkTransfers[transfer_id] = {
+        chunks: new Array(total),
+        received: 0,
+        total: total,
+      };
+    }
+    
+    const transfer = profileState.chunkTransfers[transfer_id];
+    transfer.chunks[index] = data;
+    transfer.received++;
+    
+    // Update status
+    const percent = Math.round((transfer.received / transfer.total) * 100);
+    setProfileStatus(`Downloading profile: ${percent}%`, "");
+    
+    // Check if all chunks received
+    if (transfer.received === transfer.total) {
+      const fullData = transfer.chunks.join("");
+      delete profileState.chunkTransfers[transfer_id];
+      saveProfile(profileState.pendingExport, fullData);
     }
   }
 
@@ -457,6 +494,7 @@
     refresh: listBrowsers,
     export: exportProfile,
     handleResponse: handleProfileResponse,
+    handleChunk: handleChunkedDownload,  // Handle chunked downloads
     init: initProfiles,
   };
 
