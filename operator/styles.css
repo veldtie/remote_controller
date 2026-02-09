@@ -686,6 +686,285 @@ body.hvnc-mode .mode-chip.hvnc-mode {
   color: #ffffff;
 }
 
+/* =============================================
+   HVNC Controls Panel Styles
+   ============================================= */
+
+.hvnc-main-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hvnc-action-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hvnc-action-btn.primary {
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  color: white;
+  border: 1px solid rgba(139, 92, 246, 0.5);
+}
+
+.hvnc-action-btn.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7c3aed, #9333ea);
+  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+}
+
+.hvnc-action-btn.danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.hvnc-action-btn.danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+}
+
+.hvnc-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hvnc-section {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hvnc-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.hvnc-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.hvnc-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hvnc-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hvnc-btn:hover {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.5);
+  transform: translateY(-1px);
+}
+
+.hvnc-btn:active {
+  transform: translateY(0);
+}
+
+.hvnc-icon {
+  font-size: 1rem;
+}
+
+/* HVNC Dialogs */
+.hvnc-dialog {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.hvnc-dialog-content {
+  background: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  min-width: 320px;
+  max-width: 90vw;
+}
+
+.hvnc-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.hvnc-dialog-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.hvnc-dialog-close:hover {
+  color: var(--text);
+}
+
+.hvnc-dialog-body {
+  padding: 16px;
+}
+
+.hvnc-dialog-body .field {
+  margin-bottom: 12px;
+}
+
+.hvnc-dialog-body .field:last-child {
+  margin-bottom: 0;
+}
+
+.hvnc-dialog-body label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.hvnc-dialog-body input[type="text"],
+.hvnc-dialog-body textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.hvnc-dialog-body input[type="text"]:focus,
+.hvnc-dialog-body textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hvnc-dialog-body button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hvnc-dialog-body button.primary {
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  color: white;
+  border: 1px solid rgba(139, 92, 246, 0.5);
+}
+
+.hvnc-dialog-body button.danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.hvnc-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.hvnc-browser-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hvnc-browser-btn:hover {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.browser-icon {
+  font-size: 1.2rem;
+}
+
+.hvnc-dialog-options {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.hvnc-dialog-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.hvnc-dialog-options input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+#hvncStatus {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+#hvncStatus[data-state="active"] {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+#hvncStatus[data-state="error"] {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+#hvncStatus[data-state=""] {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+}
+
 .switch {
   position: relative;
   display: inline-flex;
