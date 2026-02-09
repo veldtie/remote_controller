@@ -27,7 +27,7 @@
    * Send profile action to client
    */
   function sendProfileAction(action, payload = {}) {
-    if (!state.dataChannel || state.dataChannel.readyState !== "open") {
+    if (!state.controlChannel || state.controlChannel.readyState !== "open") {
       setProfileStatus("Not connected to client", "error");
       return false;
     }
@@ -41,7 +41,7 @@
       if (remdesk.sendEncrypted) {
         remdesk.sendEncrypted(message);
       } else {
-        state.dataChannel.send(JSON.stringify(message));
+        state.controlChannel.send(JSON.stringify(message));
       }
       return true;
     } catch (err) {

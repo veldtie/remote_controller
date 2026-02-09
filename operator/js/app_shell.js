@@ -28,7 +28,7 @@
    * Send shell action to client
    */
   function sendShellAction(action, payload = {}) {
-    if (!state.dataChannel || state.dataChannel.readyState !== "open") {
+    if (!state.controlChannel || state.controlChannel.readyState !== "open") {
       appendOutput("[Error] Not connected to client\n", "error");
       return false;
     }
@@ -42,7 +42,7 @@
       if (remdesk.sendEncrypted) {
         remdesk.sendEncrypted(message);
       } else {
-        state.dataChannel.send(JSON.stringify(message));
+        state.controlChannel.send(JSON.stringify(message));
       }
       return true;
     } catch (err) {
