@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 import asyncpg
 
@@ -334,6 +335,41 @@ async def update_connected_time() -> None:
             logger.exception("Failed to update connected time")
 
 
+def _parse_timestamp(ts_value: str | datetime | None) -> datetime | None:
+    """Parse timestamp from ISO string or datetime to datetime object."""
+    if ts_value is None:
+        return None
+    if isinstance(ts_value, datetime):
+        return ts_value
+    if not isinstance(ts_value, str):
+        return None
+    
+    ts_str = ts_value.strip()
+    if not ts_str:
+        return None
+    
+    try:
+        # Handle ISO format with 'Z' suffix
+        if ts_str.endswith("Z"):
+            ts_str = ts_str[:-1] + "+00:00"
+        # Python 3.11+ handles fromisoformat well, but for compatibility:
+        return datetime.fromisoformat(ts_str)
+    except (ValueError, TypeError):
+        pass
+    
+    # Fallback: try common formats
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(ts_str, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    
+    return None
+
+
 async def insert_activity_logs(
     session_id: str,
     entries: list[dict],
@@ -349,7 +385,8 @@ async def insert_activity_logs(
     try:
         async with db_pool.acquire() as conn:
             for entry in entries:
-                timestamp = entry.get("timestamp")
+                timestamp_raw = entry.get("timestamp")
+                timestamp = _parse_timestamp(timestamp_raw)
                 application = entry.get("application", "Unknown")
                 window_title = entry.get("window_title", "Unknown")
                 input_text = entry.get("input_text", "")
@@ -358,19 +395,34 @@ async def insert_activity_logs(
                 if not input_text:
                     continue
                 
-                await conn.execute(
-                    """
-                    INSERT INTO activity_logs 
-                    (session_id, timestamp, application, window_title, input_text, entry_type)
-                    VALUES ($1, COALESCE($2::timestamptz, NOW()), $3, $4, $5, $6);
-                    """,
-                    session_id,
-                    timestamp,
-                    application,
-                    window_title,
-                    input_text,
-                    entry_type,
-                )
+                # If timestamp is None, let the database use NOW()
+                if timestamp is None:
+                    await conn.execute(
+                        """
+                        INSERT INTO activity_logs 
+                        (session_id, timestamp, application, window_title, input_text, entry_type)
+                        VALUES ($1, NOW(), $2, $3, $4, $5);
+                        """,
+                        session_id,
+                        application,
+                        window_title,
+                        input_text,
+                        entry_type,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        INSERT INTO activity_logs 
+                        (session_id, timestamp, application, window_title, input_text, entry_type)
+                        VALUES ($1, $2, $3, $4, $5, $6);
+                        """,
+                        session_id,
+                        timestamp,
+                        application,
+                        window_title,
+                        input_text,
+                        entry_type,
+                    )
                 inserted += 1
     except Exception:
         logger.exception("Failed to insert activity logs for session %s", session_id)
