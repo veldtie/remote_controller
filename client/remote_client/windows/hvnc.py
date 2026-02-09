@@ -567,8 +567,9 @@ class HiddenDesktop:
 class HiddenDesktopCapture:
     """Captures the screen from a hidden desktop.
     
-    Uses BitBlt to capture the desktop DC into a bitmap, then converts
-    to raw RGB data for streaming.
+    The capture thread STAYS on the hidden desktop permanently.
+    This is crucial for proper hVNC operation - we can't just switch
+    back and forth because GetDC/BitBlt operate on the CURRENT thread's desktop.
     """
     
     def __init__(
@@ -597,10 +598,15 @@ class HiddenDesktopCapture:
         self._frame_lock = threading.Lock()
         self._frame: bytes | None = None
         self._frame_size = (width, height)
+        self._initialized = threading.Event()
         
-        # GDI resources (allocated per-frame for thread safety)
+        # Capture thread - will STAY on hidden desktop
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
+        
+        # Wait for thread to initialize on hidden desktop
+        if not self._initialized.wait(timeout=5.0):
+            logger.error("Capture thread failed to initialize")
         
         logger.info("Started hidden desktop capture: %dx%d @ %d fps", width, height, fps)
     
@@ -636,84 +642,108 @@ class HiddenDesktopCapture:
         return None, self._frame_size
     
     def _capture_frame(self) -> bytes | None:
-        """Capture a single frame from the hidden desktop.
-        
-        This runs in a thread that has switched to the hidden desktop.
-        """
-        # Switch to hidden desktop for this capture
-        if not self._desktop.switch_to():
-            logger.warning("Failed to switch to hidden desktop for capture")
+        """Capture a single frame. Thread must already be on hidden desktop."""
+        # Get screen DC (NULL = entire screen of CURRENT thread's desktop)
+        hdc_screen = user32.GetDC(None)
+        if not hdc_screen:
+            logger.debug("GetDC failed")
             return None
         
         try:
-            # Get screen DC (NULL = entire screen of current desktop)
-            hdc_screen = user32.GetDC(None)
-            if not hdc_screen:
+            # Get actual screen size
+            screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
+            screen_height = user32.GetSystemMetrics(SM_CYSCREEN)
+            
+            if screen_width <= 0 or screen_height <= 0:
+                screen_width = self._width
+                screen_height = self._height
+            
+            # Update frame size if different
+            if (screen_width, screen_height) != self._frame_size:
+                self._frame_size = (screen_width, screen_height)
+                self._width = screen_width
+                self._height = screen_height
+                logger.info("Screen size updated: %dx%d", screen_width, screen_height)
+            
+            # Create compatible DC
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+            if not hdc_mem:
+                logger.debug("CreateCompatibleDC failed")
                 return None
             
             try:
-                # Create compatible DC and bitmap
-                hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-                if not hdc_mem:
+                # Create bitmap
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, screen_width, screen_height)
+                if not hbitmap:
+                    logger.debug("CreateCompatibleBitmap failed")
                     return None
                 
                 try:
-                    hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, self._width, self._height)
-                    if not hbitmap:
+                    old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
+                    
+                    # BitBlt from screen to memory DC
+                    result = gdi32.BitBlt(
+                        hdc_mem, 0, 0, screen_width, screen_height,
+                        hdc_screen, 0, 0, SRCCOPY
+                    )
+                    
+                    if not result:
+                        logger.debug("BitBlt failed")
                         return None
                     
-                    try:
-                        old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
-                        
-                        # BitBlt from screen to memory DC
-                        if not gdi32.BitBlt(
-                            hdc_mem, 0, 0, self._width, self._height,
-                            hdc_screen, 0, 0, SRCCOPY
-                        ):
-                            return None
-                        
-                        gdi32.SelectObject(hdc_mem, old_bitmap)
-                        
-                        # Get bitmap data
-                        bi = BITMAPINFO()
-                        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                        bi.bmiHeader.biWidth = self._width
-                        bi.bmiHeader.biHeight = -self._height  # Negative = top-down
-                        bi.bmiHeader.biPlanes = 1
-                        bi.bmiHeader.biBitCount = 32
-                        bi.bmiHeader.biCompression = BI_RGB
-                        
-                        # Calculate buffer size
-                        buffer_size = self._width * self._height * 4
-                        buffer = ctypes.create_string_buffer(buffer_size)
-                        
-                        # Get DIB bits
-                        gdi32.GetDIBits(
-                            hdc_mem,
-                            hbitmap,
-                            0,
-                            self._height,
-                            buffer,
-                            ctypes.byref(bi),
-                            DIB_RGB_COLORS,
-                        )
-                        
-                        return buffer.raw
-                        
-                    finally:
-                        gdi32.DeleteObject(hbitmap)
+                    gdi32.SelectObject(hdc_mem, old_bitmap)
+                    
+                    # Prepare BITMAPINFO
+                    bi = BITMAPINFO()
+                    bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                    bi.bmiHeader.biWidth = screen_width
+                    bi.bmiHeader.biHeight = -screen_height  # Negative = top-down
+                    bi.bmiHeader.biPlanes = 1
+                    bi.bmiHeader.biBitCount = 32
+                    bi.bmiHeader.biCompression = BI_RGB
+                    
+                    # Calculate buffer size
+                    buffer_size = screen_width * screen_height * 4
+                    buffer = ctypes.create_string_buffer(buffer_size)
+                    
+                    # Get DIB bits
+                    result = gdi32.GetDIBits(
+                        hdc_mem,
+                        hbitmap,
+                        0,
+                        screen_height,
+                        buffer,
+                        ctypes.byref(bi),
+                        DIB_RGB_COLORS,
+                    )
+                    
+                    if result == 0:
+                        logger.debug("GetDIBits failed")
+                        return None
+                    
+                    return buffer.raw
+                    
                 finally:
-                    gdi32.DeleteDC(hdc_mem)
+                    gdi32.DeleteObject(hbitmap)
             finally:
-                user32.ReleaseDC(None, hdc_screen)
+                gdi32.DeleteDC(hdc_mem)
         finally:
-            # Switch back to original desktop
-            self._desktop.switch_back()
+            user32.ReleaseDC(None, hdc_screen)
     
     def _capture_loop(self) -> None:
-        """Main capture loop running in background thread."""
-        logger.info("Capture loop started")
+        """Main capture loop - runs entirely on hidden desktop."""
+        logger.info("Capture thread starting...")
         
+        # Switch this thread to hidden desktop PERMANENTLY
+        if not self._desktop.switch_to():
+            logger.error("Failed to switch capture thread to hidden desktop!")
+            self._initialized.set()
+            return
+        
+        logger.info("Capture thread switched to hidden desktop: %s", self._desktop.name)
+        self._initialized.set()
+        
+        frame_count = 0
         while not self._stop_event.is_set():
             start = time.monotonic()
             
@@ -722,15 +752,17 @@ class HiddenDesktopCapture:
                 if frame:
                     with self._frame_lock:
                         self._frame = frame
+                    frame_count += 1
+                    if frame_count % 300 == 0:  # Log every ~10 seconds at 30fps
+                        logger.debug("Captured %d frames", frame_count)
             except Exception as exc:
                 logger.debug("Capture error: %s", exc)
             
             elapsed = time.monotonic() - start
-            sleep_time = max(0.0, self._interval - elapsed)
-            if sleep_time > 0:
-                self._stop_event.wait(sleep_time)
+            sleep_time = max(0.001, self._interval - elapsed)
+            self._stop_event.wait(sleep_time)
         
-        logger.info("Capture loop stopped")
+        logger.info("Capture loop stopped, captured %d frames total", frame_count)
     
     def close(self) -> None:
         """Stop capture and cleanup."""
@@ -742,7 +774,8 @@ class HiddenDesktopCapture:
 class HiddenDesktopInput:
     """Sends input to a hidden desktop.
     
-    Uses SendInput API after switching thread to hidden desktop.
+    The input thread STAYS on the hidden desktop permanently.
+    This is required because SendInput sends to the CURRENT thread's desktop.
     """
     
     def __init__(self, desktop: HiddenDesktop, screen_size: tuple[int, int] = (1920, 1080)):
@@ -756,10 +789,15 @@ class HiddenDesktopInput:
         self._screen_width, self._screen_height = screen_size
         self._stop_event = threading.Event()
         self._queue: queue.Queue = queue.Queue()
+        self._initialized = threading.Event()
         
-        # Start input thread
+        # Start input thread - will STAY on hidden desktop
         self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
         self._input_thread.start()
+        
+        # Wait for thread to initialize on hidden desktop
+        if not self._initialized.wait(timeout=5.0):
+            logger.error("Input thread failed to initialize")
         
         logger.info("Input controller initialized for hidden desktop")
     
@@ -923,8 +961,17 @@ class HiddenDesktopInput:
                 time.sleep(0.01)
     
     def _input_loop(self) -> None:
-        """Main input processing loop."""
-        logger.info("Input loop started")
+        """Main input processing loop - runs entirely on hidden desktop."""
+        logger.info("Input thread starting...")
+        
+        # Switch this thread to hidden desktop PERMANENTLY
+        if not self._desktop.switch_to():
+            logger.error("Failed to switch input thread to hidden desktop!")
+            self._initialized.set()
+            return
+        
+        logger.info("Input thread switched to hidden desktop: %s", self._desktop.name)
+        self._initialized.set()
         
         while not self._stop_event.is_set():
             try:
@@ -932,17 +979,10 @@ class HiddenDesktopInput:
             except queue.Empty:
                 continue
             
-            # Switch to hidden desktop for input
-            if not self._desktop.switch_to():
-                logger.warning("Failed to switch to hidden desktop for input")
-                continue
-            
             try:
                 self._execute_input(cmd)
             except Exception as exc:
                 logger.debug("Input error: %s", exc)
-            finally:
-                self._desktop.switch_back()
         
         logger.info("Input loop stopped")
     
