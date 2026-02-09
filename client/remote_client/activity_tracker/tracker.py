@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Set
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,9 @@ class ActivityTracker:
         self._running = False
         self._last_clipboard = ""
         self._clipboard_check_interval = 1.0
+        # Track pressed modifier keys
+        self._pressed_modifiers: Set[str] = set()
+        self._ctrl_pressed = False
 
     def start(self) -> None:
         """Start tracking keyboard and clipboard."""
@@ -266,12 +269,38 @@ class ActivityTracker:
     def _on_key_press(self, key) -> None:
         """Handle key press event."""
         try:
-            # Get key character
+            key_name = None
+            key_char = None
+            
+            if hasattr(key, "name") and key.name:
+                key_name = key.name.lower()
             if hasattr(key, "char") and key.char:
-                char = key.char
-            elif hasattr(key, "name") and key.name:
-                name = key.name.lower()
-                char = self.SPECIAL_KEYS.get(name, f"[{name.upper()}]")
+                key_char = key.char
+            
+            # Track Ctrl key state
+            if key_name in ("ctrl_l", "ctrl_r", "ctrl"):
+                self._ctrl_pressed = True
+                self._pressed_modifiers.add("ctrl")
+                return
+            
+            # Check for Ctrl+V (paste from clipboard)
+            # '\x16' is the control character for Ctrl+V
+            if self._ctrl_pressed:
+                if key_char and (key_char.lower() == "v" or key_char == "\x16"):
+                    self._handle_paste()
+                    return
+                # Ignore other Ctrl+key combinations for now
+                if key_char:
+                    return
+            
+            # Get key character
+            if key_char:
+                # Skip control characters except for recognized ones
+                if ord(key_char) < 32 and key_char not in ('\t', '\n', '\r'):
+                    return
+                char = key_char
+            elif key_name:
+                char = self.SPECIAL_KEYS.get(key_name, f"[{key_name.upper()}]")
             else:
                 char = ""
 
@@ -299,8 +328,60 @@ class ActivityTracker:
             logger.debug("Key press handling error: %s", e)
 
     def _on_key_release(self, key) -> None:
-        """Handle key release event (unused but required)."""
-        pass
+        """Handle key release event - track modifier releases."""
+        try:
+            if hasattr(key, "name") and key.name:
+                key_name = key.name.lower()
+                if key_name in ("ctrl_l", "ctrl_r", "ctrl"):
+                    self._ctrl_pressed = False
+                    self._pressed_modifiers.discard("ctrl")
+        except Exception:
+            pass
+    
+    def _handle_paste(self) -> None:
+        """Handle paste operation (Ctrl+V) - record clipboard content as pasted text."""
+        if platform.system() != "Windows":
+            return
+        
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            CF_UNICODETEXT = 13
+            
+            if not user32.OpenClipboard(None):
+                return
+            
+            try:
+                handle = user32.GetClipboardData(CF_UNICODETEXT)
+                if handle:
+                    kernel32.GlobalLock.restype = ctypes.c_wchar_p
+                    data = kernel32.GlobalLock(handle)
+                    if data:
+                        pasted_text = str(data)
+                        kernel32.GlobalUnlock(handle)
+                        
+                        if pasted_text:
+                            # Record the pasted text as part of the input stream
+                            app_name, window_title = self._window_info.get_active_window_info()
+                            
+                            with self._buffer_lock:
+                                # Check if window changed
+                                if (
+                                    self._buffer.application != app_name
+                                    or self._buffer.window_title != window_title
+                                ):
+                                    self._flush_buffer_locked()
+                                    self._buffer.application = app_name
+                                    self._buffer.window_title = window_title
+                                    self._buffer.started_at = datetime.now(timezone.utc).isoformat()
+                                
+                                # Add pasted text with marker
+                                self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
+                                self._buffer.last_updated = time.time()
+            finally:
+                user32.CloseClipboard()
+        except Exception as e:
+            logger.debug("Paste handling error: %s", e)
 
     def _flush_buffer(self, force: bool = False) -> None:
         """Flush input buffer to activity queue."""

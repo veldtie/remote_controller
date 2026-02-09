@@ -327,14 +327,13 @@ def start_activity_tracking(
         return None
 
     try:
-        tracker = ActivityTracker()
         sender = ActivitySender(
             session_id=session_id,
             server_url=server_url,
             token=token,
         )
-        sender.start(tracker)
-        tracker.start()
+        # Let sender create and manage its own tracker with callback
+        sender.start()
         return sender
     except Exception as e:
         logger.warning("Failed to start activity tracking: %s", e)
