@@ -148,6 +148,10 @@ class RECT(ctypes.Structure):
     ]
 
 
+# ULONG_PTR is pointer-sized: 32-bit on x86, 64-bit on x64
+ULONG_PTR = ctypes.c_void_p
+
+
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [
         ("dx", wintypes.LONG),
@@ -155,7 +159,7 @@ class MOUSEINPUT(ctypes.Structure):
         ("mouseData", wintypes.DWORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", ULONG_PTR),
     ]
 
 
@@ -165,7 +169,7 @@ class KEYBDINPUT(ctypes.Structure):
         ("wScan", wintypes.WORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", ULONG_PTR),
     ]
 
 
@@ -824,7 +828,7 @@ class HiddenDesktopInput:
         inp.union.mi.mouseData = data
         inp.union.mi.dwFlags = flags | MOUSEEVENTF_ABSOLUTE
         inp.union.mi.time = 0
-        inp.union.mi.dwExtraInfo = None
+        inp.union.mi.dwExtraInfo = 0  # NULL pointer
         
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     
@@ -836,7 +840,7 @@ class HiddenDesktopInput:
         inp.union.ki.wScan = scan_code
         inp.union.ki.dwFlags = flags
         inp.union.ki.time = 0
-        inp.union.ki.dwExtraInfo = None
+        inp.union.ki.dwExtraInfo = 0  # NULL pointer
         
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     
@@ -950,7 +954,7 @@ class HiddenDesktopInput:
                 inp.union.ki.wScan = ord(char)
                 inp.union.ki.dwFlags = KEYEVENTF_UNICODE
                 inp.union.ki.time = 0
-                inp.union.ki.dwExtraInfo = None
+                inp.union.ki.dwExtraInfo = 0  # NULL pointer
                 user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
                 inp.union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
                 user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))

@@ -662,6 +662,29 @@ button:disabled {
   box-shadow: 0 12px 24px rgba(0, 145, 255, 0.3);
 }
 
+/* HVNC mode button - distinct purple styling to indicate it creates a separate hidden desktop */
+.mode-chip.hvnc-mode {
+  border-color: rgba(138, 43, 226, 0.5);
+  background: rgba(75, 0, 130, 0.4);
+}
+
+.mode-chip.hvnc-mode:hover {
+  border-color: rgba(138, 43, 226, 0.8);
+  box-shadow: 0 10px 18px rgba(75, 0, 130, 0.4);
+}
+
+.mode-chip.hvnc-mode.is-active {
+  background: linear-gradient(135deg, rgba(138, 43, 226, 0.95), rgba(186, 85, 211, 0.95));
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 12px 24px rgba(138, 43, 226, 0.4);
+}
+
+/* HVNC mode body class for additional styling */
+body.hvnc-mode .mode-chip.hvnc-mode {
+  background: linear-gradient(135deg, rgba(138, 43, 226, 0.95), rgba(186, 85, 211, 0.95));
+  color: #ffffff;
+}
 
 .switch {
   position: relative;

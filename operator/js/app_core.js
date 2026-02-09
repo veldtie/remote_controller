@@ -287,6 +287,9 @@
     if (value === "hidden" || value === "hidden-manage" || value === "hidden_manage") {
       return "hidden";
     }
+    if (value === "hvnc" || value === "hiddenvnc" || value === "createdesktop") {
+      return "hvnc";
+    }
     return "manage";
   }
 
@@ -576,20 +579,25 @@
     state.sessionMode = normalizeSessionMode(nextMode);
     syncSessionModeButtons();
     const hiddenMode = state.sessionMode === "hidden";
-    const label = hiddenMode ? "Hidden managing" : state.controlEnabled ? "Managing" : "Viewing";
+    const hvncMode = state.sessionMode === "hvnc";
+    const isHiddenOrHvnc = hiddenMode || hvncMode;
+    const label = hvncMode ? "HVNC managing" : hiddenMode ? "Hidden managing" : state.controlEnabled ? "Managing" : "Viewing";
     if (dom.interactionState) {
       dom.interactionState.textContent = label;
     }
     if (dom.modeBadge) {
-      dom.modeBadge.textContent = hiddenMode
-        ? "Hidden desktop"
-        : state.controlEnabled
-          ? "Manage mode"
-          : "View only";
+      dom.modeBadge.textContent = hvncMode
+        ? "HVNC mode"
+        : hiddenMode
+          ? "Hidden desktop"
+          : state.controlEnabled
+            ? "Manage mode"
+            : "View only";
     }
     document.body.classList.toggle("manage-mode", state.controlEnabled);
     document.body.classList.toggle("view-mode", !state.controlEnabled);
-    document.body.classList.toggle("hidden-manage", state.sessionMode === "hidden");
+    document.body.classList.toggle("hidden-manage", hiddenMode);
+    document.body.classList.toggle("hvnc-mode", hvncMode);
     updateAppLaunchAvailability();
     updateCookieAvailability();
     const disableManage = !state.controlEnabled;
@@ -811,7 +819,7 @@
    * Update hidden desktop controls visibility based on session mode.
    */
   function updateHiddenDesktopControls() {
-    const isHiddenMode = state.sessionMode === "hidden";
+    const isHiddenMode = state.sessionMode === "hidden" || state.sessionMode === "hvnc";
     
     if (dom.hiddenDesktopControls) {
       dom.hiddenDesktopControls.style.display = isHiddenMode ? "block" : "none";

@@ -88,6 +88,8 @@ def _coerce_session_mode(mode: Any) -> str | None:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
+    if value in {"hvnc", "hiddenvnc", "createdesktop"}:
+        return "hvnc"
     if value in {"manage", "control", "full"}:
         return "manage"
     return None

