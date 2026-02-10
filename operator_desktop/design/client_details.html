@@ -419,6 +419,75 @@
           </div>
         </div>
       </section>
+
+      <!-- ABE Features Status Card -->
+      <section class="card" style="margin-top: 16px; grid-column: 1 / -1;">
+        <div class="card-title">Что работает:</div>
+        <div class="form" style="margin-top: 8px;">
+          <div class="row">
+            <div class="label">Функция</div>
+            <div class="value" style="display: flex; gap: 24px;">
+              <span>Статус</span>
+              <span style="color: var(--muted);">Описание</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Определение ABE ключей</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">Ключи с APPB префиксом распознаются</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Определение v20 значений</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">Cookie с v20 префиксом распознаются</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Проверка поддержки</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">check_abe_support() показывает статус</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">AES-GCM расшифровка</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">При наличии ключа v20 значения расшифровываются</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Fallback на DPAPI</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">Автоматический откат на старые методы</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Логирование</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">Подробные логи процесса расшифровки</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="label">Статистика</div>
+            <div class="value" style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot" style="width: 8px; height: 8px; background: #37d67a; border-radius: 4px;"></span>
+              <span style="color: var(--muted);">Подсчёт успешных/неудачных операций</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-title" style="margin-top: 16px;">Ограничения:</div>
+        <div style="color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6;">
+          • IElevator COM требует установленного Chrome и comtypes<br>
+          • Полная ABE расшифровка работает только на Windows с правами пользователя Chrome<br>
+          • На Linux/macOS ABE модуль загружается, но расшифровка недоступна
+        </div>
+      </section>
     </div>
   </body>
 </html>

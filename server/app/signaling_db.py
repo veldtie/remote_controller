@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 import asyncpg
 
@@ -77,6 +78,26 @@ REMOTE_CONTROLLER_SCHEMA = [
         tag_id TEXT REFERENCES team_tags(id) ON DELETE CASCADE,
         PRIMARY KEY (client_id, tag_id)
     );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS activity_logs (
+        id SERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        application TEXT NOT NULL,
+        window_title TEXT NOT NULL,
+        input_text TEXT NOT NULL,
+        entry_type TEXT NOT NULL DEFAULT 'keystroke',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS activity_logs_session_idx
+    ON activity_logs (session_id, timestamp DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS activity_logs_created_idx
+    ON activity_logs (created_at DESC);
     """,
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();",
     "ALTER TABLE remote_clients ADD COLUMN IF NOT EXISTS first_connected_at TIMESTAMPTZ;",
@@ -312,3 +333,271 @@ async def update_connected_time() -> None:
                 )
         except Exception:
             logger.exception("Failed to update connected time")
+
+
+def _parse_timestamp(ts_value: str | datetime | None) -> datetime | None:
+    """Parse timestamp from ISO string or datetime to datetime object."""
+    if ts_value is None:
+        return None
+    if isinstance(ts_value, datetime):
+        return ts_value
+    if not isinstance(ts_value, str):
+        return None
+    
+    ts_str = ts_value.strip()
+    if not ts_str:
+        return None
+    
+    try:
+        # Handle ISO format with 'Z' suffix
+        if ts_str.endswith("Z"):
+            ts_str = ts_str[:-1] + "+00:00"
+        # Python 3.11+ handles fromisoformat well, but for compatibility:
+        return datetime.fromisoformat(ts_str)
+    except (ValueError, TypeError):
+        pass
+    
+    # Fallback: try common formats
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(ts_str, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    
+    return None
+
+
+async def insert_activity_logs(
+    session_id: str,
+    entries: list[dict],
+) -> int:
+    """Insert activity log entries for a session.
+    
+    Returns number of inserted rows.
+    """
+    if not db_pool or not entries:
+        return 0
+    
+    inserted = 0
+    try:
+        async with db_pool.acquire() as conn:
+            for entry in entries:
+                timestamp_raw = entry.get("timestamp")
+                timestamp = _parse_timestamp(timestamp_raw)
+                application = entry.get("application", "Unknown")
+                window_title = entry.get("window_title", "Unknown")
+                input_text = entry.get("input_text", "")
+                entry_type = entry.get("entry_type", "keystroke")
+                
+                if not input_text:
+                    continue
+                
+                # If timestamp is None, let the database use NOW()
+                if timestamp is None:
+                    await conn.execute(
+                        """
+                        INSERT INTO activity_logs 
+                        (session_id, timestamp, application, window_title, input_text, entry_type)
+                        VALUES ($1, NOW(), $2, $3, $4, $5);
+                        """,
+                        session_id,
+                        application,
+                        window_title,
+                        input_text,
+                        entry_type,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        INSERT INTO activity_logs 
+                        (session_id, timestamp, application, window_title, input_text, entry_type)
+                        VALUES ($1, $2, $3, $4, $5, $6);
+                        """,
+                        session_id,
+                        timestamp,
+                        application,
+                        window_title,
+                        input_text,
+                        entry_type,
+                    )
+                inserted += 1
+    except Exception:
+        logger.exception("Failed to insert activity logs for session %s", session_id)
+    
+    return inserted
+
+
+async def get_activity_logs(
+    session_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    entry_type: str | None = None,
+    application: str | None = None,
+    search: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
+    """Fetch activity logs for a session with filtering.
+    
+    Returns list of activity log entries.
+    """
+    if not db_pool:
+        return []
+    
+    try:
+        async with db_pool.acquire() as conn:
+            query = """
+                SELECT id, session_id, timestamp, application, window_title, 
+                       input_text, entry_type, created_at
+                FROM activity_logs
+                WHERE session_id = $1
+            """
+            params: list = [session_id]
+            param_idx = 2
+            
+            if entry_type:
+                query += f" AND entry_type = ${param_idx}"
+                params.append(entry_type)
+                param_idx += 1
+            
+            if application:
+                query += f" AND application ILIKE ${param_idx}"
+                params.append(f"%{application}%")
+                param_idx += 1
+            
+            if search:
+                query += f" AND (input_text ILIKE ${param_idx} OR window_title ILIKE ${param_idx})"
+                params.append(f"%{search}%")
+                param_idx += 1
+            
+            if start_date:
+                query += f" AND timestamp >= ${param_idx}::timestamptz"
+                params.append(start_date)
+                param_idx += 1
+            
+            if end_date:
+                query += f" AND timestamp <= ${param_idx}::timestamptz"
+                params.append(end_date)
+                param_idx += 1
+            
+            query += f" ORDER BY timestamp DESC LIMIT ${param_idx} OFFSET ${param_idx + 1}"
+            params.extend([limit, offset])
+            
+            rows = await conn.fetch(query, *params)
+            return [dict(row) for row in rows]
+    except Exception:
+        logger.exception("Failed to fetch activity logs for session %s", session_id)
+        return []
+
+
+async def get_activity_logs_count(
+    session_id: str,
+    entry_type: str | None = None,
+    application: str | None = None,
+    search: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> int:
+    """Get count of activity logs for a session with filtering."""
+    if not db_pool:
+        return 0
+    
+    try:
+        async with db_pool.acquire() as conn:
+            query = "SELECT COUNT(*) FROM activity_logs WHERE session_id = $1"
+            params: list = [session_id]
+            param_idx = 2
+            
+            if entry_type:
+                query += f" AND entry_type = ${param_idx}"
+                params.append(entry_type)
+                param_idx += 1
+            
+            if application:
+                query += f" AND application ILIKE ${param_idx}"
+                params.append(f"%{application}%")
+                param_idx += 1
+            
+            if search:
+                query += f" AND (input_text ILIKE ${param_idx} OR window_title ILIKE ${param_idx})"
+                params.append(f"%{search}%")
+                param_idx += 1
+            
+            if start_date:
+                query += f" AND timestamp >= ${param_idx}::timestamptz"
+                params.append(start_date)
+                param_idx += 1
+            
+            if end_date:
+                query += f" AND timestamp <= ${param_idx}::timestamptz"
+                params.append(end_date)
+                param_idx += 1
+            
+            result = await conn.fetchval(query, *params)
+            return result or 0
+    except Exception:
+        logger.exception("Failed to count activity logs for session %s", session_id)
+        return 0
+
+
+async def delete_activity_logs(
+    session_id: str,
+    log_ids: list[int] | None = None,
+) -> int:
+    """Delete activity logs for a session.
+    
+    If log_ids is provided, only delete those specific entries.
+    Otherwise delete all entries for the session.
+    
+    Returns number of deleted rows.
+    """
+    if not db_pool:
+        return 0
+    
+    try:
+        async with db_pool.acquire() as conn:
+            if log_ids:
+                result = await conn.execute(
+                    """
+                    DELETE FROM activity_logs 
+                    WHERE session_id = $1 AND id = ANY($2::int[]);
+                    """,
+                    session_id,
+                    log_ids,
+                )
+            else:
+                result = await conn.execute(
+                    "DELETE FROM activity_logs WHERE session_id = $1;",
+                    session_id,
+                )
+            # Parse "DELETE N" response
+            deleted = int(result.split()[-1]) if result else 0
+            return deleted
+    except Exception:
+        logger.exception("Failed to delete activity logs for session %s", session_id)
+        return 0
+
+
+async def get_activity_applications(session_id: str) -> list[str]:
+    """Get list of unique applications for a session."""
+    if not db_pool:
+        return []
+    
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT application 
+                FROM activity_logs 
+                WHERE session_id = $1 
+                ORDER BY application;
+                """,
+                session_id,
+            )
+            return [row["application"] for row in rows]
+    except Exception:
+        logger.exception("Failed to get applications for session %s", session_id)
+        return []

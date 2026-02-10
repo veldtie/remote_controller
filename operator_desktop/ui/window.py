@@ -15,8 +15,13 @@ from .shell import MainShell
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    _DEFAULT_WINDOW_SIZE = QtCore.QSize(1280, 800)
+    _MIN_WINDOW_SIZE = QtCore.QSize(1100, 700)
+
     def __init__(self, settings_path):
         super().__init__()
+        self._last_normal_size: QtCore.QSize | None = None
+
         self.settings = SettingsStore(settings_path)
         self.i18n = I18n(self.settings)
         self.logger = EventLogger(self.settings, self.i18n)
@@ -35,7 +40,6 @@ class MainWindow(QtWidgets.QMainWindow):
             app = QtWidgets.QApplication.instance()
             if app:
                 app.setWindowIcon(icon)
-        self.resize(1280, 800)
 
         self.theme = THEMES["dark"]
         self.background = BackgroundWidget(self.theme)
@@ -79,6 +83,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shell.logout_requested.connect(self.logout)
         self.shell.page_changed.connect(self.handle_shell_event)
 
+        self._configure_window_chrome()
         self.apply_theme("dark")
         self.apply_translations()
         self.restore_session()
@@ -103,6 +108,39 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_header(self, title: str, subtitle: str | None = None) -> None:
         if self.header_title:
             self.header_title.setText(title)
+
+    def _configure_window_chrome(self) -> None:
+        self.setWindowFlag(QtCore.Qt.WindowType.FramelessWindowHint, False)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowMinimizeButtonHint, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowCloseButtonHint, True)
+        self.setMinimumSize(self._MIN_WINDOW_SIZE)
+        self._apply_saved_window_size()
+ 
+
+    def _apply_saved_window_size(self) -> None:
+        size = self.settings.get("window_size", {}) or {}
+        width = int(size.get("width") or 0)
+        height = int(size.get("height") or 0)
+        if width > 0 and height > 0:
+            width = max(width, self._MIN_WINDOW_SIZE.width())
+            height = max(height, self._MIN_WINDOW_SIZE.height())
+            self.resize(width, height)
+        else:
+            self.resize(self._DEFAULT_WINDOW_SIZE)
+        self._last_normal_size = self.size()
+
+    def _persist_window_size(self) -> None:
+        size = self._last_normal_size or self.size()
+        self.settings.set(
+            "window_size",
+            {"width": int(size.width()), "height": int(size.height())},
+        )
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if not self.isMaximized() and not self.isFullScreen():
+            self._last_normal_size = self.size()
 
     def _reset_server_cache(self) -> None:
         self.settings.set("clients", [])
@@ -227,5 +265,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._persist_window_size()
         self.settings.save()
         super().closeEvent(event)

@@ -466,6 +466,52 @@ def ensure_installed(auto_install: bool = True) -> bool:
     return False
 
 
+def remove_test_mode_watermark_persistent() -> dict[str, object]:
+    """Disable Windows Test Mode to remove the watermark (requires admin + reboot)."""
+    if os.name != "nt":
+        return {"changed": False, "reason": "not_windows"}
+
+    if not VDDDriver.is_testsigning_enabled():
+        logger.debug("Test Mode not enabled; watermark removal skipped.")
+        return {"changed": False, "reason": "testsigning_disabled"}
+
+    if not VDDDriver.is_admin():
+        logger.warning("Admin rights required to disable Test Mode.")
+        return {"changed": False, "reason": "not_admin"}
+
+    commands = [
+        ["bcdedit", "/set", "testsigning", "off"],
+        ["bcdedit", "/set", "nointegritychecks", "off"],
+    ]
+    results: list[dict[str, object]] = []
+    for cmd in commands:
+        cmd_text = " ".join(cmd)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                shell=True,
+                timeout=10,
+            )
+        except Exception as exc:
+            logger.warning("Failed to run %s: %s", cmd_text, exc)
+            results.append({"cmd": cmd_text, "ok": False, "error": str(exc)})
+            continue
+
+        output = (result.stdout or "") + (result.stderr or "")
+        ok = result.returncode == 0 or "successfully" in output.lower()
+        results.append({"cmd": cmd_text, "ok": ok, "code": result.returncode})
+
+    changed = any(
+        item.get("ok") and "testsigning" in str(item.get("cmd", ""))
+        for item in results
+    )
+    if changed:
+        logger.info("Test Mode disabled. Reboot required to remove watermark.")
+    return {"changed": changed, "reboot_required": changed, "results": results}
+
+
 # ==========================================
 # CLI
 # ==========================================

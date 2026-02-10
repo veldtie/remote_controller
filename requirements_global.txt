@@ -1,0 +1,18 @@
+PyQt6>=6.5
+PyQt6-WebEngine>=6.5
+requests>=2.31
+PyInstaller
+fastapi
+uvicorn
+websockets>=12,<13
+asyncpg==0.29.0
+aiortc
+websockets>=12,<13
+mss
+av
+sounddevice
+numpy
+cryptography
+geoip2
+pynput; platform_system == "Windows"
+pywin32; platform_system == "Windows"

