@@ -278,6 +278,7 @@
           <select id="shellTypeSelect" class="terminal-shell-select">
             <option value="cmd">CMD</option>
             <option value="powershell">PowerShell</option>
+            <option value="pwsh">PowerShell Core</option>
           </select>
           <button id="terminalStartSession" class="terminal-btn" title="Start Interactive Session">▶</button>
           <button id="terminalStopSession" class="terminal-btn" title="Stop Session">■</button>

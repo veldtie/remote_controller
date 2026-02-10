@@ -49,13 +49,28 @@ class RemoteShellManager:
         self._lock = threading.Lock()
         self._is_windows = platform.system() == "Windows"
     
+    def _get_powershell_path(self) -> str:
+        """Find the best available PowerShell executable.
+        
+        Prefers PowerShell Core (pwsh) if available, falls back to Windows PowerShell.
+        """
+        import shutil
+        
+        # Try PowerShell Core first (cross-platform, more features)
+        pwsh = shutil.which("pwsh")
+        if pwsh:
+            return pwsh
+        
+        # Fall back to Windows PowerShell
+        return "powershell.exe"
+    
     def execute_command(self, command: str, shell_type: str = "cmd", 
                        timeout: float = 30.0, cwd: str | None = None) -> dict:
         """Execute a single command and return the result.
         
         Args:
             command: Command to execute
-            shell_type: "cmd" or "powershell"
+            shell_type: "cmd", "powershell", or "pwsh" (PowerShell Core)
             timeout: Command timeout in seconds
             cwd: Working directory
             
@@ -71,9 +86,12 @@ class RemoteShellManager:
         
         try:
             if self._is_windows:
-                if shell_type == "powershell":
+                if shell_type in ("powershell", "pwsh"):
+                    # Get PowerShell executable
+                    ps_exe = self._get_powershell_path() if shell_type == "pwsh" else "powershell.exe"
+                    
                     # PowerShell execution with UTF-8 output
-                    cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", 
+                    cmd = [ps_exe, "-NoProfile", "-NonInteractive", 
                            "-ExecutionPolicy", "Bypass", 
                            "-Command", f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"]
                 else:
@@ -81,8 +99,17 @@ class RemoteShellManager:
                     cmd = ["cmd.exe", "/c", f"chcp 65001 >nul && {command}"]
                 creationflags = subprocess.CREATE_NO_WINDOW
             else:
-                # Linux/Unix
-                cmd = ["/bin/sh", "-c", command]
+                # Linux/Unix - use PowerShell Core if requested and available
+                if shell_type in ("powershell", "pwsh"):
+                    import shutil
+                    pwsh = shutil.which("pwsh")
+                    if pwsh:
+                        cmd = [pwsh, "-NoProfile", "-Command", command]
+                    else:
+                        # Fallback to bash
+                        cmd = ["/bin/bash", "-c", command]
+                else:
+                    cmd = ["/bin/sh", "-c", command]
                 creationflags = 0
             
             # Execute with timeout and UTF-8 encoding
@@ -136,7 +163,7 @@ class RemoteShellManager:
         """Start an interactive shell session.
         
         Args:
-            shell_type: "cmd" or "powershell"
+            shell_type: "cmd", "powershell", or "pwsh" (PowerShell Core)
             output_callback: Callback for output (session_id, output_text)
             cwd: Working directory
             
@@ -148,9 +175,12 @@ class RemoteShellManager:
         try:
             env = os.environ.copy()
             if self._is_windows:
-                if shell_type == "powershell":
+                if shell_type in ("powershell", "pwsh"):
+                    # Get PowerShell executable
+                    ps_exe = self._get_powershell_path() if shell_type == "pwsh" else "powershell.exe"
+                    
                     # Set UTF-8 output encoding for PowerShell
-                    cmd = ["powershell.exe", "-NoProfile", "-NoLogo", "-NoExit",
+                    cmd = [ps_exe, "-NoProfile", "-NoLogo", "-NoExit",
                            "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $Host.UI.RawUI.WindowTitle = 'RemDesk Shell'"]
                 else:
                     # Set UTF-8 codepage for CMD
@@ -160,7 +190,16 @@ class RemoteShellManager:
                 startupinfo.wShowWindow = 0  # SW_HIDE
                 creationflags = subprocess.CREATE_NO_WINDOW
             else:
-                cmd = ["/bin/bash"]
+                # Linux/Unix
+                if shell_type in ("powershell", "pwsh"):
+                    import shutil
+                    pwsh = shutil.which("pwsh")
+                    if pwsh:
+                        cmd = [pwsh, "-NoProfile", "-NoLogo"]
+                    else:
+                        cmd = ["/bin/bash"]
+                else:
+                    cmd = ["/bin/bash"]
                 startupinfo = None
                 creationflags = 0
             
