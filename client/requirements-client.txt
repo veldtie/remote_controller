@@ -8,3 +8,4 @@ cryptography
 geoip2
 pynput; platform_system == "Windows"
 pywin32; platform_system == "Windows"
+pyperclip; platform_system == "Windows"
