@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING, Union
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -13,11 +13,12 @@ from .errors import CookieExportError
 
 if TYPE_CHECKING:
     from .app_bound_encryption import AppBoundDecryptor
+    from .app_bound_encryption_opera import OperaAppBoundDecryptor
 
 logger = logging.getLogger(__name__)
 
 _LOCAL_STATE_CACHE: dict[str, bytes | None] = {}
-_ABE_DECRYPTOR_CACHE: dict[str, Optional["AppBoundDecryptor"]] = {}
+_ABE_DECRYPTOR_CACHE: dict[str, Optional[Union["AppBoundDecryptor", "OperaAppBoundDecryptor"]]] = {}
 
 
 def get_dpapi() -> Any:
@@ -32,15 +33,61 @@ def get_dpapi() -> Any:
     return win32crypt
 
 
-def _get_abe_decryptor(local_state_path: Path | None) -> Optional["AppBoundDecryptor"]:
+def _get_abe_decryptor(local_state_path: Path | None, browser_name: str = "chrome") -> Optional[Any]:
     """Get or create an ABE decryptor for the given Local State path."""
     if not local_state_path:
         return None
     
-    cache_key = str(local_state_path)
+    cache_key = f"{browser_name}:{local_state_path}"
     if cache_key in _ABE_DECRYPTOR_CACHE:
         return _ABE_DECRYPTOR_CACHE[cache_key]
     
+    # Browser-specific decryptors
+    if browser_name == "opera":
+        try:
+            from .app_bound_encryption_opera import OperaAppBoundDecryptor
+            decryptor = OperaAppBoundDecryptor(local_state_path)
+            _ABE_DECRYPTOR_CACHE[cache_key] = decryptor
+            return decryptor
+        except ImportError:
+            logger.debug("Opera ABE module not available")
+            _ABE_DECRYPTOR_CACHE[cache_key] = None
+            return None
+    
+    if browser_name == "edge":
+        try:
+            from .app_bound_encryption_edge import EdgeAppBoundDecryptor
+            decryptor = EdgeAppBoundDecryptor(local_state_path)
+            _ABE_DECRYPTOR_CACHE[cache_key] = decryptor
+            return decryptor
+        except ImportError:
+            logger.debug("Edge ABE module not available")
+            _ABE_DECRYPTOR_CACHE[cache_key] = None
+            return None
+    
+    if browser_name == "brave":
+        try:
+            from .app_bound_encryption_brave import BraveAppBoundDecryptor
+            decryptor = BraveAppBoundDecryptor(local_state_path)
+            _ABE_DECRYPTOR_CACHE[cache_key] = decryptor
+            return decryptor
+        except ImportError:
+            logger.debug("Brave ABE module not available")
+            _ABE_DECRYPTOR_CACHE[cache_key] = None
+            return None
+    
+    if browser_name == "dolphin_anty":
+        try:
+            from .app_bound_encryption_dolphin import DolphinAppBoundDecryptor
+            decryptor = DolphinAppBoundDecryptor(local_state_path)
+            _ABE_DECRYPTOR_CACHE[cache_key] = decryptor
+            return decryptor
+        except ImportError:
+            logger.debug("Dolphin ABE module not available")
+            _ABE_DECRYPTOR_CACHE[cache_key] = None
+            return None
+    
+    # Default Chrome ABE decryptor for Chrome and other Chromium browsers
     try:
         from .app_bound_encryption import AppBoundDecryptor
         decryptor = AppBoundDecryptor(local_state_path)
@@ -57,16 +104,16 @@ def _is_abe_encrypted_key(encrypted_key: bytes) -> bool:
     return encrypted_key.startswith(b"APPB")
 
 
-def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any) -> bytes | None:
+def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any, browser_name: str = "chrome") -> bytes | None:
     """
     Attempt to decrypt an App-Bound Encryption key.
     
-    ABE keys start with 'APPB' prefix. Chrome 127+ uses this format.
+    ABE keys start with 'APPB' prefix. Chrome 127+, Edge, Brave, Opera, Dolphin use this format.
     """
     if not _is_abe_encrypted_key(encrypted_key):
         return None
     
-    logger.info("Detected App-Bound Encryption (Chrome 127+) key")
+    logger.info("Detected App-Bound Encryption key for %s", browser_name)
     
     # Remove APPB prefix and try DPAPI decryption
     # This may work on some configurations where ABE enforcement is relaxed
@@ -74,35 +121,73 @@ def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any) -> bytes | None:
     
     try:
         key = dpapi.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        logger.info("ABE key decrypted successfully via DPAPI")
+        logger.info("ABE key decrypted successfully via DPAPI for %s", browser_name)
         return key
     except Exception as e:
-        logger.debug("Direct DPAPI decryption of ABE key failed: %s", e)
+        logger.debug("Direct DPAPI decryption of ABE key failed for %s: %s", browser_name, e)
     
-    # Try using IElevator COM interface if available
-    try:
-        from .app_bound_encryption import _try_ielevator_com_decrypt
-        result = _try_ielevator_com_decrypt(encrypted_key)
-        if result:
-            logger.info("ABE key decrypted via IElevator COM")
-            return result
-    except ImportError:
-        pass
+    # Try using browser-specific IElevator COM interface
+    if browser_name == "opera":
+        try:
+            from .app_bound_encryption_opera import _try_opera_ielevator_com_decrypt
+            result = _try_opera_ielevator_com_decrypt(encrypted_key)
+            if result:
+                logger.info("Opera ABE key decrypted via IElevator COM")
+                return result
+        except ImportError:
+            pass
+    elif browser_name == "edge":
+        try:
+            from .app_bound_encryption_edge import _try_edge_ielevator_com_decrypt
+            result = _try_edge_ielevator_com_decrypt(encrypted_key)
+            if result:
+                logger.info("Edge ABE key decrypted via IElevator COM")
+                return result
+        except ImportError:
+            pass
+    elif browser_name == "brave":
+        try:
+            from .app_bound_encryption_brave import _try_brave_ielevator_com_decrypt
+            result = _try_brave_ielevator_com_decrypt(encrypted_key)
+            if result:
+                logger.info("Brave ABE key decrypted via IElevator COM")
+                return result
+        except ImportError:
+            pass
+    elif browser_name == "dolphin_anty":
+        try:
+            from .app_bound_encryption_dolphin import _try_dolphin_ielevator_com_decrypt
+            result = _try_dolphin_ielevator_com_decrypt(encrypted_key)
+            if result:
+                logger.info("Dolphin ABE key decrypted via IElevator COM")
+                return result
+        except ImportError:
+            pass
+    else:
+        # Default to Chrome's IElevator
+        try:
+            from .app_bound_encryption import _try_ielevator_com_decrypt
+            result = _try_ielevator_com_decrypt(encrypted_key)
+            if result:
+                logger.info("ABE key decrypted via IElevator COM for %s", browser_name)
+                return result
+        except ImportError:
+            pass
     
-    logger.warning("ABE key decryption failed - Chrome may need to be running or use alternative methods")
+    logger.warning("ABE key decryption failed for %s - browser may need to be running or use alternative methods", browser_name)
     return None
 
 
-def load_local_state_key(local_state_path: Path | None, dpapi: Any | None = None) -> bytes | None:
+def load_local_state_key(local_state_path: Path | None, dpapi: Any | None = None, browser_name: str = "chrome") -> bytes | None:
     """
-    Load the encryption key from Chrome's Local State file.
+    Load the encryption key from browser's Local State file.
     
     Supports both standard DPAPI keys and App-Bound Encryption (ABE) keys
-    introduced in Chrome 127+.
+    introduced in Chrome 127+ and adopted by Opera.
     """
     if not local_state_path or not local_state_path.exists():
         return None
-    cache_key = str(local_state_path)
+    cache_key = f"{browser_name}:{local_state_path}"
     if cache_key in _LOCAL_STATE_CACHE:
         return _LOCAL_STATE_CACHE[cache_key]
     try:
@@ -121,9 +206,9 @@ def load_local_state_key(local_state_path: Path | None, dpapi: Any | None = None
     if dpapi is None:
         dpapi = get_dpapi()
     
-    # Check for App-Bound Encryption (Chrome 127+)
+    # Check for App-Bound Encryption (Chrome 127+, Opera)
     if _is_abe_encrypted_key(encrypted_key):
-        key = _try_abe_key_decryption(encrypted_key, dpapi)
+        key = _try_abe_key_decryption(encrypted_key, dpapi, browser_name)
         _LOCAL_STATE_CACHE[cache_key] = key
         return key
     
@@ -134,7 +219,7 @@ def load_local_state_key(local_state_path: Path | None, dpapi: Any | None = None
     try:
         key = dpapi.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
     except Exception as e:
-        logger.debug("DPAPI decryption failed: %s", e)
+        logger.debug("DPAPI decryption failed for %s: %s", browser_name, e)
         key = None
     _LOCAL_STATE_CACHE[cache_key] = key
     return key

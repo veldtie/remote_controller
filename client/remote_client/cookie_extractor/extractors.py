@@ -25,7 +25,7 @@ def copy_db(db_path: Path) -> Path | None:
         return None
 
 
-def _check_abe_support(local_state_path: Optional[Path]) -> Dict:
+def _check_abe_support(local_state_path: Optional[Path], browser_name: str = "chrome") -> Dict:
     """Check App-Bound Encryption support status."""
     result = {
         "detected": False,
@@ -36,27 +36,59 @@ def _check_abe_support(local_state_path: Optional[Path]) -> Dict:
     if not local_state_path:
         return result
     
-    try:
-        from .app_bound_encryption import check_abe_support, is_abe_encrypted_key
-        import json
-        import base64
-        
-        # Check if Local State contains ABE key
+    import json
+    import base64
+    
+    # Helper to check if ABE key exists
+    def check_abe_key():
         try:
             raw = local_state_path.read_text(encoding="utf-8")
             data = json.loads(raw)
             encrypted_key_b64 = data["os_crypt"]["encrypted_key"]
             encrypted_key = base64.b64decode(encrypted_key_b64)
-            result["detected"] = is_abe_encrypted_key(encrypted_key)
+            return encrypted_key.startswith(b"APPB")
         except Exception:
+            return False
+    
+    result["detected"] = check_abe_key()
+    
+    # Use browser-specific ABE module
+    if browser_name == "opera":
+        try:
+            from .app_bound_encryption_opera import check_opera_abe_support
+            support = check_opera_abe_support()
+            result.update(support)
+        except ImportError:
             pass
-        
-        # Check system support
-        support = check_abe_support()
-        result.update(support)
-        
-    except ImportError:
-        pass
+    elif browser_name == "edge":
+        try:
+            from .app_bound_encryption_edge import check_edge_abe_support
+            support = check_edge_abe_support()
+            result.update(support)
+        except ImportError:
+            pass
+    elif browser_name == "brave":
+        try:
+            from .app_bound_encryption_brave import check_brave_abe_support
+            support = check_brave_abe_support()
+            result.update(support)
+        except ImportError:
+            pass
+    elif browser_name == "dolphin_anty":
+        try:
+            from .app_bound_encryption_dolphin import check_dolphin_abe_support
+            support = check_dolphin_abe_support()
+            result.update(support)
+        except ImportError:
+            pass
+    else:
+        # Default Chrome ABE support check
+        try:
+            from .app_bound_encryption import check_abe_support
+            support = check_abe_support()
+            result.update(support)
+        except ImportError:
+            pass
     
     return result
 
@@ -67,14 +99,14 @@ def extract_chrome_like(browser_name: str, config: Dict) -> List[Dict]:
     
     Supports:
     - Standard DPAPI encryption (Chrome < 127)
-    - App-Bound Encryption (Chrome 127+)
+    - App-Bound Encryption (Chrome 127+, Opera)
     - Multiple encryption versions (v10, v11, v12, v20)
     """
     dpapi = get_dpapi()
     local_state_path = resolve_path(config.get("local_state")) if config.get("local_state") else None
     
     # Check ABE support and log status
-    abe_status = _check_abe_support(local_state_path)
+    abe_status = _check_abe_support(local_state_path, browser_name)
     if abe_status.get("detected"):
         logger.info(
             "App-Bound Encryption detected for %s. ABE support: %s",
@@ -83,10 +115,10 @@ def extract_chrome_like(browser_name: str, config: Dict) -> List[Dict]:
         )
     
     # Load encryption key (handles both DPAPI and ABE)
-    local_state_key = load_local_state_key(local_state_path, dpapi)
+    local_state_key = load_local_state_key(local_state_path, dpapi, browser_name)
     
-    # Get ABE decryptor for v20 values
-    abe_decryptor = _get_abe_decryptor(local_state_path)
+    # Get ABE decryptor for v20 values (browser-specific)
+    abe_decryptor = _get_abe_decryptor(local_state_path, browser_name)
     
     cookies: List[Dict] = []
     found_any = False
