@@ -373,12 +373,6 @@ class HVNCSessionWrapper:
             start_shell=start_shell,
         )
         
-        # Wait for shell to fully initialize before starting capture
-        if start_shell:
-            import time
-            logger.info("Waiting for hidden desktop shell to initialize...")
-            time.sleep(1.0)  # Additional wait for shell environment
-        
         # Create WebRTC track
         self.screen_track = HVNCVideoTrack(self._session, profile="balanced")
         
