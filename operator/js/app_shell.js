@@ -53,10 +53,27 @@
   }
 
   /**
+   * Get current shell type from toggle
+   */
+  function getCurrentShell() {
+    const shellToggle = document.getElementById("shellToggle");
+    if (shellToggle) {
+      const activeBtn = shellToggle.querySelector(".shell-toggle-btn.active");
+      if (activeBtn) {
+        return activeBtn.dataset.shell;
+      }
+    }
+    return "cmd";
+  }
+
+  /**
    * Execute a single command
    */
-  function executeCommand(command, shell = "cmd") {
+  function executeCommand(command, shell = null) {
     if (!command.trim()) return;
+    
+    // Use provided shell or get from toggle
+    const shellType = shell || getCurrentShell();
     
     appendOutput(`> ${command}\n`, "command");
     
@@ -66,7 +83,7 @@
     
     sendShellAction("exec", {
       command: command,
-      shell: shell,
+      shell: shellType,
       timeout: 60
     });
   }
@@ -275,10 +292,10 @@
       <div class="terminal-header">
         <span class="terminal-title">Remote Shell</span>
         <div class="terminal-controls">
-          <select id="shellTypeSelect" class="terminal-shell-select">
-            <option value="cmd">CMD</option>
-            <option value="powershell">PowerShell</option>
-          </select>
+          <div class="terminal-shell-toggle" id="shellToggle">
+            <button class="shell-toggle-btn active" data-shell="cmd">CMD</button>
+            <button class="shell-toggle-btn" data-shell="powershell">PowerShell</button>
+          </div>
           <button id="terminalStartSession" class="terminal-btn" title="Start Interactive Session">▶</button>
           <button id="terminalStopSession" class="terminal-btn" title="Stop Session">■</button>
           <button id="terminalClear" class="terminal-btn" title="Clear">⌫</button>
@@ -330,13 +347,30 @@
         gap: 8px;
         align-items: center;
       }
-      .terminal-shell-select {
-        background: #333;
-        color: #fff;
-        border: 1px solid #444;
-        padding: 2px 6px;
+      .terminal-shell-toggle {
+        display: flex;
+        background: #222;
         border-radius: 4px;
+        overflow: hidden;
+        border: 1px solid #444;
+      }
+      .shell-toggle-btn {
+        background: transparent;
+        color: #888;
+        border: none;
+        padding: 4px 12px;
+        cursor: pointer;
         font-size: 12px;
+        font-weight: bold;
+        transition: all 0.2s ease;
+      }
+      .shell-toggle-btn:hover {
+        color: #fff;
+        background: #333;
+      }
+      .shell-toggle-btn.active {
+        background: #0a84ff;
+        color: #fff;
       }
       .terminal-btn {
         background: #333;
@@ -407,8 +441,25 @@
     // Event listeners
     terminalInput.addEventListener("keydown", handleKeyDown);
     
+    // Shell toggle buttons
+    const shellToggle = document.getElementById("shellToggle");
+    shellToggle.addEventListener("click", (e) => {
+      if (e.target.classList.contains("shell-toggle-btn")) {
+        // Remove active from all
+        shellToggle.querySelectorAll(".shell-toggle-btn").forEach(btn => {
+          btn.classList.remove("active");
+        });
+        // Add active to clicked
+        e.target.classList.add("active");
+        
+        const shell = e.target.dataset.shell;
+        appendOutput(`[Switched to ${shell.toUpperCase()}]\n`, "info");
+      }
+    });
+    
     document.getElementById("terminalStartSession").addEventListener("click", () => {
-      const shell = document.getElementById("shellTypeSelect").value;
+      const activeBtn = shellToggle.querySelector(".shell-toggle-btn.active");
+      const shell = activeBtn ? activeBtn.dataset.shell : "cmd";
       startSession(shell);
     });
     
@@ -428,6 +479,7 @@
     // Initial message
     appendOutput("[Remote Shell Ready]\n", "info");
     appendOutput("[Type commands to execute on client]\n", "info");
+    appendOutput("[Click CMD or PowerShell to switch shell type]\n", "info");
     appendOutput("[Use Start (▶) button for interactive session]\n\n", "info");
 
     terminalInput.focus();

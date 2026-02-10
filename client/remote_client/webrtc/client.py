@@ -539,12 +539,16 @@ class WebRTCClient:
             offered_kinds = {
                 transceiver.kind for transceiver in peer_connection.getTransceivers()
             }
+            logger.info("Offered kinds from operator: %s, available tracks: %s", 
+                       offered_kinds, [t.kind for t in media_tracks])
             for track in media_tracks:
                 if track.kind in offered_kinds:
+                    logger.info("Adding track: kind=%s, id=%s", track.kind, getattr(track, 'id', 'unknown'))
                     sender = peer_connection.addTrack(track)
                     if track.kind == "video":
                         self._video_sender = sender
                         await self._tune_video_sender(sender, bitrate_bps=_resolve_profile_bitrate(None))
+                        logger.info("Video sender configured")
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)

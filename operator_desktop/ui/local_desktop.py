@@ -363,6 +363,22 @@ class LocalDesktopWindow(QtWidgets.QMainWindow):
             return
         
         try:
+            # Check file exists and has size
+            file_size = os.path.getsize(file_path)
+            if file_size < 100:
+                self.import_status.setText(f"Error: File too small ({file_size} bytes)")
+                self.import_status.setStyleSheet("color: #f55;")
+                return
+            
+            # Check if it's a valid ZIP by reading magic bytes
+            with open(file_path, 'rb') as f:
+                magic = f.read(4)
+                if magic[:2] != b'PK':
+                    self.import_status.setText(f"Error: File is not a zip file (magic: {magic[:4].hex()})")
+                    self.import_status.setStyleSheet("color: #f55;")
+                    logger.error("Invalid ZIP file magic bytes: %s (size: %d)", magic.hex(), file_size)
+                    return
+            
             # Try to read metadata from ZIP
             with zipfile.ZipFile(file_path, 'r') as zf:
                 if "_profile_metadata.json" in zf.namelist():
@@ -387,6 +403,10 @@ class LocalDesktopWindow(QtWidgets.QMainWindow):
                 self.import_status.setText("Import failed")
                 self.import_status.setStyleSheet("color: #f55;")
                 
+        except zipfile.BadZipFile as e:
+            self.import_status.setText(f"Error: Invalid ZIP file")
+            self.import_status.setStyleSheet("color: #f55;")
+            logger.error("BadZipFile: %s (file: %s)", e, file_path)
         except Exception as e:
             self.import_status.setText(f"Error: {e}")
             self.import_status.setStyleSheet("color: #f55;")

@@ -393,18 +393,19 @@ class HVNCSessionWrapper:
         """hVNC uses hidden desktop, not virtual display."""
         return False
     
-    def launch_application(self, app_name: str, url: str | None = None) -> None:
+    def launch_application(self, app_name: str, url: str | None = None, profile_path: str | None = None) -> None:
         """Launch an application on the hidden desktop.
         
         Args:
             app_name: Application name (chrome, firefox, edge) or path
             url: URL to open (for browsers)
+            profile_path: Path to browser profile directory (for --user-data-dir)
         """
         app_lower = app_name.lower()
         
         # Handle browsers specially
-        if app_lower in ("chrome", "firefox", "edge", "chromium"):
-            self._session.launch_browser(app_lower, url=url)
+        if app_lower in ("chrome", "firefox", "edge", "chromium", "brave"):
+            self._session.launch_browser(app_lower, url=url, profile_path=profile_path)
         else:
             # Generic application
             args = [url] if url else None

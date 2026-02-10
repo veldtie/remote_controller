@@ -793,8 +793,27 @@
       startSignalingPing(signalingSocket, sessionId);
 
       state.peerConnection.ontrack = (event) => {
-        dom.screenEl.srcObject = event.streams[0];
-        remdesk.updateScreenLayout();
+        console.info("Received track:", {
+          kind: event.track.kind,
+          id: event.track.id,
+          readyState: event.track.readyState,
+          streams: event.streams.length
+        });
+        if (event.track.kind === "video") {
+          if (event.streams && event.streams[0]) {
+            dom.screenEl.srcObject = event.streams[0];
+            console.info("Video stream attached to screen element");
+          } else {
+            // Create a new MediaStream with just this track
+            const stream = new MediaStream([event.track]);
+            dom.screenEl.srcObject = stream;
+            console.info("Created new MediaStream for video track");
+          }
+          remdesk.updateScreenLayout();
+        } else if (event.track.kind === "audio") {
+          // Handle audio track if needed
+          console.info("Audio track received");
+        }
       };
       state.peerConnection.onicecandidate = (event) => {
         if (event.candidate && signalingSocket.readyState === WebSocket.OPEN) {
