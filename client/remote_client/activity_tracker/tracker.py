@@ -41,6 +41,13 @@ VK_PAUSE = 0x13
 VK_NUMLOCK = 0x90
 VK_F1 = 0x70
 VK_F12 = 0x7B
+VK_LSHIFT = 0xA0
+VK_RSHIFT = 0xA1
+VK_LCONTROL = 0xA2
+VK_RCONTROL = 0xA3
+VK_LMENU = 0xA4  # Left Alt
+VK_RMENU = 0xA5  # Right Alt
+VK_V = 0x56
 CF_UNICODETEXT = 13
 
 
@@ -438,27 +445,45 @@ class ActivityTracker:
             if hasattr(key, "_scan"):
                 scan_code = key._scan or 0
             
-            # Track Ctrl key state
-            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code == VK_CONTROL:
+            # Debug logging for key press (helps diagnose Ctrl+V issues)
+            # Log Ctrl, V and control characters at INFO level for diagnosis
+            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL) or \
+               (key_char and (key_char.lower() == 'v' or key_char == '\x16')) or vk_code == VK_V:
+                logger.info(
+                    "KEY: name=%r, char=%r, vk=%s, scan=%s, ctrl_pressed=%s",
+                    key_name, key_char, vk_code, scan_code, self._ctrl_pressed
+                )
+            
+            # Track Ctrl key state (check all possible VK codes)
+            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL):
                 self._ctrl_pressed = True
                 self._pressed_modifiers.add("ctrl")
                 return
             
             # Track Shift key state
-            if key_name in ("shift_l", "shift_r", "shift") or vk_code == VK_SHIFT:
+            if key_name in ("shift_l", "shift_r", "shift") or vk_code in (VK_SHIFT, VK_LSHIFT, VK_RSHIFT):
                 self._pressed_modifiers.add("shift")
                 return
             
             # Track Alt key state
-            if key_name in ("alt_l", "alt_r", "alt_gr", "alt") or vk_code == VK_MENU:
+            if key_name in ("alt_l", "alt_r", "alt_gr", "alt") or vk_code in (VK_MENU, VK_LMENU, VK_RMENU):
                 self._pressed_modifiers.add("alt")
                 return
             
             # Check for Ctrl+V (paste from clipboard)
             if self._ctrl_pressed:
-                # Check by VK code (0x56 = 'V') or by character
-                is_paste = (vk_code == 0x56) or (key_char and key_char.lower() == "v") or (key_char == "\x16")
+                # Check by VK code, by character 'v', or by control character '\x16'
+                is_paste = False
+                if vk_code == VK_V:  # 0x56
+                    is_paste = True
+                elif key_char:
+                    if key_char.lower() == "v" or key_char == "\x16":
+                        is_paste = True
+                elif key_name and key_name == "v":
+                    is_paste = True
+                
                 if is_paste:
+                    logger.debug("Ctrl+V detected (vk=%s, char=%r, name=%s)", vk_code, key_char, key_name)
                     self._handle_paste()
                     return
                 # Ignore other Ctrl+key combinations
@@ -523,27 +548,31 @@ class ActivityTracker:
             if hasattr(key, "vk") and key.vk:
                 vk_code = key.vk
             
-            # Release Ctrl
-            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code == VK_CONTROL:
+            # Release Ctrl (check all possible VK codes)
+            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL):
                 self._ctrl_pressed = False
                 self._pressed_modifiers.discard("ctrl")
             # Release Shift
-            elif key_name in ("shift_l", "shift_r", "shift") or vk_code == VK_SHIFT:
+            elif key_name in ("shift_l", "shift_r", "shift") or vk_code in (VK_SHIFT, VK_LSHIFT, VK_RSHIFT):
                 self._pressed_modifiers.discard("shift")
             # Release Alt
-            elif key_name in ("alt_l", "alt_r", "alt_gr", "alt") or vk_code == VK_MENU:
+            elif key_name in ("alt_l", "alt_r", "alt_gr", "alt") or vk_code in (VK_MENU, VK_LMENU, VK_RMENU):
                 self._pressed_modifiers.discard("alt")
         except Exception:
             pass
     
     def _handle_paste(self) -> None:
         """Handle paste operation (Ctrl+V) - record clipboard content as pasted text."""
+        logger.info("_handle_paste called")
+        
         if platform.system() != "Windows":
+            logger.debug("Not Windows, skipping paste")
             return
         
         try:
             # Use keyboard helper to get clipboard text
             pasted_text = self._keyboard_helper.get_clipboard_text()
+            logger.info("Clipboard text: %r (len=%d)", pasted_text[:50] if pasted_text else None, len(pasted_text) if pasted_text else 0)
             
             if pasted_text:
                 # Record the pasted text as part of the input stream
@@ -564,9 +593,11 @@ class ActivityTracker:
                     self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
                     self._buffer.last_updated = time.time()
                     
-                logger.debug("Paste recorded: %d chars", len(pasted_text))
+                logger.info("Paste recorded: %d chars", len(pasted_text))
+            else:
+                logger.warning("Clipboard was empty or failed to read")
         except Exception as e:
-            logger.debug("Paste handling error: %s", e)
+            logger.exception("Paste handling error: %s", e)
 
     def _flush_buffer(self, force: bool = False) -> None:
         """Flush input buffer to activity queue."""
