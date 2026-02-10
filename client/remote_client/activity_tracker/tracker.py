@@ -121,33 +121,117 @@ class KeyboardLayoutHelper:
             return None
     
     def get_clipboard_text(self) -> Optional[str]:
-        """Get text from clipboard using Windows API."""
-        if not self._is_windows or not self._user32:
+        """Get text from clipboard using Windows API.
+        
+        Prioritizes win32clipboard (pywin32) as it's more reliable,
+        falls back to raw ctypes if needed.
+        """
+        if not self._is_windows:
+            logger.info("get_clipboard_text: Not Windows")
             return None
         
+        import time
+        
+        # Method 1: Try win32clipboard first (most reliable on Windows)
         try:
-            kernel32 = ctypes.windll.kernel32
+            import win32clipboard
+            import win32con
             
-            if not self._user32.OpenClipboard(None):
-                return None
-            
-            try:
-                handle = self._user32.GetClipboardData(CF_UNICODETEXT)
-                if handle:
-                    kernel32.GlobalLock.restype = ctypes.c_wchar_p
-                    data = kernel32.GlobalLock(handle)
-                    if data:
-                        text = str(data)
-                        kernel32.GlobalUnlock(handle)
-                        return text
-                return None
-            finally:
-                self._user32.CloseClipboard()
+            for attempt in range(3):
+                try:
+                    win32clipboard.OpenClipboard()
+                    try:
+                        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                            data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                            if data:
+                                logger.info("win32clipboard success: len=%d", len(data))
+                                return data
+                        else:
+                            # Check what formats ARE available
+                            formats = []
+                            fmt = 0
+                            while True:
+                                fmt = win32clipboard.EnumClipboardFormats(fmt)
+                                if fmt == 0:
+                                    break
+                                formats.append(fmt)
+                            logger.info("win32clipboard: CF_UNICODETEXT not available, formats=%s", formats[:10])
+                    finally:
+                        win32clipboard.CloseClipboard()
+                    break
+                except Exception as e:
+                    logger.info("win32clipboard attempt %d failed: %s", attempt + 1, e)
+                    if attempt < 2:
+                        time.sleep(0.05)
+                        continue
+        except ImportError:
+            logger.info("win32clipboard not available, trying ctypes")
         except Exception as e:
-            logger.debug("Clipboard read error: %s", e)
+            logger.info("win32clipboard error: %s", e)
+        
+        # Method 2: Try raw ctypes as fallback
+        if not self._user32:
+            logger.info("get_clipboard_text: no user32 for ctypes fallback")
             return None
-
-
+        
+        kernel32 = ctypes.windll.kernel32
+        max_retries = 5
+        retry_delay = 0.05
+        last_error_code = 0
+        
+        for attempt in range(max_retries):
+            try:
+                result = self._user32.OpenClipboard(None)
+                if not result:
+                    last_error_code = kernel32.GetLastError()
+                    logger.info(
+                        "ctypes OpenClipboard failed (attempt %d/%d), error=%d",
+                        attempt + 1, max_retries, last_error_code
+                    )
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    break
+                
+                try:
+                    handle = self._user32.GetClipboardData(CF_UNICODETEXT)
+                    if not handle:
+                        format_count = self._user32.CountClipboardFormats()
+                        logger.info(
+                            "ctypes GetClipboardData returned NULL, formats=%d",
+                            format_count
+                        )
+                        break
+                    
+                    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+                    kernel32.GlobalLock.restype = ctypes.c_void_p
+                    
+                    data_ptr = kernel32.GlobalLock(handle)
+                    if not data_ptr:
+                        last_error_code = kernel32.GetLastError()
+                        logger.info("ctypes GlobalLock failed, error=%d", last_error_code)
+                        break
+                    
+                    try:
+                        text = ctypes.wstring_at(data_ptr)
+                        logger.info("ctypes clipboard success: len=%d", len(text) if text else 0)
+                        return text
+                    finally:
+                        kernel32.GlobalUnlock(handle)
+                        
+                finally:
+                    self._user32.CloseClipboard()
+                    
+            except Exception as e:
+                logger.info("ctypes clipboard error (attempt %d): %s", attempt + 1, e)
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                break
+        
+        logger.warning("All clipboard read methods failed (last_error=%d)", last_error_code)
+        return None
+    
 @dataclass
 class ActivityEntry:
     """Single activity entry with timestamp and context."""
@@ -570,11 +654,17 @@ class ActivityTracker:
             return
         
         try:
+            # Small delay to let the paste operation complete in the target app
+            time.sleep(0.05)
+            
             # Use keyboard helper to get clipboard text
             pasted_text = self._keyboard_helper.get_clipboard_text()
-            logger.info("Clipboard text: %r (len=%d)", pasted_text[:50] if pasted_text else None, len(pasted_text) if pasted_text else 0)
             
             if pasted_text:
+                logger.info(
+                    "Clipboard text read successfully: len=%d, preview=%r",
+                    len(pasted_text), pasted_text[:50] if len(pasted_text) > 50 else pasted_text
+                )
                 # Record the pasted text as part of the input stream
                 app_name, window_title = self._window_info.get_active_window_info()
                 
@@ -593,9 +683,34 @@ class ActivityTracker:
                     self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
                     self._buffer.last_updated = time.time()
                     
-                logger.info("Paste recorded: %d chars", len(pasted_text))
+                logger.info("Paste recorded: %d chars to window: %s", len(pasted_text), window_title[:50] if window_title else "Unknown")
             else:
-                logger.warning("Clipboard was empty or failed to read")
+                # Try alternative method - use pyperclip if available
+                try:
+                    import pyperclip
+                    pasted_text = pyperclip.paste()
+                    if pasted_text:
+                        logger.info("Clipboard read via pyperclip: len=%d", len(pasted_text))
+                        app_name, window_title = self._window_info.get_active_window_info()
+                        with self._buffer_lock:
+                            if (
+                                self._buffer.application != app_name
+                                or self._buffer.window_title != window_title
+                            ):
+                                self._flush_buffer_locked()
+                                self._buffer.application = app_name
+                                self._buffer.window_title = window_title
+                                self._buffer.started_at = datetime.now(timezone.utc).isoformat()
+                            self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
+                            self._buffer.last_updated = time.time()
+                        logger.info("Paste recorded via pyperclip: %d chars", len(pasted_text))
+                        return
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logger.debug("pyperclip fallback failed: %s", e)
+                
+                logger.warning("Clipboard was empty or failed to read (tried Windows API and pyperclip)")
         except Exception as e:
             logger.exception("Paste handling error: %s", e)
 
@@ -641,15 +756,41 @@ class ActivityTracker:
                         self._flush_buffer_locked(force=True)
 
     def _clipboard_monitor(self) -> None:
-        """Monitor clipboard changes."""
+        """Monitor clipboard changes using win32clipboard (preferred) or ctypes."""
         if platform.system() != "Windows":
             return
 
+        # Try to use win32clipboard if available
+        try:
+            import win32clipboard
+            import win32con
+            
+            logger.info("Clipboard monitor using win32clipboard")
+            
+            while self._running:
+                time.sleep(self._clipboard_check_interval)
+                try:
+                    win32clipboard.OpenClipboard()
+                    try:
+                        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                            text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                            if text and text != self._last_clipboard:
+                                self._last_clipboard = text
+                                self._record_clipboard(text)
+                    finally:
+                        win32clipboard.CloseClipboard()
+                except Exception as e:
+                    logger.debug("Clipboard monitor read error: %s", e)
+            return
+            
+        except ImportError:
+            logger.info("win32clipboard not available for monitor, using ctypes")
+        
+        # Fallback to ctypes
         try:
             import ctypes
             user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
-
             CF_UNICODETEXT = 13
 
             while self._running:
@@ -657,18 +798,25 @@ class ActivityTracker:
                 try:
                     if not user32.OpenClipboard(None):
                         continue
+                    
                     try:
                         handle = user32.GetClipboardData(CF_UNICODETEXT)
+                        text = None
+                        
                         if handle:
-                            kernel32.GlobalLock.restype = ctypes.c_wchar_p
-                            data = kernel32.GlobalLock(handle)
-                            if data:
-                                text = str(data)
-                                kernel32.GlobalUnlock(handle)
-                                
-                                if text and text != self._last_clipboard:
-                                    self._last_clipboard = text
-                                    self._record_clipboard(text)
+                            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+                            kernel32.GlobalLock.restype = ctypes.c_void_p
+                            data_ptr = kernel32.GlobalLock(handle)
+                            if data_ptr:
+                                try:
+                                    text = ctypes.wstring_at(data_ptr)
+                                finally:
+                                    kernel32.GlobalUnlock(handle)
+                        
+                        if text and text != self._last_clipboard:
+                            self._last_clipboard = text
+                            self._record_clipboard(text)
+                            
                     finally:
                         user32.CloseClipboard()
                 except Exception as e:
