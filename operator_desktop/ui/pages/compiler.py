@@ -60,6 +60,7 @@ class BuilderWorker(QtCore.QThread):
 
         self._cleanup_output_dir()
         add_data_args, temp_dir = self._build_add_data_args()
+        paths_args = self._build_paths_args()
         collect_args = self._build_collect_args()
         exclude_args = self._build_exclude_args()
         cmd = [
@@ -70,13 +71,14 @@ class BuilderWorker(QtCore.QThread):
             "--clean",
             "--name",
             self.options.output_name,
-        ]
+         ]
         cmd.append("--onefile")
         if self.options.console == "hide":
             cmd.append("--noconsole")
         if self.options.icon_path:
             cmd.extend(["--icon", str(self.options.icon_path)])
         cmd.extend(["--distpath", str(self.options.output_dir)])
+        cmd.extend(paths_args)
         cmd.extend(collect_args)
         cmd.extend(exclude_args)
         cmd.extend(add_data_args)
@@ -264,12 +266,17 @@ class BuilderWorker(QtCore.QThread):
         args: list[str] = []
         for module in ("pynput", "av", "aiortc", "sounddevice", "mss", "numpy"):
             args.extend(["--collect-all", module])
+        # When building from e.g. `remote_client/main.py`, PyInstaller can miss
+        # package-relative imports. Collecting the whole package avoids runtime
+        # ModuleNotFoundError like `remote_client.config`.
+        args.extend(["--collect-submodules", "remote_client"])
         hidden_imports = [
             "win32crypt",
             "cryptography",
             "pynput",
             "pynput.mouse",
             "pynput.keyboard",
+            "remote_client.config",
             "remote_client.apps",
             "remote_client.apps.launcher",
             "remote_client.windows.hidden_desktop",
@@ -277,6 +284,44 @@ class BuilderWorker(QtCore.QThread):
         ]
         for module in hidden_imports:
             args.extend(["--hidden-import", module])
+        return args
+
+    @staticmethod
+    def _find_top_package_dir(start_dir: Path) -> Optional[Path]:
+        """Return the top-most Python package directory that contains start_dir.
+
+        Example: if `start_dir` is `.../pkg/subpkg`, returns `.../pkg`.
+        """
+        current = start_dir
+        top_pkg: Optional[Path] = None
+        while (current / "__init__.py").exists():
+            top_pkg = current
+            current = current.parent
+        return top_pkg
+
+    def _build_paths_args(self) -> list[str]:
+        """Ensure local packages are importable for PyInstaller analysis.
+
+        If the entrypoint lives inside a package directory (has `__init__.py`),
+        we add the parent directory to `--paths` so absolute imports like
+        `remote_client.*` resolve during analysis.
+        """
+        roots: list[Path] = []
+
+        top_pkg = self._find_top_package_dir(self.options.entrypoint.parent)
+        if top_pkg is not None:
+            roots.append(top_pkg.parent)
+
+        roots.append(self.options.source_dir)
+
+        seen: set[str] = set()
+        args: list[str] = []
+        for root in roots:
+            root_str = str(root.resolve())
+            if root_str in seen:
+                continue
+            seen.add(root_str)
+            args.extend(["--paths", root_str])
         return args
 
     def _build_exclude_args(self) -> list[str]:

