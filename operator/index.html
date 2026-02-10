@@ -92,6 +92,17 @@
       <div class="hud-section hidden-desktop-controls" id="hiddenDesktopControls" data-requires-hidden="true" style="display: none;">
         <div class="section-title">HVNC Controls</div>
         
+        <!-- HVNC Preview -->
+        <div class="hvnc-preview-container" id="hvncPreviewContainer">
+          <div class="hvnc-preview-frame" id="hvncPreviewFrame">
+            <img id="hvncPreviewImg" class="hvnc-preview-img" alt="HVNC Preview" />
+            <div class="hvnc-preview-placeholder" id="hvncPreviewPlaceholder">
+              <span class="hvnc-preview-icon">🖥️</span>
+              <span class="hvnc-preview-text">HVNC Preview</span>
+            </div>
+          </div>
+        </div>
+        
         <!-- HVNC Status -->
         <div id="hvncStatus" class="hint" data-state="">HVNC: Not active</div>
         
@@ -377,6 +388,83 @@
   <div id="screenFrame" tabindex="0">
     <video id="screen" autoplay playsinline muted></video>
   </div>
+
+  <!-- HVNC Popup Window -->
+  <div id="hvncWindow" class="hvnc-window" style="display: none;">
+    <div class="hvnc-window-header">
+      <span class="hvnc-window-title">HVNC</span>
+      <button id="hvncWindowClose" class="hvnc-window-close" type="button">&times;</button>
+    </div>
+    <div class="hvnc-window-body">
+      <!-- HVNC Screen Preview -->
+      <div class="hvnc-screen-area">
+        <img id="hvncScreenImg" class="hvnc-screen-img" alt="HVNC Screen" />
+        <div class="hvnc-screen-placeholder" id="hvncScreenPlaceholder">
+          <span class="hvnc-screen-icon">🖥️</span>
+          <span class="hvnc-screen-text">Hidden Desktop</span>
+        </div>
+        <div class="hvnc-screen-status" id="hvncScreenStatus"></div>
+      </div>
+      <!-- HVNC Control Panel -->
+      <div class="hvnc-control-panel">
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="browsers">
+          <span class="hvnc-panel-icon">🌐</span> Browsers
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="cmd">
+          <span class="hvnc-panel-icon">⬛</span> CMD
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="powershell">
+          <span class="hvnc-panel-icon">🔵</span> PowerShell
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="explorer">
+          <span class="hvnc-panel-icon">📁</span> Explorer
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="run">
+          <span class="hvnc-panel-icon">⬇️</span> Launch .EXE
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="get_clipboard">
+          <span class="hvnc-panel-icon">📋</span> Get Clipboard
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="send_clipboard">
+          <span class="hvnc-panel-icon">📤</span> Send Clipboard
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="start_process">
+          <span class="hvnc-panel-icon">▶️</span> Start Process
+        </button>
+        <button class="hvnc-panel-btn" type="button" data-hvnc-action="kill_process">
+          <span class="hvnc-panel-icon">🟥</span> Kill Process
+        </button>
+        
+        <!-- Settings -->
+        <div class="hvnc-panel-settings">
+          <div class="hvnc-setting">
+            <label>Interval (ms): <span id="hvncIntervalValue">500</span></label>
+            <input type="range" id="hvncIntervalSlider" min="100" max="2000" value="500" step="100" />
+          </div>
+          <div class="hvnc-setting">
+            <label>Quality: <span id="hvncQualityValue">50</span>%</label>
+            <input type="range" id="hvncQualitySlider" min="10" max="100" value="50" step="5" />
+          </div>
+          <div class="hvnc-setting">
+            <label>Resize: <span id="hvncResizeValue">50</span>%</label>
+            <input type="range" id="hvncResizeSlider" min="25" max="100" value="50" step="5" />
+          </div>
+        </div>
+        
+        <!-- Window control -->
+        <div class="hvnc-panel-footer">
+          <label>Window</label>
+          <select id="hvncWindowAction">
+            <option value="close">Close</option>
+            <option value="minimize">Minimize</option>
+            <option value="maximize">Maximize</option>
+          </select>
+          <button id="hvncOkBtn" class="hvnc-ok-btn" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     if (window.qt && window.qt.webChannelTransport) {
       const script = document.createElement("script");

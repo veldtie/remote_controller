@@ -941,6 +941,324 @@ body.hvnc-mode .mode-chip.hvnc-mode {
   accent-color: var(--accent);
 }
 
+/* HVNC Preview Styles (in-panel) */
+.hvnc-preview-container {
+  margin-bottom: 12px;
+}
+
+.hvnc-preview-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hvnc-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+}
+
+.hvnc-preview-img.active {
+  display: block;
+}
+
+.hvnc-preview-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  gap: 8px;
+}
+
+.hvnc-preview-placeholder.hidden {
+  display: none;
+}
+
+.hvnc-preview-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.hvnc-preview-text {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* ===============================================
+   HVNC Popup Window Styles
+   =============================================== */
+.hvnc-window {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 800px;
+  max-width: 95vw;
+  max-height: 90vh;
+  background: linear-gradient(180deg, #1a2535 0%, #0d1520 100%);
+  border: 1px solid rgba(0, 150, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(0, 100, 255, 0.15);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hvnc-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, rgba(0, 100, 200, 0.3) 0%, rgba(0, 50, 100, 0.2) 100%);
+  border-bottom: 1px solid rgba(0, 150, 255, 0.3);
+  cursor: move;
+}
+
+.hvnc-window-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.hvnc-window-close {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 60, 60, 0.2);
+  border: 1px solid rgba(255, 60, 60, 0.4);
+  border-radius: 4px;
+  color: #ff6b6b;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.hvnc-window-close:hover {
+  background: rgba(255, 60, 60, 0.4);
+  color: #fff;
+}
+
+.hvnc-window-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* HVNC Screen Area */
+.hvnc-screen-area {
+  flex: 1;
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.hvnc-screen-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+}
+
+.hvnc-screen-img.active {
+  display: block;
+}
+
+.hvnc-screen-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.4);
+  gap: 12px;
+}
+
+.hvnc-screen-placeholder.hidden {
+  display: none;
+}
+
+.hvnc-screen-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.hvnc-screen-text {
+  font-size: 14px;
+  opacity: 0.6;
+}
+
+.hvnc-screen-status {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* HVNC Control Panel */
+.hvnc-control-panel {
+  width: 140px;
+  background: linear-gradient(180deg, rgba(20, 40, 70, 0.9) 0%, rgba(10, 25, 50, 0.95) 100%);
+  border-left: 1px solid rgba(0, 150, 255, 0.3);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hvnc-panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(30, 60, 100, 0.6) 0%, rgba(20, 40, 70, 0.6) 100%);
+  border: 1px solid rgba(0, 120, 255, 0.4);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.hvnc-panel-btn:hover {
+  background: linear-gradient(180deg, rgba(40, 80, 140, 0.8) 0%, rgba(30, 60, 100, 0.8) 100%);
+  border-color: rgba(0, 150, 255, 0.6);
+}
+
+.hvnc-panel-btn:active {
+  transform: scale(0.98);
+}
+
+.hvnc-panel-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+}
+
+/* HVNC Panel Settings */
+.hvnc-panel-settings {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 150, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hvnc-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hvnc-setting label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.hvnc-setting input[type="range"] {
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 100, 200, 0.3);
+  border-radius: 2px;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.hvnc-setting input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(180deg, #0088ff 0%, #0066cc 100%);
+  border: 1px solid rgba(0, 150, 255, 0.6);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.hvnc-setting input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(180deg, #0088ff 0%, #0066cc 100%);
+  border: 1px solid rgba(0, 150, 255, 0.6);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* HVNC Panel Footer */
+.hvnc-panel-footer {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 150, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hvnc-panel-footer label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.hvnc-panel-footer select {
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(0, 50, 100, 0.5);
+  border: 1px solid rgba(0, 120, 255, 0.4);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.hvnc-panel-footer select:focus {
+  outline: none;
+  border-color: rgba(0, 150, 255, 0.6);
+}
+
+.hvnc-ok-btn {
+  width: 100%;
+  padding: 8px;
+  background: linear-gradient(180deg, rgba(30, 60, 100, 0.8) 0%, rgba(20, 40, 70, 0.8) 100%);
+  border: 1px solid rgba(0, 120, 255, 0.5);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.hvnc-ok-btn:hover {
+  background: linear-gradient(180deg, rgba(40, 80, 140, 0.9) 0%, rgba(30, 60, 100, 0.9) 100%);
+  border-color: rgba(0, 150, 255, 0.7);
+}
+
 #hvncStatus {
   padding: 8px 12px;
   border-radius: 8px;

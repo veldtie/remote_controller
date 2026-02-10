@@ -633,6 +633,13 @@
     if (remdesk.updateHiddenDesktopControls) {
       remdesk.updateHiddenDesktopControls();
     }
+    
+    // Open HVNC window when entering HVNC mode
+    if (hvncMode && remdesk.hvnc && remdesk.hvnc.showWindow) {
+      remdesk.hvnc.showWindow();
+    } else if (!hvncMode && remdesk.hvnc && remdesk.hvnc.hideWindow) {
+      remdesk.hvnc.hideWindow();
+    }
   }
 
   function applySessionMode(mode, options = {}) {

