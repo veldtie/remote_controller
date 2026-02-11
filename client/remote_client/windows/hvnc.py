@@ -302,6 +302,31 @@ gdi32.BitBlt.argtypes = [
 ]
 gdi32.BitBlt.restype = wintypes.BOOL
 
+gdi32.StretchBlt.argtypes = [
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.DWORD,
+]
+gdi32.StretchBlt.restype = wintypes.BOOL
+
+gdi32.PatBlt.argtypes = [
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.DWORD,
+]
+gdi32.PatBlt.restype = wintypes.BOOL
+
 gdi32.GetDIBits.argtypes = [
     wintypes.HDC,
     wintypes.HBITMAP,
@@ -431,6 +456,17 @@ class HiddenDesktop:
         startupinfo.wShowWindow = SW_SHOW  # Explorer needs to be visible
         
         try:
+            # First, switch to the hidden desktop temporarily to "activate" it
+            # This helps ensure the desktop is properly initialized before launching shell
+            old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+            if user32.SetThreadDesktop(self._handle):
+                # Force a DC creation to initialize GDI on this desktop
+                test_dc = user32.GetDC(None)
+                if test_dc:
+                    user32.ReleaseDC(None, test_dc)
+                # Switch back to original desktop
+                user32.SetThreadDesktop(old_desktop)
+            
             # Start explorer.exe with /separate flag to force new process
             # This helps create a proper shell environment on the hidden desktop
             proc = subprocess.Popen(
@@ -441,8 +477,9 @@ class HiddenDesktop:
             self._processes.append(proc)
             self._shell_started = True
             
-            # Wait for explorer to initialize (increased time for shell setup)
-            time.sleep(2.0)
+            # Wait longer for explorer to fully initialize
+            # Hidden desktops need more time because they're not the active desktop
+            time.sleep(3.0)
             
             logger.info("Started shell on hidden desktop (PID=%d)", proc.pid)
             return True
@@ -670,10 +707,13 @@ class HiddenDesktopCapture:
             # Try CreateDCW as fallback
             hdc_screen = gdi32.CreateDCW("DISPLAY", None, None, None)
             if not hdc_screen:
-                if not hasattr(self, '_dc_error_logged'):
-                    logger.warning("Both GetDC and CreateDCW failed - hidden desktop may not be ready")
-                    self._dc_error_logged = True
-                return None
+                # Try GetDC with HWND_DESKTOP (0) as last resort
+                hdc_screen = user32.GetDC(0)
+                if not hdc_screen:
+                    if not hasattr(self, '_dc_error_logged'):
+                        logger.warning("All DC acquisition methods failed - hidden desktop may not be ready")
+                        self._dc_error_logged = True
+                    return None
             use_release_dc = False
         else:
             use_release_dc = True
@@ -725,6 +765,14 @@ class HiddenDesktopCapture:
                 try:
                     old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
                     
+                    # First, try to "prime" the hidden desktop by doing a small test blit
+                    # This can help initialize GDI state on hidden desktops
+                    if not hasattr(self, '_gdi_primed'):
+                        # Do a small PatBlt to initialize the DC
+                        BLACKNESS = 0x00000042
+                        gdi32.PatBlt(hdc_mem, 0, 0, 1, 1, BLACKNESS)
+                        self._gdi_primed = True
+                    
                     # BitBlt from screen to memory DC
                     # Use SRCCOPY | CAPTUREBLT for better capture of layered windows
                     CAPTUREBLT = 0x40000000
@@ -740,6 +788,13 @@ class HiddenDesktopCapture:
                             hdc_screen, 0, 0, SRCCOPY
                         )
                         if not result:
+                            # Try StretchBlt as another fallback (sometimes works when BitBlt doesn't)
+                            result = gdi32.StretchBlt(
+                                hdc_mem, 0, 0, screen_width, screen_height,
+                                hdc_screen, 0, 0, screen_width, screen_height, SRCCOPY
+                            )
+                        
+                        if not result:
                             error = ctypes.get_last_error()
                             # error=0 means the function failed but no specific error code
                             # This usually happens when the desktop is not fully initialized
@@ -750,7 +805,7 @@ class HiddenDesktopCapture:
                             
                             # Log first 3 failures in detail, then throttle
                             if self._bitblt_fail_count <= 3:
-                                logger.warning("BitBlt failed (attempt %d), error=%d - desktop may not be ready", 
+                                logger.warning("BitBlt/StretchBlt failed (attempt %d), error=%d - desktop may not be ready", 
                                              self._bitblt_fail_count, error)
                             elif self._bitblt_fail_count == 4:
                                 logger.warning("Suppressing further BitBlt failure logs")
@@ -830,17 +885,30 @@ class HiddenDesktopCapture:
         # This is intentional - we want ICE to complete in parallel with desktop init
         self._initialized.set()
         
-        # Wait a short time for initial desktop setup
-        time.sleep(1.0)
+        # Wait longer for desktop to fully initialize
+        # Hidden desktops need time for GDI resources to be ready
+        time.sleep(2.0)
+        
+        # Force GDI initialization by creating and releasing resources
+        # This helps "wake up" the hidden desktop's GDI subsystem
+        for _ in range(3):
+            test_dc = user32.GetDC(None)
+            if test_dc:
+                # Create a test bitmap to force GDI initialization
+                test_bmp = gdi32.CreateCompatibleBitmap(test_dc, 1, 1)
+                if test_bmp:
+                    gdi32.DeleteObject(test_bmp)
+                user32.ReleaseDC(None, test_dc)
+                time.sleep(0.5)
         
         # Try a test capture to verify desktop is ready
-        # Continue in background even if desktop isn't ready yet
-        for retry in range(10):
+        # More retries with longer delays for hidden desktop
+        for retry in range(20):
             test_frame = self._capture_frame()
             if test_frame:
                 logger.info("Desktop capture ready after %d retries", retry)
                 break
-            logger.debug("Desktop not ready, retry %d/10", retry + 1)
+            logger.debug("Desktop not ready, retry %d/20", retry + 1)
             time.sleep(0.5)
         else:
             logger.warning("Desktop capture starting despite incomplete initialization")
