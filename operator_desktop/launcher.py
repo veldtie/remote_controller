@@ -1,18 +1,14 @@
-import sys
-from pathlib import Path
+"""Backward-compatible launcher entry point.
 
+The canonical script entry point is ``operator_desktop.app``.
+This module remains as a thin compatibility wrapper.
+"""
+from __future__ import annotations
 
-def _ensure_package_on_path() -> None:
-    if __package__:
-        return
-    root = Path(__file__).resolve().parent.parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-
-_ensure_package_on_path()
-
-from operator_desktop.main import main
+if __package__:
+    from .app import main
+else:
+    from app import main  # type: ignore
 
 
 if __name__ == "__main__":
