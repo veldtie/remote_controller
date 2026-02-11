@@ -163,15 +163,48 @@
     scheduleStreamHint();
   }
 
+  function resolveCssLength(rawValue, fallback, axis = "height") {
+    const value = String(rawValue || "").trim();
+    if (!value) {
+      return fallback;
+    }
+    if (/^-?\d+(\.\d+)?px$/i.test(value)) {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    if (/^-?\d+(\.\d+)?$/i.test(value)) {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    const probe = document.createElement("div");
+    probe.style.position = "absolute";
+    probe.style.visibility = "hidden";
+    probe.style.pointerEvents = "none";
+    probe.style[axis] = value;
+    document.body.appendChild(probe);
+    const computed = Number.parseFloat(getComputedStyle(probe)[axis]);
+    probe.remove();
+    return Number.isFinite(computed) ? computed : fallback;
+  }
+
   function getWorkspaceBounds() {
     const style = getComputedStyle(document.documentElement);
-    const edgeGap = Number.parseFloat(style.getPropertyValue("--edge-gap")) || 16;
-    const workspaceTop =
-      Number.parseFloat(style.getPropertyValue("--workspace-top")) || edgeGap;
-    const workspaceLeft =
-      Number.parseFloat(style.getPropertyValue("--workspace-left")) || 320;
-    const workspaceBottom =
-      Number.parseFloat(style.getPropertyValue("--workspace-bottom")) || 120;
+    const edgeGap = resolveCssLength(style.getPropertyValue("--edge-gap"), 16, "width");
+    const workspaceTop = resolveCssLength(
+      style.getPropertyValue("--workspace-top"),
+      edgeGap,
+      "height"
+    );
+    const workspaceLeft = resolveCssLength(
+      style.getPropertyValue("--workspace-left"),
+      320,
+      "width"
+    );
+    const workspaceBottom = resolveCssLength(
+      style.getPropertyValue("--workspace-bottom"),
+      120,
+      "height"
+    );
     const availableWidth = Math.max(0, window.innerWidth - workspaceLeft - edgeGap);
     const availableHeight = Math.max(
       0,

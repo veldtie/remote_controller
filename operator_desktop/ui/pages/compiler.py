@@ -471,7 +471,18 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_name_label = QtWidgets.QLabel()
         self.output_name_input = QtWidgets.QLineEdit()
 
-        self.antifraud_label = QtWidgets.QLabel()
+        self.specifications_card = GlassFrame(
+            radius=14, tone="card", tint_alpha=150, border_alpha=60
+        )
+        self.specifications_card.setObjectName("ToolbarCard")
+        specifications_layout = QtWidgets.QVBoxLayout(self.specifications_card)
+        specifications_layout.setContentsMargins(12, 10, 12, 10)
+        specifications_layout.setSpacing(8)
+
+        self.specifications_label = QtWidgets.QLabel()
+        self.specifications_label.setObjectName("SectionTitle")
+        specifications_layout.addWidget(self.specifications_label)
+
         self.vm_check = QtWidgets.QCheckBox()
         self.region_check = QtWidgets.QCheckBox()
         self.region_button = make_button("", "ghost")
@@ -479,6 +490,31 @@ class CompilerPage(QtWidgets.QWidget):
         self.region_button.setMenu(self.region_menu)
         self.region_check.toggled.connect(self._update_region_visibility)
         self._apply_region_menu_theme()
+
+        self.activity_tracker_check = QtWidgets.QCheckBox()
+
+        self.region_control = QtWidgets.QWidget()
+        region_control_layout = QtWidgets.QHBoxLayout(self.region_control)
+        region_control_layout.setContentsMargins(0, 0, 0, 0)
+        region_control_layout.setSpacing(8)
+        region_control_layout.addWidget(self.region_check)
+        region_control_layout.addWidget(
+            self.region_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft
+        )
+        region_control_layout.addStretch()
+
+        self.specifications_grid = QtWidgets.QGridLayout()
+        self.specifications_grid.setContentsMargins(0, 0, 0, 0)
+        self.specifications_grid.setHorizontalSpacing(12)
+        self.specifications_grid.setVerticalSpacing(8)
+        specifications_layout.addLayout(self.specifications_grid)
+
+        self._specification_widgets: list[QtWidgets.QWidget] = [
+            self.vm_check,
+            self.region_control,
+            self.activity_tracker_check,
+        ]
+        self._specification_columns = 0
 
         self.output_dir_label = QtWidgets.QLabel()
         self.output_dir_input = QtWidgets.QLineEdit()
@@ -495,11 +531,6 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_combo.addItem(self.i18n.t("compiler_mode_onefile"), "onefile")
         self.mode_combo.setEnabled(False)
 
-        self.console_check = QtWidgets.QCheckBox()
-        
-        # Activity tracker checkbox
-        self.activity_tracker_check = QtWidgets.QCheckBox()
-
         form_layout.addWidget(self.source_label, 0, 0)
         form_layout.addWidget(self.source_input, 0, 1)
         form_layout.addWidget(self.source_button, 0, 2)
@@ -508,24 +539,15 @@ class CompilerPage(QtWidgets.QWidget):
         form_layout.addWidget(self.entry_button, 1, 2)
         form_layout.addWidget(self.output_name_label, 2, 0)
         form_layout.addWidget(self.output_name_input, 2, 1, 1, 2)
-        form_layout.addWidget(self.antifraud_label, 3, 0)
-        antifraud_row = QtWidgets.QHBoxLayout()
-        antifraud_row.setSpacing(10)
-        antifraud_row.addWidget(self.vm_check)
-        antifraud_row.addWidget(self.region_check)
-        antifraud_row.addWidget(self.region_button)
-        antifraud_row.addStretch()
-        form_layout.addLayout(antifraud_row, 3, 1, 1, 2)
-        form_layout.addWidget(self.activity_tracker_check, 4, 1, 1, 2)
-        form_layout.addWidget(self.console_check, 5, 1, 1, 2)
-        form_layout.addWidget(self.output_dir_label, 6, 0)
-        form_layout.addWidget(self.output_dir_input, 6, 1)
-        form_layout.addWidget(self.output_dir_button, 6, 2)
-        form_layout.addWidget(self.icon_label, 7, 0)
-        form_layout.addWidget(self.icon_input, 7, 1)
-        form_layout.addWidget(self.icon_button, 7, 2)
-        form_layout.addWidget(self.mode_label, 8, 0)
-        form_layout.addWidget(self.mode_combo, 8, 1)
+        form_layout.addWidget(self.specifications_card, 3, 0, 1, 3)
+        form_layout.addWidget(self.output_dir_label, 4, 0)
+        form_layout.addWidget(self.output_dir_input, 4, 1)
+        form_layout.addWidget(self.output_dir_button, 4, 2)
+        form_layout.addWidget(self.icon_label, 5, 0)
+        form_layout.addWidget(self.icon_input, 5, 1)
+        form_layout.addWidget(self.icon_button, 5, 2)
+        form_layout.addWidget(self.mode_label, 6, 0)
+        form_layout.addWidget(self.mode_combo, 6, 1, 1, 2)
 
         layout.addWidget(form_card)
 
@@ -553,6 +575,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.load_state()
         self.apply_translations()
         self._update_region_visibility(self.region_check.isChecked())
+        QtCore.QTimer.singleShot(0, self._refresh_specification_layout)
 
     def load_state(self) -> None:
         builder = self.settings.get("builder", {})
@@ -574,8 +597,6 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_dir_input.setText(builder.get("output_dir", ""))
         self.icon_input.setText(builder.get("icon_path", ""))
         self.mode_combo.setCurrentIndex(0)
-        console = builder.get("console", "hide")
-        self.console_check.setChecked(console == "show")
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("compiler_title"))
@@ -583,7 +604,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.source_label.setText(self.i18n.t("compiler_source"))
         self.entry_label.setText(self.i18n.t("compiler_entry"))
         self.output_name_label.setText(self.i18n.t("compiler_output_name"))
-        self.antifraud_label.setText(self.i18n.t("compiler_antifraud_title"))
+        self.specifications_label.setText(self.i18n.t("compiler_specifications"))
         self.vm_check.setText(self.i18n.t("compiler_antifraud_vm"))
         self.region_check.setText(self.i18n.t("compiler_antifraud_region"))
         self.region_button.setText(self.i18n.t("compiler_regions"))
@@ -591,7 +612,6 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_dir_label.setText(self.i18n.t("compiler_output_dir"))
         self.icon_label.setText(self.i18n.t("compiler_icon"))
         self.mode_label.setText(self.i18n.t("compiler_mode"))
-        self.console_check.setText(self.i18n.t("compiler_console_show"))
         self.source_button.setText(self.i18n.t("compiler_browse"))
         self.entry_button.setText(self.i18n.t("compiler_browse"))
         self.output_dir_button.setText(self.i18n.t("compiler_browse"))
@@ -603,6 +623,7 @@ class CompilerPage(QtWidgets.QWidget):
         if self.log_output.toPlainText().strip() == "":
             self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
         self._build_region_menu()
+        self._refresh_specification_layout()
 
     def pick_source_dir(self) -> None:
         path = QtWidgets.QFileDialog.getExistingDirectory(self, self.i18n.t("compiler_source"))
@@ -667,7 +688,7 @@ class CompilerPage(QtWidgets.QWidget):
         output_dir = Path(output_dir_text)
         icon_path = Path(self.icon_input.text().strip()) if self.icon_input.text().strip() else None
         mode = "onefile"
-        console = "show" if self.console_check.isChecked() else "hide"
+        console = "hide"
         server_url, api_token = self._resolve_server_settings()
 
         if not source_dir.exists() or not entrypoint.exists():
@@ -716,6 +737,39 @@ class CompilerPage(QtWidgets.QWidget):
     def clear_log(self) -> None:
         self.log_output.clear()
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._refresh_specification_layout()
+
+    def _refresh_specification_layout(self) -> None:
+        available_width = self.specifications_card.width()
+        if available_width <= 0:
+            return
+
+        if available_width < 440:
+            columns = 1
+        elif available_width < 760:
+            columns = 2
+        else:
+            columns = 3
+
+        if columns == self._specification_columns:
+            return
+        self._specification_columns = columns
+
+        for widget in self._specification_widgets:
+            self.specifications_grid.removeWidget(widget)
+        for index in range(3):
+            self.specifications_grid.setColumnStretch(index, 0)
+
+        for index, widget in enumerate(self._specification_widgets):
+            row = index // columns
+            column = index % columns
+            self.specifications_grid.addWidget(widget, row, column)
+
+        for index in range(columns):
+            self.specifications_grid.setColumnStretch(index, 1)
 
     def _apply_region_menu_theme(self) -> None:
         colors = self.theme.colors
@@ -829,7 +883,7 @@ class CompilerPage(QtWidgets.QWidget):
                 "output_dir": str(options.output_dir),
                 "icon_path": str(options.icon_path) if options.icon_path else "",
                 "mode": "onefile",
-                "console": options.console,
+                "console": "hide",
             },
         )
         self.settings.save()
