@@ -278,11 +278,23 @@ class MainShell(QtWidgets.QWidget):
         self.logout_requested.emit()
 
     def open_local_desktop(self) -> None:
-        """Open or focus the local desktop window."""
+        """Open or focus the local desktop window as a separate top-level window."""
         if self._local_desktop_window is None or not self._local_desktop_window.isVisible():
-            self._local_desktop_window = LocalDesktopWindow(self)
+            # Create window without parent to make it a separate top-level window
+            self._local_desktop_window = LocalDesktopWindow(parent=None)
+            # Set window flags to ensure it's a proper standalone window
+            self._local_desktop_window.setWindowFlags(
+                QtCore.Qt.WindowType.Window |
+                QtCore.Qt.WindowType.WindowTitleHint |
+                QtCore.Qt.WindowType.WindowSystemMenuHint |
+                QtCore.Qt.WindowType.WindowMinMaxButtonsHint |
+                QtCore.Qt.WindowType.WindowCloseButtonHint
+            )
             self._local_desktop_window.closed.connect(self._on_local_desktop_closed)
             self._local_desktop_window.show()
+            # Ensure window appears on top when first opened
+            self._local_desktop_window.raise_()
+            self._local_desktop_window.activateWindow()
         else:
             self._local_desktop_window.raise_()
             self._local_desktop_window.activateWindow()
