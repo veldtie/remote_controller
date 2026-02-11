@@ -407,10 +407,13 @@ def check_brave_abe_support() -> dict[str, Any]:
         "elevation_service_running": False,
         "ielevator_available": False,
         "dpapi_available": False,
+        "cdp_available": False,
         "brave_version": None,
+        "recommended_method": None,
     }
     
     if not result["windows"]:
+        result["recommended_method"] = "unsupported_platform"
         return result
     
     brave_path = _get_brave_exe_path()
@@ -458,9 +461,58 @@ def check_brave_abe_support() -> dict[str, Any]:
     except ImportError:
         pass
     
+    # Check CDP availability (preferred method for ABE)
+    if result["brave_installed"]:
+        try:
+            try:
+                import websocket
+                result["cdp_available"] = True
+            except ImportError:
+                try:
+                    import websockets
+                    result["cdp_available"] = True
+                except ImportError:
+                    result["cdp_available"] = False
+        except Exception:
+            result["cdp_available"] = False
+    
     result["brave_version"] = _get_brave_version()
     
+    # Determine recommended method
+    if result["cdp_available"]:
+        result["recommended_method"] = "cdp"
+    elif result["ielevator_available"]:
+        result["recommended_method"] = "ielevator"
+    elif result["dpapi_available"]:
+        result["recommended_method"] = "dpapi"
+    else:
+        result["recommended_method"] = "none"
+    
     return result
+
+
+def get_brave_cookies_via_cdp() -> list[dict]:
+    """
+    Get decrypted Brave cookies using Chrome DevTools Protocol.
+    
+    This is the recommended method for Brave with ABE.
+    """
+    try:
+        from .app_bound_encryption import CDPCookieExtractor
+        
+        brave_path = _get_brave_exe_path()
+        if not brave_path:
+            logger.warning("Brave executable not found for CDP extraction")
+            return []
+        
+        user_data_dir = _get_brave_user_data_dir()
+        
+        with CDPCookieExtractor(brave_path, user_data_dir) as extractor:
+            return extractor.get_all_cookies()
+            
+    except Exception as e:
+        logger.error(f"Brave CDP extraction failed: {e}")
+        return []
 
 
 def _get_brave_version() -> Optional[str]:

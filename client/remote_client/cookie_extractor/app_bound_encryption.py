@@ -595,7 +595,316 @@ class AppBoundDecryptor:
         return decrypt_v20_value(encrypted_value, self._abe_key)
 
 
-# Alternative approach using Chrome's Remote Debugging Protocol
+# CDP-based cookie extraction for Chrome 127+
+class CDPCookieExtractor:
+    """
+    Extract cookies using Chrome DevTools Protocol (CDP).
+    
+    This is the most reliable method for Chrome 127+ with App-Bound Encryption,
+    as Chrome itself handles the decryption and returns plaintext cookies via CDP.
+    
+    Usage:
+        extractor = CDPCookieExtractor()
+        cookies = extractor.get_all_cookies()
+    """
+    
+    DEFAULT_CDP_PORT = 9222
+    CONNECT_TIMEOUT = 10
+    
+    def __init__(
+        self, 
+        chrome_path: Optional[Path] = None,
+        user_data_dir: Optional[Path] = None,
+        cdp_port: int = DEFAULT_CDP_PORT,
+    ):
+        self._chrome_path = chrome_path or _get_chrome_exe_path()
+        self._user_data_dir = user_data_dir
+        self._cdp_port = cdp_port
+        self._chrome_process: Optional[subprocess.Popen] = None
+        self._ws_url: Optional[str] = None
+    
+    def _find_free_port(self) -> int:
+        """Find a free port for CDP."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            return s.getsockname()[1]
+    
+    def _get_user_data_dir(self) -> Optional[Path]:
+        """Get Chrome's default user data directory."""
+        if self._user_data_dir:
+            return self._user_data_dir
+        
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            chrome_data = Path(local_app_data) / "Google" / "Chrome" / "User Data"
+            if chrome_data.exists():
+                return chrome_data
+        return None
+    
+    def _start_chrome_with_cdp(self) -> bool:
+        """Start Chrome with remote debugging enabled."""
+        if not self._chrome_path or not self._chrome_path.exists():
+            logger.error("Chrome executable not found")
+            return False
+        
+        user_data_dir = self._get_user_data_dir()
+        if not user_data_dir:
+            logger.error("Chrome user data directory not found")
+            return False
+        
+        # Find a free port to avoid conflicts
+        self._cdp_port = self._find_free_port()
+        
+        args = [
+            str(self._chrome_path),
+            f"--remote-debugging-port={self._cdp_port}",
+            f"--user-data-dir={user_data_dir}",
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-translate",
+            "--mute-audio",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        
+        try:
+            # Start Chrome process
+            startupinfo = None
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            self._chrome_process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+            )
+            
+            # Wait for Chrome to start and expose CDP
+            import time
+            for _ in range(self.CONNECT_TIMEOUT * 10):
+                if self._get_ws_endpoint():
+                    logger.info(f"Chrome CDP started on port {self._cdp_port}")
+                    return True
+                time.sleep(0.1)
+            
+            logger.error("Chrome CDP did not start in time")
+            self._cleanup()
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to start Chrome: {e}")
+            self._cleanup()
+            return False
+    
+    def _get_ws_endpoint(self) -> Optional[str]:
+        """Get the WebSocket endpoint from CDP."""
+        import urllib.request
+        import urllib.error
+        
+        try:
+            url = f"http://127.0.0.1:{self._cdp_port}/json/version"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode())
+                self._ws_url = data.get("webSocketDebuggerUrl")
+                return self._ws_url
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+            return None
+    
+    def _send_cdp_command(self, ws, method: str, params: dict = None) -> dict:
+        """Send a CDP command and get the response."""
+        import random
+        msg_id = random.randint(1, 1000000)
+        message = {"id": msg_id, "method": method}
+        if params:
+            message["params"] = params
+        
+        ws.send(json.dumps(message))
+        
+        while True:
+            response = json.loads(ws.recv())
+            if response.get("id") == msg_id:
+                return response
+    
+    def get_all_cookies(self) -> list[dict]:
+        """
+        Get all cookies from Chrome using CDP.
+        
+        Returns a list of cookie dictionaries with decrypted values.
+        """
+        cookies = []
+        
+        # Try to connect to existing Chrome instance first
+        if not self._get_ws_endpoint():
+            # Start Chrome if no existing instance
+            if not self._start_chrome_with_cdp():
+                return cookies
+        
+        try:
+            import websocket
+        except ImportError:
+            logger.error("websocket-client not installed. Install with: pip install websocket-client")
+            # Try to use websockets instead (async)
+            return self._get_cookies_async()
+        
+        try:
+            ws = websocket.create_connection(
+                self._ws_url, 
+                timeout=self.CONNECT_TIMEOUT
+            )
+            
+            # Get all cookies via CDP
+            response = self._send_cdp_command(ws, "Network.getAllCookies")
+            
+            if "result" in response and "cookies" in response["result"]:
+                for cookie in response["result"]["cookies"]:
+                    cookies.append({
+                        "domain": cookie.get("domain", ""),
+                        "name": cookie.get("name", ""),
+                        "value": cookie.get("value", ""),
+                        "path": cookie.get("path", "/"),
+                        "expires": int(cookie.get("expires", 0)),
+                        "secure": cookie.get("secure", False),
+                        "httponly": cookie.get("httpOnly", False),
+                        "samesite": cookie.get("sameSite", ""),
+                    })
+            
+            ws.close()
+            
+        except Exception as e:
+            logger.error(f"CDP cookie extraction failed: {e}")
+        
+        return cookies
+    
+    def _get_cookies_async(self) -> list[dict]:
+        """Async fallback using websockets library."""
+        import asyncio
+        
+        async def _extract():
+            cookies = []
+            try:
+                import websockets
+                
+                if not self._ws_url:
+                    return cookies
+                
+                async with websockets.connect(self._ws_url) as ws:
+                    import random
+                    msg_id = random.randint(1, 1000000)
+                    await ws.send(json.dumps({
+                        "id": msg_id, 
+                        "method": "Network.getAllCookies"
+                    }))
+                    
+                    while True:
+                        response = json.loads(await ws.recv())
+                        if response.get("id") == msg_id:
+                            if "result" in response and "cookies" in response["result"]:
+                                for cookie in response["result"]["cookies"]:
+                                    cookies.append({
+                                        "domain": cookie.get("domain", ""),
+                                        "name": cookie.get("name", ""),
+                                        "value": cookie.get("value", ""),
+                                        "path": cookie.get("path", "/"),
+                                        "expires": int(cookie.get("expires", 0)),
+                                        "secure": cookie.get("secure", False),
+                                        "httponly": cookie.get("httpOnly", False),
+                                        "samesite": cookie.get("sameSite", ""),
+                                    })
+                            break
+                            
+            except Exception as e:
+                logger.error(f"Async CDP extraction failed: {e}")
+            
+            return cookies
+        
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_extract())
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Failed to run async CDP extraction: {e}")
+            return []
+    
+    def _cleanup(self) -> None:
+        """Clean up Chrome process."""
+        if self._chrome_process:
+            try:
+                self._chrome_process.terminate()
+                self._chrome_process.wait(timeout=5)
+            except Exception:
+                try:
+                    self._chrome_process.kill()
+                except Exception:
+                    pass
+            self._chrome_process = None
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cleanup()
+
+
+def get_cookies_via_cdp(
+    chrome_path: Optional[Path] = None,
+    user_data_dir: Optional[Path] = None,
+) -> list[dict]:
+    """
+    Get decrypted cookies using Chrome DevTools Protocol.
+    
+    This is the recommended method for Chrome 127+ with ABE.
+    
+    Args:
+        chrome_path: Path to Chrome executable (auto-detected if None)
+        user_data_dir: Chrome user data directory (auto-detected if None)
+        
+    Returns:
+        List of cookie dictionaries with decrypted values
+    """
+    with CDPCookieExtractor(chrome_path, user_data_dir) as extractor:
+        return extractor.get_all_cookies()
+
+
+def try_cdp_cookie_extraction(browser_name: str = "chrome") -> tuple[bool, list[dict]]:
+    """
+    Attempt to extract cookies using CDP.
+    
+    Returns:
+        Tuple of (success, cookies)
+    """
+    try:
+        chrome_path = _get_chrome_exe_path()
+        if not chrome_path:
+            return False, []
+        
+        extractor = CDPCookieExtractor(chrome_path)
+        cookies = extractor.get_all_cookies()
+        extractor._cleanup()
+        
+        if cookies:
+            logger.info(f"CDP extraction successful: {len(cookies)} cookies")
+            return True, cookies
+        
+        return False, []
+        
+    except Exception as e:
+        logger.debug(f"CDP extraction failed: {e}")
+        return False, []
+
+
+# Alternative approach using Chrome's Remote Debugging Protocol (legacy wrapper)
 def decrypt_via_chrome_devtools(
     local_state_path: Path,
     encrypted_values: list[bytes],
@@ -603,20 +912,22 @@ def decrypt_via_chrome_devtools(
     """
     Decrypt values using Chrome's DevTools Protocol.
     
+    NOTE: This is a legacy wrapper. For Chrome 127+, use CDPCookieExtractor directly
+    to get already-decrypted cookies instead of trying to decrypt raw values.
+    
     This method:
     1. Launches Chrome with remote debugging
     2. Connects to DevTools
     3. Uses internal Chrome APIs to decrypt
     4. Returns decrypted values
-    
-    Note: This requires Chrome to be installed and may open a Chrome window.
     """
-    chrome_path = _get_chrome_exe_path()
-    if not chrome_path:
-        return [None] * len(encrypted_values)
-    
-    # Implementation reserved for future versions
-    # This approach requires careful handling of Chrome processes
+    # CDP returns already-decrypted cookies, so we can't use it to decrypt
+    # raw encrypted values. The correct approach is to use CDPCookieExtractor
+    # to get all cookies directly.
+    logger.warning(
+        "decrypt_via_chrome_devtools is deprecated for ABE. "
+        "Use CDPCookieExtractor.get_all_cookies() instead."
+    )
     return [None] * len(encrypted_values)
 
 
@@ -627,27 +938,37 @@ def check_abe_support() -> dict[str, Any]:
     Returns a dictionary with:
     - windows: Whether running on Windows
     - chrome_installed: Whether Chrome is found
-    - elevation_service: Whether elevation service exists and is running
+    - chrome_path: Path to Chrome executable
+    - elevation_service: Whether elevation service exists
     - elevation_service_path: Path to elevation_service.exe if found
+    - elevation_service_running: Whether elevation service is running
     - ielevator_available: Whether IElevator COM is accessible and working
     - dpapi_available: Whether DPAPI is available
+    - cdp_available: Whether CDP extraction can be used (recommended for Chrome 127+)
+    - recommended_method: The recommended decryption method
     """
     result = {
         "windows": os.name == "nt",
         "chrome_installed": False,
+        "chrome_path": None,
         "elevation_service": False,
         "elevation_service_path": None,
         "elevation_service_running": False,
         "ielevator_available": False,
         "dpapi_available": False,
+        "cdp_available": False,
+        "recommended_method": None,
     }
     
     if not result["windows"]:
+        result["recommended_method"] = "unsupported_platform"
         return result
     
     # Check Chrome installation
     chrome_path = _get_chrome_exe_path()
     result["chrome_installed"] = chrome_path is not None
+    if chrome_path:
+        result["chrome_path"] = str(chrome_path)
     
     # Check elevation service file exists
     if chrome_path:
@@ -694,4 +1015,66 @@ def check_abe_support() -> dict[str, Any]:
     except ImportError:
         pass
     
+    # Check CDP availability (preferred method for Chrome 127+)
+    if result["chrome_installed"]:
+        # CDP is available if Chrome is installed and we can use websockets
+        try:
+            # Check for websocket library
+            try:
+                import websocket
+                result["cdp_available"] = True
+            except ImportError:
+                try:
+                    import websockets
+                    result["cdp_available"] = True
+                except ImportError:
+                    result["cdp_available"] = False
+        except Exception:
+            result["cdp_available"] = False
+    
+    # Determine recommended method
+    # Priority: CDP > IElevator > DPAPI
+    if result["cdp_available"]:
+        result["recommended_method"] = "cdp"
+    elif result["ielevator_available"]:
+        result["recommended_method"] = "ielevator"
+    elif result["dpapi_available"]:
+        result["recommended_method"] = "dpapi"
+    else:
+        result["recommended_method"] = "none"
+    
     return result
+
+
+def get_abe_decryption_status_message() -> str:
+    """
+    Get a human-readable status message about ABE decryption capabilities.
+    """
+    support = check_abe_support()
+    
+    if not support["windows"]:
+        return "ABE decryption is only supported on Windows."
+    
+    if not support["chrome_installed"]:
+        return "Chrome is not installed. ABE decryption requires Chrome."
+    
+    messages = []
+    
+    if support["cdp_available"]:
+        messages.append("✓ CDP extraction available (recommended for Chrome 127+)")
+    else:
+        messages.append("✗ CDP extraction not available (install websocket-client)")
+    
+    if support["ielevator_available"]:
+        messages.append("✓ IElevator COM interface available")
+    else:
+        messages.append("✗ IElevator COM not accessible (requires special registration)")
+    
+    if support["dpapi_available"]:
+        messages.append("✓ DPAPI available (limited for ABE)")
+    else:
+        messages.append("✗ DPAPI not available")
+    
+    messages.append(f"\nRecommended method: {support['recommended_method'].upper()}")
+    
+    return "\n".join(messages)

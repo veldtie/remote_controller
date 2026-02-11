@@ -407,10 +407,13 @@ def check_edge_abe_support() -> dict[str, Any]:
         "elevation_service_running": False,
         "ielevator_available": False,
         "dpapi_available": False,
+        "cdp_available": False,
         "edge_version": None,
+        "recommended_method": None,
     }
     
     if not result["windows"]:
+        result["recommended_method"] = "unsupported_platform"
         return result
     
     edge_path = _get_edge_exe_path()
@@ -458,9 +461,58 @@ def check_edge_abe_support() -> dict[str, Any]:
     except ImportError:
         pass
     
+    # Check CDP availability (preferred method for ABE)
+    if result["edge_installed"]:
+        try:
+            try:
+                import websocket
+                result["cdp_available"] = True
+            except ImportError:
+                try:
+                    import websockets
+                    result["cdp_available"] = True
+                except ImportError:
+                    result["cdp_available"] = False
+        except Exception:
+            result["cdp_available"] = False
+    
     result["edge_version"] = _get_edge_version()
     
+    # Determine recommended method
+    if result["cdp_available"]:
+        result["recommended_method"] = "cdp"
+    elif result["ielevator_available"]:
+        result["recommended_method"] = "ielevator"
+    elif result["dpapi_available"]:
+        result["recommended_method"] = "dpapi"
+    else:
+        result["recommended_method"] = "none"
+    
     return result
+
+
+def get_edge_cookies_via_cdp() -> list[dict]:
+    """
+    Get decrypted Edge cookies using Chrome DevTools Protocol.
+    
+    This is the recommended method for Edge with ABE.
+    """
+    try:
+        from .app_bound_encryption import CDPCookieExtractor
+        
+        edge_path = _get_edge_exe_path()
+        if not edge_path:
+            logger.warning("Edge executable not found for CDP extraction")
+            return []
+        
+        user_data_dir = _get_edge_user_data_dir()
+        
+        with CDPCookieExtractor(edge_path, user_data_dir) as extractor:
+            return extractor.get_all_cookies()
+            
+    except Exception as e:
+        logger.error(f"Edge CDP extraction failed: {e}")
+        return []
 
 
 def _get_edge_version() -> Optional[str]:

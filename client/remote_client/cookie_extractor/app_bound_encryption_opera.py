@@ -524,7 +524,9 @@ def check_opera_abe_support() -> dict[str, Any]:
     - elevation_service_running: Whether elevation service is running
     - ielevator_available: Whether IElevator COM is accessible
     - dpapi_available: Whether DPAPI is available
+    - cdp_available: Whether CDP extraction can be used (recommended)
     - opera_version: Opera version if detected
+    - recommended_method: The recommended decryption method
     """
     result = {
         "windows": os.name == "nt",
@@ -536,10 +538,13 @@ def check_opera_abe_support() -> dict[str, Any]:
         "elevation_service_running": False,
         "ielevator_available": False,
         "dpapi_available": False,
+        "cdp_available": False,
         "opera_version": None,
+        "recommended_method": None,
     }
     
     if not result["windows"]:
+        result["recommended_method"] = "unsupported_platform"
         return result
     
     # Check Opera installation
@@ -597,10 +602,62 @@ def check_opera_abe_support() -> dict[str, Any]:
     except ImportError:
         pass
     
+    # Check CDP availability (preferred method for ABE)
+    if result["opera_installed"]:
+        try:
+            try:
+                import websocket
+                result["cdp_available"] = True
+            except ImportError:
+                try:
+                    import websockets
+                    result["cdp_available"] = True
+                except ImportError:
+                    result["cdp_available"] = False
+        except Exception:
+            result["cdp_available"] = False
+    
     # Try to get Opera version
     result["opera_version"] = _get_opera_version()
     
+    # Determine recommended method (CDP is preferred for ABE)
+    if result["cdp_available"]:
+        result["recommended_method"] = "cdp"
+    elif result["ielevator_available"]:
+        result["recommended_method"] = "ielevator"
+    elif result["dpapi_available"]:
+        result["recommended_method"] = "dpapi"
+    else:
+        result["recommended_method"] = "none"
+    
     return result
+
+
+def get_opera_cookies_via_cdp() -> list[dict]:
+    """
+    Get decrypted Opera cookies using Chrome DevTools Protocol.
+    
+    This is the recommended method for Opera with ABE.
+    
+    Returns:
+        List of cookie dictionaries with decrypted values
+    """
+    try:
+        from .app_bound_encryption import CDPCookieExtractor
+        
+        opera_path = _get_opera_exe_path()
+        if not opera_path:
+            logger.warning("Opera executable not found for CDP extraction")
+            return []
+        
+        user_data_dir = _get_opera_user_data_dir()
+        
+        with CDPCookieExtractor(opera_path, user_data_dir) as extractor:
+            return extractor.get_all_cookies()
+            
+    except Exception as e:
+        logger.error(f"Opera CDP extraction failed: {e}")
+        return []
 
 
 def _get_opera_version() -> Optional[str]:

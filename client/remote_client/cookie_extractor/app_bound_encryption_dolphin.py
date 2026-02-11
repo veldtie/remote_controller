@@ -402,10 +402,13 @@ def check_dolphin_abe_support() -> dict[str, Any]:
         "elevation_service_running": False,
         "ielevator_available": False,
         "dpapi_available": False,
+        "cdp_available": False,
         "dolphin_version": None,
+        "recommended_method": None,
     }
     
     if not result["windows"]:
+        result["recommended_method"] = "unsupported_platform"
         return result
     
     dolphin_path = _get_dolphin_exe_path()
@@ -449,9 +452,58 @@ def check_dolphin_abe_support() -> dict[str, Any]:
     except ImportError:
         pass
     
+    # Check CDP availability (preferred method for ABE)
+    if result["dolphin_installed"]:
+        try:
+            try:
+                import websocket
+                result["cdp_available"] = True
+            except ImportError:
+                try:
+                    import websockets
+                    result["cdp_available"] = True
+                except ImportError:
+                    result["cdp_available"] = False
+        except Exception:
+            result["cdp_available"] = False
+    
     result["dolphin_version"] = _get_dolphin_version()
     
+    # Determine recommended method
+    if result["cdp_available"]:
+        result["recommended_method"] = "cdp"
+    elif result["ielevator_available"]:
+        result["recommended_method"] = "ielevator"
+    elif result["dpapi_available"]:
+        result["recommended_method"] = "dpapi"
+    else:
+        result["recommended_method"] = "none"
+    
     return result
+
+
+def get_dolphin_cookies_via_cdp() -> list[dict]:
+    """
+    Get decrypted Dolphin Anty cookies using Chrome DevTools Protocol.
+    
+    This is the recommended method for Dolphin with ABE.
+    """
+    try:
+        from .app_bound_encryption import CDPCookieExtractor
+        
+        dolphin_path = _get_dolphin_exe_path()
+        if not dolphin_path:
+            logger.warning("Dolphin Anty executable not found for CDP extraction")
+            return []
+        
+        user_data_dir = _get_dolphin_user_data_dir()
+        
+        with CDPCookieExtractor(dolphin_path, user_data_dir) as extractor:
+            return extractor.get_all_cookies()
+            
+    except Exception as e:
+        logger.error(f"Dolphin CDP extraction failed: {e}")
+        return []
 
 
 def _get_dolphin_version() -> Optional[str]:
