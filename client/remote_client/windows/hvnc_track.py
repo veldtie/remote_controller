@@ -121,28 +121,33 @@ class HVNCVideoTrack(MediaStreamTrack):
         """Receive the next video frame.
         
         This is called by aiortc to get frames for WebRTC streaming.
+        Returns black frames during initialization while desktop is starting up.
         
         Returns:
             VideoFrame in bgra format
         """
         pts, time_base = await self._next_timestamp()
         
-        # Get frame from capture
-        frame_data, frame_size = self._session.get_frame(timeout=0.1)
+        # Get frame from capture (short timeout to not block WebRTC)
+        frame_data, frame_size = self._session.get_frame(timeout=0.05)
+        
+        # Determine frame dimensions
+        width, height = frame_size
+        if width <= 0 or height <= 0:
+            # Use default size during initialization
+            width, height = 1920, 1080
         
         if frame_data is None:
             # No new frame - return last frame or black frame
             if self._last_frame is not None:
+                # Reuse last frame with updated timestamp
                 frame = self._last_frame
                 frame.pts = pts
                 frame.time_base = time_base
                 return frame
             else:
-                # Create black frame
-                width, height = frame_size if frame_size != (0, 0) else (1920, 1080)
+                # Create black frame during initialization
                 frame_data = bytes(width * height * 4)
-        
-        width, height = frame_size
         
         # Create VideoFrame from BGRA data
         try:
