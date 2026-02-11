@@ -381,6 +381,14 @@ class HVNCSessionWrapper:
         
         self._input_blocked = False
         
+        # Register session with HVNCActions for remote control
+        try:
+            from .hvnc_actions import get_hvnc_actions
+            get_hvnc_actions().set_session(self._session)
+            logger.info("HVNCActions linked to session")
+        except Exception as e:
+            logger.warning("Failed to link HVNCActions: %s", e)
+        
         logger.info("HVNCSessionWrapper initialized")
     
     @property

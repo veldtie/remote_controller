@@ -144,6 +144,8 @@ class LocalBrowserManager:
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-sync",
+                "--window-position=100,100",  # Position window on visible area
+                "--window-size=1280,800",      # Set reasonable window size
             ])
         elif browser_lower == "firefox":
             # Firefox

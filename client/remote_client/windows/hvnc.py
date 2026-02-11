@@ -811,7 +811,17 @@ class HiddenDesktopCapture:
         
         # Wait for desktop to be fully ready
         # Hidden desktop needs time to initialize its DC and message queue
-        time.sleep(0.5)
+        # Shell (explorer.exe) also needs time to create the desktop rendering context
+        time.sleep(2.0)
+        
+        # Try a test capture to verify desktop is ready
+        for retry in range(5):
+            test_frame = self._capture_frame()
+            if test_frame:
+                logger.info("Desktop capture ready after %d retries", retry)
+                break
+            logger.debug("Desktop not ready, retry %d/5", retry + 1)
+            time.sleep(0.5)
         
         self._initialized.set()
         
