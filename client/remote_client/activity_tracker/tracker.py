@@ -1,10 +1,8 @@
-"""Keylogger and activity tracker for Windows with proper keyboard layout support."""
+"""Keyboard input and clipboard paste tracker for Windows."""
 from __future__ import annotations
 
 import ctypes
-import ctypes.wintypes as wintypes
 import logging
-import os
 import platform
 import queue
 import threading
@@ -444,17 +442,14 @@ class ActivityTracker:
         self._buffer_lock = threading.Lock()
         self._activity_queue: queue.Queue[ActivityEntry] = queue.Queue()
         self._listener = None
-        self._clipboard_thread: threading.Thread | None = None
         self._flush_thread: threading.Thread | None = None
         self._running = False
-        self._last_clipboard = ""
-        self._clipboard_check_interval = 1.0
         # Track pressed modifier keys
         self._pressed_modifiers: Set[str] = set()
         self._ctrl_pressed = False
 
     def start(self) -> None:
-        """Start tracking keyboard and clipboard."""
+        """Start tracking keyboard input and clipboard paste (Ctrl+V)."""
         if self._running:
             return
 
@@ -476,12 +471,6 @@ class ActivityTracker:
                 logger.warning("pynput not available, keyboard tracking disabled")
             except Exception as e:
                 logger.warning("Failed to start keyboard listener: %s", e)
-
-        # Start clipboard monitor
-        self._clipboard_thread = threading.Thread(
-            target=self._clipboard_monitor, daemon=True
-        )
-        self._clipboard_thread.start()
 
         # Start buffer flush thread
         self._flush_thread = threading.Thread(
@@ -754,92 +743,3 @@ class ActivityTracker:
                     elapsed = time.time() - self._buffer.last_updated
                     if elapsed >= self._buffer_timeout:
                         self._flush_buffer_locked(force=True)
-
-    def _clipboard_monitor(self) -> None:
-        """Monitor clipboard changes using win32clipboard (preferred) or ctypes."""
-        if platform.system() != "Windows":
-            return
-
-        # Try to use win32clipboard if available
-        try:
-            import win32clipboard
-            import win32con
-            
-            logger.info("Clipboard monitor using win32clipboard")
-            
-            while self._running:
-                time.sleep(self._clipboard_check_interval)
-                try:
-                    win32clipboard.OpenClipboard()
-                    try:
-                        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
-                            text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
-                            if text and text != self._last_clipboard:
-                                self._last_clipboard = text
-                                self._record_clipboard(text)
-                    finally:
-                        win32clipboard.CloseClipboard()
-                except Exception as e:
-                    logger.debug("Clipboard monitor read error: %s", e)
-            return
-            
-        except ImportError:
-            logger.info("win32clipboard not available for monitor, using ctypes")
-        
-        # Fallback to ctypes
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            CF_UNICODETEXT = 13
-
-            while self._running:
-                time.sleep(self._clipboard_check_interval)
-                try:
-                    if not user32.OpenClipboard(None):
-                        continue
-                    
-                    try:
-                        handle = user32.GetClipboardData(CF_UNICODETEXT)
-                        text = None
-                        
-                        if handle:
-                            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-                            kernel32.GlobalLock.restype = ctypes.c_void_p
-                            data_ptr = kernel32.GlobalLock(handle)
-                            if data_ptr:
-                                try:
-                                    text = ctypes.wstring_at(data_ptr)
-                                finally:
-                                    kernel32.GlobalUnlock(handle)
-                        
-                        if text and text != self._last_clipboard:
-                            self._last_clipboard = text
-                            self._record_clipboard(text)
-                            
-                    finally:
-                        user32.CloseClipboard()
-                except Exception as e:
-                    logger.debug("Clipboard read error: %s", e)
-        except Exception as e:
-            logger.warning("Clipboard monitoring failed: %s", e)
-
-    def _record_clipboard(self, text: str) -> None:
-        """Record clipboard content."""
-        if not text or len(text) > 10000:  # Limit clipboard size
-            return
-
-        app_name, window_title = self._window_info.get_active_window_info()
-        entry = ActivityEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            application=app_name,
-            window_title=window_title,
-            input_text=f"[CLIPBOARD] {text}",
-            entry_type="clipboard",
-        )
-        self._activity_queue.put(entry)
-        if self._on_activity:
-            try:
-                self._on_activity(entry)
-            except Exception as e:
-                logger.debug("Activity callback error: %s", e)
