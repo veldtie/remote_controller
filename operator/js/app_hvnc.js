@@ -430,11 +430,25 @@
   }
 
   /**
-   * Show HVNC popup window - opens as a separate window
-   * Uses QWebChannel for PyQt6 desktop app, window.open for browser
+   * Show HVNC popup window - uses the new integrated popup
+   * Falls back to QWebChannel for PyQt6 desktop app, or external window for browser
    */
   function showHvncWindow() {
-    // Check if window already exists and is open
+    // Use integrated hvncPopup if available
+    if (remdesk.hvncPopup && remdesk.hvncPopup.open) {
+      remdesk.hvncPopup.open();
+      hvncState.windowOpen = true;
+      
+      // Start HVNC if not already active
+      if (!hvncState.active) {
+        startHvnc();
+      } else {
+        startPreview();
+      }
+      return;
+    }
+    
+    // Check if external window already exists and is open
     if (hvncExternalWindow && !hvncExternalWindow.closed) {
       hvncExternalWindow.focus();
       return;
@@ -502,6 +516,12 @@
    * Hide/close HVNC popup window
    */
   function hideHvncWindow() {
+    // Close integrated popup if available
+    if (remdesk.hvncPopup && remdesk.hvncPopup.close) {
+      remdesk.hvncPopup.close();
+    }
+    
+    // Close external window if open
     if (hvncExternalWindow && !hvncExternalWindow.closed) {
       hvncExternalWindow.close();
     }

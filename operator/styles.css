@@ -1944,3 +1944,282 @@ body.dual-stream-pip #hvncScreen {
   z-index: 100;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
+
+/* ===============================================
+   HVNC Popup Window (Full Interactive)
+   =============================================== */
+.hvnc-popup-window {
+  position: fixed;
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #1a2535 0%, #0d1520 100%);
+  border: 1px solid rgba(0, 150, 255, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 50px rgba(0, 100, 255, 0.2);
+  overflow: hidden;
+  min-width: 400px;
+  min-height: 300px;
+}
+
+.hvnc-popup-window.minimized {
+  height: auto !important;
+}
+
+.hvnc-popup-window.minimized .hvnc-popup-body,
+.hvnc-popup-window.minimized .hvnc-popup-statusbar,
+.hvnc-popup-window.minimized .hvnc-popup-resize {
+  display: none;
+}
+
+.hvnc-popup-window.maximized {
+  border-radius: 0;
+}
+
+.hvnc-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, rgba(0, 120, 200, 0.4) 0%, rgba(0, 60, 120, 0.3) 100%);
+  border-bottom: 1px solid rgba(0, 150, 255, 0.4);
+  cursor: move;
+  user-select: none;
+}
+
+.hvnc-popup-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.hvnc-popup-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.hvnc-popup-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.hvnc-popup-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.hvnc-popup-btn.close {
+  background: rgba(255, 60, 60, 0.2);
+  border-color: rgba(255, 60, 60, 0.4);
+  color: #ff6b6b;
+}
+
+.hvnc-popup-btn.close:hover {
+  background: rgba(255, 60, 60, 0.5);
+  color: #fff;
+}
+
+.hvnc-popup-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hvnc-popup-screen-frame {
+  flex: 1;
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: crosshair;
+  outline: none;
+}
+
+.hvnc-popup-screen-frame:focus {
+  box-shadow: inset 0 0 0 2px rgba(0, 150, 255, 0.5);
+}
+
+.hvnc-popup-screen-frame video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+}
+
+.hvnc-popup-screen-frame video.active {
+  display: block;
+}
+
+.hvnc-popup-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.4);
+  gap: 12px;
+  pointer-events: none;
+}
+
+.hvnc-popup-placeholder.hidden {
+  display: none;
+}
+
+.hvnc-popup-icon {
+  font-size: 56px;
+  opacity: 0.5;
+}
+
+.hvnc-popup-text {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.hvnc-popup-hint {
+  font-size: 12px;
+  opacity: 0.4;
+}
+
+/* HVNC Popup Control Panel */
+.hvnc-popup-control-panel {
+  width: 160px;
+  background: linear-gradient(180deg, rgba(20, 45, 80, 0.95) 0%, rgba(10, 30, 60, 0.98) 100%);
+  border-left: 1px solid rgba(0, 150, 255, 0.4);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.hvnc-popup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hvnc-popup-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(30, 70, 120, 0.7) 0%, rgba(20, 50, 90, 0.7) 100%);
+  border: 1px solid rgba(0, 130, 255, 0.5);
+  border-radius: 5px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.hvnc-popup-action-btn:hover {
+  background: linear-gradient(180deg, rgba(40, 90, 150, 0.85) 0%, rgba(30, 70, 120, 0.85) 100%);
+  border-color: rgba(0, 160, 255, 0.7);
+  transform: translateX(2px);
+}
+
+.hvnc-popup-action-btn:active {
+  transform: scale(0.98);
+}
+
+.hvnc-popup-action-btn span:first-child {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+}
+
+/* HVNC Popup Settings */
+.hvnc-popup-settings {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 150, 255, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hvnc-popup-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hvnc-popup-setting label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.hvnc-popup-setting input[type="range"] {
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 100, 200, 0.4);
+  border-radius: 2px;
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.hvnc-popup-setting input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(180deg, #0099ff 0%, #0077cc 100%);
+  border: 1px solid rgba(0, 160, 255, 0.7);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.hvnc-popup-setting input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.hvnc-popup-setting input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(180deg, #0099ff 0%, #0077cc 100%);
+  border: 1px solid rgba(0, 160, 255, 0.7);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* HVNC Popup Status Bar */
+.hvnc-popup-statusbar {
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(0, 150, 255, 0.3);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* HVNC Popup Resize Handle */
+.hvnc-popup-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 150, 255, 0.4) 50%);
+}
