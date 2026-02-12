@@ -297,23 +297,33 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         self.i18n = i18n
         self.payload = payload or {}
 
+        self.setObjectName("AbeDiagnosticsDialog")
         self.setWindowTitle(self.i18n.t("abe_diagnostics_title"))
         self.setMinimumWidth(520)
         self.setMinimumHeight(600)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
         title = QtWidgets.QLabel(self.i18n.t("abe_diagnostics_title"))
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        title.setObjectName("AbeDialogTitle")
         layout.addWidget(title)
 
         # Scroll area for content
         scroll = QtWidgets.QScrollArea()
+        scroll.setObjectName("AbeDiagnosticsScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setAutoFillBackground(False)
+        scroll.viewport().setObjectName("AbeDiagnosticsViewport")
+        scroll.viewport().setAutoFillBackground(False)
         scroll_content = QtWidgets.QWidget()
+        scroll_content.setObjectName("AbeDiagnosticsContent")
+        scroll_content.setAutoFillBackground(False)
         scroll_layout = QtWidgets.QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(4, 4, 4, 4)
         scroll_layout.setSpacing(16)
 
         # === ABE Status Section ===
@@ -350,9 +360,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(self._separator())
 
         # === Passwords Section ===
-        passwords_title = QtWidgets.QLabel(self.i18n.t("abe_diag_passwords_title"))
-        passwords_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-        scroll_layout.addWidget(passwords_title)
+        scroll_layout.addWidget(self._section_title("abe_diag_passwords_title"))
 
         passwords_form = QtWidgets.QFormLayout()
         passwords_form.setHorizontalSpacing(20)
@@ -378,9 +386,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(self._separator())
 
         # === Payment Methods Section ===
-        payment_title = QtWidgets.QLabel(self.i18n.t("abe_diag_payment_title"))
-        payment_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-        scroll_layout.addWidget(payment_title)
+        scroll_layout.addWidget(self._section_title("abe_diag_payment_title"))
 
         payment_form = QtWidgets.QFormLayout()
         payment_form.setHorizontalSpacing(20)
@@ -406,9 +412,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(self._separator())
 
         # === Tokens Section ===
-        tokens_title = QtWidgets.QLabel(self.i18n.t("abe_diag_tokens_title"))
-        tokens_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-        scroll_layout.addWidget(tokens_title)
+        scroll_layout.addWidget(self._section_title("abe_diag_tokens_title"))
 
         tokens_form = QtWidgets.QFormLayout()
         tokens_form.setHorizontalSpacing(20)
@@ -442,9 +446,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(self._separator())
 
         # === Fingerprint Section ===
-        fingerprint_title = QtWidgets.QLabel(self.i18n.t("abe_diag_fingerprint_title"))
-        fingerprint_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-        scroll_layout.addWidget(fingerprint_title)
+        scroll_layout.addWidget(self._section_title("abe_diag_fingerprint_title"))
 
         fingerprint_form = QtWidgets.QFormLayout()
         fingerprint_form.setHorizontalSpacing(20)
@@ -468,9 +470,7 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         scroll_layout.addWidget(self._separator())
 
         # === Autofill Section ===
-        autofill_title = QtWidgets.QLabel(self.i18n.t("abe_diag_autofill_title"))
-        autofill_title.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-        scroll_layout.addWidget(autofill_title)
+        scroll_layout.addWidget(self._section_title("abe_diag_autofill_title"))
 
         autofill_form = QtWidgets.QFormLayout()
         autofill_form.setHorizontalSpacing(20)
@@ -519,9 +519,15 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
 
     def _separator(self) -> QtWidgets.QFrame:
         line = QtWidgets.QFrame()
+        line.setObjectName("AbeSeparator")
         line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: rgba(255,255,255,0.1); max-height: 1px;")
+        line.setFixedHeight(1)
         return line
+
+    def _section_title(self, key: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(self.i18n.t(key))
+        label.setObjectName("CardSectionTitle")
+        return label
 
     def _label(self, key: str) -> QtWidgets.QLabel:
         label = QtWidgets.QLabel(self.i18n.t(key))
@@ -536,16 +542,17 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
 
     def _format_bool(self, value: object) -> tuple[str, str]:
         if value is True:
-            return self.i18n.t("proxy_bool_yes"), "#37d67a"
+            return self.i18n.t("proxy_bool_yes"), "ok"
         if value is False:
-            return self.i18n.t("proxy_bool_no"), "#ff6b6b"
-        return "--", "#9fb0c3"
+            return self.i18n.t("proxy_bool_no"), "bad"
+        return "--", "na"
 
     def _add_bool_row(self, form: QtWidgets.QFormLayout, key: str, value: object) -> None:
         label = self._label(key)
-        text, color = self._format_bool(value)
+        text, state = self._format_bool(value)
         value_label = self._value(text)
-        value_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+        value_label.setObjectName("AbeBoolValue")
+        value_label.setProperty("state", state)
         form.addRow(label, value_label)
 
     def _resolve_version_text(self) -> str:
