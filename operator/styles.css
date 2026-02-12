@@ -1947,6 +1947,7 @@ body.dual-stream-pip #hvncScreen {
 
 /* ===============================================
    HVNC Popup Window (Full Interactive)
+   For PyQt WebView: constrained to viewport bounds
    =============================================== */
 .hvnc-popup-window {
   position: fixed;
@@ -1960,6 +1961,9 @@ body.dual-stream-pip #hvncScreen {
   overflow: hidden;
   min-width: 400px;
   min-height: 300px;
+  /* Constrain to viewport - critical for PyQt WebView */
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - 20px);
 }
 
 .hvnc-popup-window.minimized {

@@ -356,27 +356,59 @@
   }
 
   /**
-   * Get cursor position relative to HVNC video
+   * Get cursor position relative to HVNC video/image
+   * Works with both video stream mode and static image mode
    */
   function getHvncCursorPosition(event, screenFrame) {
     const video = hvncPopupDom?.video;
-    if (!video) {
-      return { x: 0, y: 0 };
+    const img = hvncPopupDom?.img;
+    
+    // Default resolution (HVNC desktop resolution)
+    let nativeWidth = 1920;
+    let nativeHeight = 1080;
+    
+    // Try to get actual dimensions from video or image
+    if (video && video.style.display !== "none" && video.videoWidth > 0) {
+      nativeWidth = video.videoWidth;
+      nativeHeight = video.videoHeight;
+    } else if (img && img.style.display !== "none" && img.naturalWidth > 0) {
+      nativeWidth = img.naturalWidth;
+      nativeHeight = img.naturalHeight;
     }
 
     const rect = screenFrame.getBoundingClientRect();
-    const videoWidth = video.videoWidth || 1920;
-    const videoHeight = video.videoHeight || 1080;
     
-    const scaleX = videoWidth / rect.width;
-    const scaleY = videoHeight / rect.height;
+    // Calculate actual displayed area (respecting object-fit: contain)
+    const displayedWidth = rect.width;
+    const displayedHeight = rect.height;
+    const displayAspect = displayedWidth / displayedHeight;
+    const nativeAspect = nativeWidth / nativeHeight;
     
-    const x = Math.round((event.clientX - rect.left) * scaleX);
-    const y = Math.round((event.clientY - rect.top) * scaleY);
+    let offsetX = 0;
+    let offsetY = 0;
+    let actualWidth = displayedWidth;
+    let actualHeight = displayedHeight;
+    
+    // Calculate offset due to object-fit: contain
+    if (displayAspect > nativeAspect) {
+      // Display is wider - black bars on sides
+      actualWidth = displayedHeight * nativeAspect;
+      offsetX = (displayedWidth - actualWidth) / 2;
+    } else {
+      // Display is taller - black bars on top/bottom
+      actualHeight = displayedWidth / nativeAspect;
+      offsetY = (displayedHeight - actualHeight) / 2;
+    }
+    
+    const scaleX = nativeWidth / actualWidth;
+    const scaleY = nativeHeight / actualHeight;
+    
+    const x = Math.round((event.clientX - rect.left - offsetX) * scaleX);
+    const y = Math.round((event.clientY - rect.top - offsetY) * scaleY);
     
     return {
-      x: Math.max(0, Math.min(videoWidth, x)),
-      y: Math.max(0, Math.min(videoHeight, y)),
+      x: Math.max(0, Math.min(nativeWidth, x)),
+      y: Math.max(0, Math.min(nativeHeight, y)),
     };
   }
 
@@ -605,33 +637,88 @@
   // ===== Window Management =====
 
   /**
+   * Constrain popup position to stay within viewport bounds (for PyQt WebView)
+   */
+  function constrainPopupToViewport() {
+    const winWidth = window.innerWidth;
+    const winHeight = window.innerHeight;
+    const padding = 10; // Keep some padding from edges
+    
+    // Ensure popup doesn't exceed viewport width
+    if (hvncPopupState.size.width > winWidth - padding * 2) {
+      hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, winWidth - padding * 2);
+    }
+    
+    // Ensure popup doesn't exceed viewport height
+    if (hvncPopupState.size.height > winHeight - padding * 2) {
+      hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, winHeight - padding * 2);
+    }
+    
+    // Ensure popup doesn't go off left edge
+    if (hvncPopupState.position.x < padding) {
+      hvncPopupState.position.x = padding;
+    }
+    
+    // Ensure popup doesn't go off right edge
+    if (hvncPopupState.position.x + hvncPopupState.size.width > winWidth - padding) {
+      hvncPopupState.position.x = Math.max(padding, winWidth - hvncPopupState.size.width - padding);
+    }
+    
+    // Ensure popup doesn't go off top edge (allow title bar to show)
+    if (hvncPopupState.position.y < padding) {
+      hvncPopupState.position.y = padding;
+    }
+    
+    // Ensure popup doesn't go off bottom edge
+    if (hvncPopupState.position.y + hvncPopupState.size.height > winHeight - padding) {
+      hvncPopupState.position.y = Math.max(padding, winHeight - hvncPopupState.size.height - padding);
+    }
+  }
+
+  /**
    * Open HVNC Popup Window
    */
   function openHvncPopup() {
     createHvncPopupWindow();
     
-    if (!hvncPopupDom?.window) return;
+    if (!hvncPopupDom?.window) {
+      console.error("HVNC Popup: window element not found after creation");
+      return;
+    }
     
     hvncPopupState.isOpen = true;
     hvncPopupDom.window.style.display = "flex";
     
-    // Center window if first open
+    // Get viewport dimensions
+    const winWidth = window.innerWidth;
+    const winHeight = window.innerHeight;
+    
+    // Auto-size popup based on viewport (max 80% of viewport)
+    const maxWidth = Math.min(hvncPopupState.size.width, winWidth * 0.8);
+    const maxHeight = Math.min(hvncPopupState.size.height, winHeight * 0.8);
+    hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, maxWidth);
+    hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, maxHeight);
+    
+    // Center window if first open or re-center if position is default
     if (hvncPopupState.position.x === 100 && hvncPopupState.position.y === 100) {
-      const winWidth = window.innerWidth;
-      const winHeight = window.innerHeight;
-      hvncPopupState.position.x = Math.max(50, (winWidth - hvncPopupState.size.width) / 2);
-      hvncPopupState.position.y = Math.max(50, (winHeight - hvncPopupState.size.height) / 2);
+      hvncPopupState.position.x = Math.max(10, (winWidth - hvncPopupState.size.width) / 2);
+      hvncPopupState.position.y = Math.max(10, (winHeight - hvncPopupState.size.height) / 2);
     }
+    
+    // Constrain to viewport (important for PyQt WebView)
+    constrainPopupToViewport();
     
     applyHvncPopupPosition();
     applyHvncPopupSize();
     
     // Focus the screen frame for keyboard input
     setTimeout(() => {
-      hvncPopupDom?.screenFrame?.focus();
+      if (hvncPopupDom?.screenFrame) {
+        hvncPopupDom.screenFrame.focus();
+      }
     }, 100);
     
-    console.info("HVNC Popup opened");
+    console.info("HVNC Popup opened, size:", hvncPopupState.size, "position:", hvncPopupState.position);
   }
 
   /**
@@ -714,19 +801,27 @@
       hvncPopupState.position.x = e.clientX - hvncPopupState.dragOffset.x;
       hvncPopupState.position.y = e.clientY - hvncPopupState.dragOffset.y;
       
-      // Allow moving outside window bounds (only keep title bar grabbable)
-      hvncPopupState.position.y = Math.max(-30, hvncPopupState.position.y);
+      // Constrain to viewport (for PyQt WebView - don't allow popup to go outside)
+      constrainPopupToViewport();
       
       applyHvncPopupPosition();
     }
     
     if (hvncPopupState.isResizing) {
       const rect = hvncPopupDom.window.getBoundingClientRect();
-      const newWidth = Math.max(hvncPopupState.minSize.width, e.clientX - rect.left);
-      const newHeight = Math.max(hvncPopupState.minSize.height, e.clientY - rect.top);
+      let newWidth = Math.max(hvncPopupState.minSize.width, e.clientX - rect.left);
+      let newHeight = Math.max(hvncPopupState.minSize.height, e.clientY - rect.top);
       
-      hvncPopupState.size.width = newWidth;
-      hvncPopupState.size.height = newHeight;
+      // Constrain resize to viewport bounds
+      const winWidth = window.innerWidth;
+      const winHeight = window.innerHeight;
+      const padding = 10;
+      
+      newWidth = Math.min(newWidth, winWidth - hvncPopupState.position.x - padding);
+      newHeight = Math.min(newHeight, winHeight - hvncPopupState.position.y - padding);
+      
+      hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, newWidth);
+      hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, newHeight);
       
       applyHvncPopupSize();
     }

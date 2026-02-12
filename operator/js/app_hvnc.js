@@ -342,15 +342,24 @@
     }
 
     // Update integrated popup window (hvncPopup)
-    if (remdesk.hvncPopup && imageData) {
-      remdesk.hvncPopup.updateFrame(imageData);
-    } else if (remdesk.hvncPopup && !imageData) {
-      remdesk.hvncPopup.showPlaceholder();
+    if (remdesk.hvncPopup) {
+      if (imageData) {
+        // Pass raw base64 data without data: prefix - popup will add it
+        const rawData = imageData.startsWith("data:") 
+          ? imageData.replace(/^data:image\/\w+;base64,/, "")
+          : imageData;
+        remdesk.hvncPopup.updateFrame(rawData);
+      } else {
+        remdesk.hvncPopup.showPlaceholder();
+      }
     }
 
-    // Send frame to external HVNC window
+    // Send frame to external HVNC window (browser popup mode)
     if (hvncExternalWindow && !hvncExternalWindow.closed && imageData) {
-      sendToHvncWindow("frame", { frame: imageData });
+      const rawData = imageData.startsWith("data:") 
+        ? imageData.replace(/^data:image\/\w+;base64,/, "")
+        : imageData;
+      sendToHvncWindow("frame", { frame: rawData });
     }
   }
 

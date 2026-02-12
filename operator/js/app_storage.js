@@ -236,11 +236,14 @@
     }
     
     // In HVNC mode, launch app on HVNC desktop instead of main desktop
-    const isHvncMode = state.sessionMode === "hvnc";
+    // Check BOTH sessionMode AND actual hvnc.state.active (HVNC can be active without mode change)
+    const isHvncModeSet = state.sessionMode === "hvnc";
+    const isHvncActive = remdesk.hvnc && remdesk.hvnc.state && remdesk.hvnc.state.active;
+    const shouldUseHvnc = isHvncModeSet || isHvncActive;
     
-    if (isHvncMode && remdesk.hvnc) {
+    if (shouldUseHvnc && remdesk.hvnc) {
       // Check if HVNC is active
-      if (!remdesk.hvnc.state.active) {
+      if (!isHvncActive) {
         remdesk.setAppStatus("Start HVNC first", "warn");
         return;
       }
