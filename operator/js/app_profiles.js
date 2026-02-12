@@ -240,9 +240,9 @@
     let html = '';
     for (const browser of profileState.availableBrowsers) {
       const downloaded = profileState.downloadedProfiles[browser.id];
-      const downloadedInfo = downloaded 
-        ? `<span class="profile-downloaded">✓ Downloaded (${formatSize(downloaded.size)})</span>`
-        : '';
+      const downloadedInfo = downloaded
+        ? `<span class="profile-downloaded">Downloaded (${formatSize(downloaded.size)})</span>`
+        : "";
       
       html += `
         <div class="profile-item" data-browser="${browser.id}">
@@ -252,9 +252,7 @@
             ${downloadedInfo}
           </div>
           <div class="profile-actions">
-            <button class="profile-btn download-btn" onclick="remdesk.profiles.export('${browser.id}')" title="Download profile">
-              ⬇️ Download
-            </button>
+            <button class="profile-btn download-btn" onclick="remdesk.profiles.export('${browser.id}')" title="Download profile">Download</button>
           </div>
         </div>
       `;
@@ -288,10 +286,10 @@
       <div class="profile-dialog-content">
         <div class="profile-header">
           <span class="profile-title">Browser Profiles</span>
-          <button class="profile-close" onclick="remdesk.profiles.close()">×</button>
+          <button class="profile-close" onclick="remdesk.profiles.close()">&times;</button>
         </div>
         <div class="profile-toolbar">
-          <button class="profile-btn" onclick="remdesk.profiles.refresh()">🔄 Refresh</button>
+          <button class="profile-btn" onclick="remdesk.profiles.refresh()">Refresh</button>
           <span id="profileStatus" class="profile-status"></span>
         </div>
         <div class="profile-list" id="profileList">
@@ -302,143 +300,6 @@
         </div>
       </div>
     `;
-
-    // Add styles
-    const style = document.createElement("style");
-    style.textContent = `
-      .profile-dialog {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0,0,0,0.7);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 10001;
-      }
-      .profile-dialog-content {
-        background: #1e1e1e;
-        border: 1px solid #333;
-        border-radius: 8px;
-        width: 500px;
-        max-height: 80vh;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      }
-      .profile-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 12px 16px;
-        background: #2d2d2d;
-        border-bottom: 1px solid #333;
-        border-radius: 8px 8px 0 0;
-      }
-      .profile-title {
-        font-weight: bold;
-        color: #fff;
-      }
-      .profile-close {
-        background: none;
-        border: none;
-        color: #f55;
-        font-size: 20px;
-        cursor: pointer;
-        padding: 0 4px;
-      }
-      .profile-close:hover {
-        color: #ff8888;
-      }
-      .profile-toolbar {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 16px;
-        border-bottom: 1px solid #333;
-      }
-      .profile-btn {
-        background: #333;
-        color: #fff;
-        border: none;
-        padding: 6px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 13px;
-      }
-      .profile-btn:hover {
-        background: #444;
-      }
-      .profile-status {
-        color: #888;
-        font-size: 12px;
-      }
-      .profile-status.ok { color: #0f0; }
-      .profile-status.error { color: #f55; }
-      .profile-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 8px;
-      }
-      .profile-empty {
-        text-align: center;
-        color: #666;
-        padding: 20px;
-      }
-      .profile-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 12px;
-        background: #2a2a2a;
-        border-radius: 6px;
-        margin-bottom: 8px;
-      }
-      .profile-item:hover {
-        background: #333;
-      }
-      .profile-info {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .profile-name {
-        color: #fff;
-        font-weight: 500;
-      }
-      .profile-type {
-        color: #888;
-        font-size: 11px;
-        text-transform: uppercase;
-      }
-      .profile-downloaded {
-        color: #0f0;
-        font-size: 11px;
-      }
-      .profile-actions {
-        display: flex;
-        gap: 8px;
-      }
-      .download-btn {
-        background: #0066cc;
-      }
-      .download-btn:hover {
-        background: #0077ee;
-      }
-      .profile-footer {
-        padding: 12px 16px;
-        border-top: 1px solid #333;
-        text-align: center;
-      }
-      .profile-footer p {
-        color: #666;
-        font-size: 12px;
-        margin: 0;
-      }
-    `;
-    document.head.appendChild(style);
     document.body.appendChild(profileDialog);
 
     // Get references
@@ -505,3 +366,4 @@
     initProfiles();
   }
 })();
+

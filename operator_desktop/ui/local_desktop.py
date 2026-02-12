@@ -215,7 +215,7 @@ class LocalDesktopWindow(QtWidgets.QMainWindow):
             "opera": "Opera",
         }
 
-        self.setWindowTitle("Local Desktop - RemDesk")
+        self.setWindowTitle("Local Desktop - OBNULENIE")
         self.setMinimumSize(760, 520)
         self.resize(980, 680)
 

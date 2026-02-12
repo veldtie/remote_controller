@@ -243,6 +243,11 @@ def build_stylesheet(theme: Theme) -> str:
     QLabel#Muted {{
         color: {c["muted"]};
     }}
+    QLabel#ProxyBodyLarge {{
+        color: {c["text"]};
+        font-size: 14px;
+        line-height: 1.45;
+    }}
     QLabel#TagHint {{
         color: {c["muted"]};
         font-size: 13px;
@@ -536,6 +541,34 @@ def build_stylesheet(theme: Theme) -> str:
         background: transparent;
         border: none;
         padding: 0;
+    }}
+    QProgressBar {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid {c["border"]};
+        border-radius: 10px;
+        text-align: center;
+        color: {c["text"]};
+    }}
+    QProgressBar::chunk {{
+        margin: 1px;
+        border-radius: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["accent"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="idle"]::chunk {{
+        background: rgba(255, 255, 255, 0.22);
+    }}
+    QProgressBar[status="active"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["accent"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="ok"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["good"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="error"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["danger"]}, stop:1 {c["warn"]});
     }}
     QTableWidget {{
         background: transparent;

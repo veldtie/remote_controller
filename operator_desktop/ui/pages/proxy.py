@@ -75,6 +75,9 @@ class ProxyPage(QtWidgets.QWidget):
         table_layout.setContentsMargins(12, 12, 12, 12)
         table_layout.setSpacing(8)
         self.table = QtWidgets.QTableWidget(0, 7)
+        table_font = QtGui.QFont(self.font())
+        table_font.setPointSize(max(table_font.pointSize() + 1, 13))
+        self.table.setFont(table_font)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -88,7 +91,11 @@ class ProxyPage(QtWidgets.QWidget):
         header_view.setMinimumSectionSize(52)
         for index in range(self.table.columnCount()):
             header_view.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table.verticalHeader().setDefaultSectionSize(52)
+        self.table.setStyleSheet(
+            "QTableWidget { font-size: 13px; }"
+            "QHeaderView::section { font-size: 12px; font-weight: 600; }"
+        )
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         table_layout.addWidget(self.table)
         self.table_overflow_hint = QtWidgets.QLabel("Horizontal scroll indicates hidden columns")
@@ -193,7 +200,7 @@ class ProxyPage(QtWidgets.QWidget):
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setRowHeight(row, 46)
+            self.table.setRowHeight(row, 52)
             client_id = client.get("id", "")
             payload = self._proxy_payload(client)
 
@@ -223,12 +230,16 @@ class ProxyPage(QtWidgets.QWidget):
             actions_layout.setSpacing(6)
 
             download_button = make_button(self.i18n.t("menu_proxy_download"), "ghost")
+            download_button.setMinimumHeight(34)
+            download_button.setMinimumWidth(116)
             download_button.clicked.connect(
                 lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy")
             )
             actions_layout.addWidget(download_button)
 
             check_button = make_button(self.i18n.t("proxy_check_button"), "ghost")
+            check_button.setMinimumHeight(34)
+            check_button.setMinimumWidth(88)
             check_button.clicked.connect(
                 lambda _, c=client: self._start_proxy_check(c)
             )

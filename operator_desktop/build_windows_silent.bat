@@ -4,7 +4,7 @@ setlocal
 set "SCRIPT_DIR=%~dp0"
 set "LOG_PATH=%SCRIPT_DIR%build_silent.log"
 
-> "%LOG_PATH%" echo [RemDesk Operator] Silent build log
+> "%LOG_PATH%" echo [OBNULENIE Operator] Silent build log
 
 pushd "%SCRIPT_DIR%"
 
@@ -63,21 +63,21 @@ set "ENTRY_POINT=%SCRIPT_DIR%entrypoint.py"
 set "DATA_PATH=%SCRIPT_DIR%assets;operator_desktop\\assets"
 set "OPERATOR_DATA=%SCRIPT_DIR%..\\operator;operator"
 
-python -m PyInstaller --onefile --noconsole --name RemDeskOperator --clean --log-level WARN --add-data "%DATA_PATH%" --add-data "%OPERATOR_DATA%" --hidden-import=PyQt6.QtWebEngineWidgets --hidden-import=PyQt6.QtWebEngineCore --hidden-import=PyQt6.QtWebChannel --icon "%ICON_PATH%" "%ENTRY_POINT%" >> "%LOG_PATH%" 2>&1
+python -m PyInstaller --onefile --noconsole --name OBNULENIEOperator --clean --log-level WARN --add-data "%DATA_PATH%" --add-data "%OPERATOR_DATA%" --hidden-import=PyQt6.QtWebEngineWidgets --hidden-import=PyQt6.QtWebEngineCore --hidden-import=PyQt6.QtWebChannel --icon "%ICON_PATH%" "%ENTRY_POINT%" >> "%LOG_PATH%" 2>&1
 if errorlevel 1 (
     echo Build failed. See %LOG_PATH%
     popd
     exit /b 1
 )
 
-set "EXE_PATH=%SCRIPT_DIR%dist\\RemDeskOperator.exe"
+set "EXE_PATH=%SCRIPT_DIR%dist\\OBNULENIEOperator.exe"
 if not exist "%EXE_PATH%" (
     echo Output not found: %EXE_PATH%
     popd
     exit /b 1
 )
 
-echo Done. File: dist\\RemDeskOperator.exe
+echo Done. File: dist\\OBNULENIEOperator.exe
 
 popd
 endlocal

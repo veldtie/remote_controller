@@ -1,4 +1,4 @@
-# RemDesk Operator Desktop Redesign Guide (Dark, macOS-inspired)
+# OBNULENIE Operator Desktop Redesign Guide (Dark, macOS-inspired)
 
 ## Visual direction
 - Dark-only UI.
@@ -63,4 +63,3 @@ Source of truth: `operator/styles.css`.
 - `operator_desktop/ui/pages/proxy.py`
 - `operator_desktop/ui/pages/instructions.py`
 - `operator_desktop/ui/local_desktop.py`
-

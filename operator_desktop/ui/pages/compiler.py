@@ -38,31 +38,39 @@ class BuildOptions:
 
 class BuilderWorker(QtCore.QThread):
     log_line = QtCore.pyqtSignal(str)
+    progress = QtCore.pyqtSignal(int)
     finished = QtCore.pyqtSignal(bool, str, str)
 
     def __init__(self, options: BuildOptions):
         super().__init__()
         self.options = options
         self._build_python: Optional[str] = None
+        self._packaging_active = False
+        self._packaging_progress = 0
 
     def run(self) -> None:
+        self._set_progress(5)
         build_python = self._resolve_build_python()
         if not build_python:
             self.finished.emit(False, "", "deps")
             return
         self.log_line.emit(f"Using build python: {build_python}")
+        self._set_progress(20)
         if not self._ensure_build_tooling(build_python):
             self.finished.emit(False, "", "deps")
             return
+        self._set_progress(38)
         if not self._ensure_build_dependencies(build_python):
             self.finished.emit(False, "", "deps")
             return
+        self._set_progress(56)
 
         self._cleanup_output_dir()
         add_data_args, temp_dir = self._build_add_data_args()
         paths_args = self._build_paths_args()
         collect_args = self._build_collect_args()
         exclude_args = self._build_exclude_args()
+        self._set_progress(68)
         cmd = [
             build_python,
             "-m",
@@ -86,13 +94,18 @@ class BuilderWorker(QtCore.QThread):
 
         self.log_line.emit(" ".join(cmd))
         try:
+            self._packaging_active = True
+            self._packaging_progress = 68
             exit_code = self._run_command(cmd, cwd=self.options.source_dir)
+            self._packaging_active = False
             if exit_code == 0:
                 output = str(self.options.output_dir / f"{self.options.output_name}.exe")
+                self._set_progress(100)
                 self.finished.emit(True, output, "")
             else:
                 self.finished.emit(False, "", "failed")
         finally:
+            self._packaging_active = False
             if temp_dir is not None:
                 temp_dir.cleanup()
 
@@ -111,8 +124,40 @@ class BuilderWorker(QtCore.QThread):
             return 1
         if process.stdout:
             for line in process.stdout:
-                self.log_line.emit(line.rstrip())
+                text = line.rstrip()
+                self.log_line.emit(text)
+                self._advance_packaging_progress(text)
         return process.wait()
+
+    def _set_progress(self, value: int) -> None:
+        clamped = max(0, min(100, int(value)))
+        self.progress.emit(clamped)
+
+    def _advance_packaging_progress(self, line: str) -> None:
+        if not self._packaging_active:
+            return
+        if self._packaging_progress >= 95:
+            return
+        normalized = line.strip().lower()
+        if not normalized:
+            return
+        boost = 1
+        if any(
+            token in normalized
+            for token in (
+                "analyzing",
+                "collecting",
+                "building",
+                "copying",
+                "writing",
+                "updating",
+                "appending",
+                "compressing",
+            )
+        ):
+            boost = 2
+        self._packaging_progress = min(95, self._packaging_progress + boost)
+        self._set_progress(self._packaging_progress)
 
     @staticmethod
     def _build_env() -> dict[str, str]:
@@ -437,6 +482,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.settings = settings
         self.logger = logger
         self.worker: Optional[BuilderWorker] = None
+        self._build_logs: list[str] = []
         self.region_actions: dict[str, QtGui.QAction] = {}
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
 
@@ -556,27 +602,29 @@ class CompilerPage(QtWidgets.QWidget):
 
         layout.addWidget(form_card)
 
+        progress_wrap = QtWidgets.QWidget()
+        progress_layout = QtWidgets.QVBoxLayout(progress_wrap)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(0)
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setMinimumHeight(14)
+        self.progress_bar.setProperty("status", "idle")
+        progress_layout.addWidget(self.progress_bar)
+        layout.addWidget(progress_wrap)
+
         actions = QtWidgets.QHBoxLayout()
         self.build_button = make_button("", "primary")
         self.build_button.clicked.connect(self.start_build)
-        self.clear_button = make_button("", "ghost")
-        self.clear_button.clicked.connect(self.clear_log)
         self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("InlineStatus")
+        self.status_label.setObjectName("Muted")
         self.status_label.setProperty("state", "warn")
+        self.status_label.setVisible(False)
         actions.addWidget(self.build_button)
-        actions.addWidget(self.clear_button)
         actions.addStretch()
-        actions.addWidget(self.status_label)
         layout.addLayout(actions)
-
-        log_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
-        log_card.setObjectName("Card")
-        log_layout = QtWidgets.QVBoxLayout(log_card)
-        self.log_output = QtWidgets.QPlainTextEdit()
-        self.log_output.setReadOnly(True)
-        log_layout.addWidget(self.log_output)
-        layout.addWidget(log_card, 1)
 
         self.load_state()
         self.apply_translations()
@@ -623,16 +671,33 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_dir_button.setText(self.i18n.t("compiler_browse"))
         self.icon_button.setText(self.i18n.t("compiler_browse"))
         self.build_button.setText(self.i18n.t("compiler_build"))
-        self.clear_button.setText(self.i18n.t("compiler_clear"))
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
         self.status_label.setProperty("state", "warn")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
+        self._set_progress_ui(0, "idle")
         self.mode_combo.setItemText(0, self.i18n.t("compiler_mode_onefile"))
-        if self.log_output.toPlainText().strip() == "":
-            self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
         self._build_region_menu()
         self._refresh_specification_layout()
+
+    def _set_progress_ui(self, value: int, state: str) -> None:
+        clamped = max(0, min(100, int(value)))
+        self.progress_bar.setValue(clamped)
+        self.progress_bar.setProperty("status", state)
+        self.progress_bar.style().unpolish(self.progress_bar)
+        self.progress_bar.style().polish(self.progress_bar)
+
+    def _capture_worker_log(self, line: str) -> None:
+        if not line:
+            return
+        self._build_logs.append(line)
+        if len(self._build_logs) > 2000:
+            self._build_logs = self._build_logs[-2000:]
+
+    def _handle_worker_progress(self, value: int) -> None:
+        current = self.progress_bar.value()
+        next_value = max(current, value)
+        self._set_progress_ui(next_value, "active")
 
     def pick_source_dir(self) -> None:
         path = QtWidgets.QFileDialog.getExistingDirectory(self, self.i18n.t("compiler_source"))
@@ -701,8 +766,11 @@ class CompilerPage(QtWidgets.QWidget):
         server_url, api_token = self._resolve_server_settings()
 
         if not source_dir.exists() or not entrypoint.exists():
-            self.log_output.appendPlainText(self.i18n.t("log_build_failed"))
             self.status_label.setText(self.i18n.t("compiler_status_failed"))
+            self.status_label.setProperty("state", "error")
+            self.status_label.style().unpolish(self.status_label)
+            self.status_label.style().polish(self.status_label)
+            self._set_progress_ui(0, "error")
             return
 
         options = BuildOptions(
@@ -726,34 +794,32 @@ class CompilerPage(QtWidgets.QWidget):
         self.status_label.setProperty("state", "warn")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
+        self._build_logs.clear()
+        self._set_progress_ui(5, "active")
         self.build_button.setEnabled(False)
-        self.log_output.clear()
         self.logger.log("log_build_start", entry=entrypoint.name)
 
         self.worker = BuilderWorker(options)
-        self.worker.log_line.connect(self.log_output.appendPlainText)
+        self.worker.log_line.connect(self._capture_worker_log)
+        self.worker.progress.connect(self._handle_worker_progress)
         self.worker.finished.connect(self.finish_build)
         self.worker.start()
 
     def finish_build(self, success: bool, output: str, reason: str) -> None:
         self.build_button.setEnabled(True)
+        self.worker = None
         if success:
             self.status_label.setText(self.i18n.t("compiler_status_done"))
             self.status_label.setProperty("state", "ok")
+            self._set_progress_ui(100, "ok")
             self.logger.log("log_build_done", output=output)
         else:
-            if reason == "missing":
-                self.log_output.appendPlainText(self.i18n.t("log_build_missing"))
+            message = self.i18n.t("log_build_missing") if reason == "missing" else self.i18n.t("log_build_failed")
             self.status_label.setText(self.i18n.t("compiler_status_failed"))
             self.status_label.setProperty("state", "error")
+            self.status_label.setToolTip(message)
+            self._set_progress_ui(max(self.progress_bar.value(), 12), "error")
             self.logger.log("log_build_failed")
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
-
-    def clear_log(self) -> None:
-        self.log_output.clear()
-        self.status_label.setText(self.i18n.t("compiler_status_idle"))
-        self.status_label.setProperty("state", "warn")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
 

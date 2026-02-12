@@ -91,7 +91,7 @@ def _lookup_country_code(ip_value: str) -> str:
     normalized_ip = _normalize_ip(ip_value)
     if not normalized_ip or not _is_public_ip(normalized_ip):
         return ""
-    headers = {"User-Agent": "RemDesk/1.0"}
+    headers = {"User-Agent": "OBNULENIE/1.0"}
     timeouts = (2, 4)
     services: list[tuple[str, str]] = [
         (f"https://ipapi.co/{normalized_ip}/country/", "text"),
