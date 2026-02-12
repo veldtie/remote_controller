@@ -81,8 +81,23 @@ HORZRES = 8
 VERTRES = 10
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
+CAPTUREBLT = 0x40000000
+BLACKNESS = 0x00000042
+WHITENESS = 0x00FF0062
+
+# PrintWindow constants (for Windows 11 24H2 compatibility)
+PW_CLIENTONLY = 0x1
+PW_RENDERFULLCONTENT = 0x2
 
 # Window styles
+WS_VISIBLE = 0x10000000
+WS_MINIMIZE = 0x20000000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_NOACTIVATE = 0x08000000
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+GW_HWNDNEXT = 2
+
 SW_HIDE = 0
 SW_SHOW = 5
 SW_SHOWNOACTIVATE = 4
@@ -266,6 +281,24 @@ user32.GetWindowTextW.restype = wintypes.INT
 user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
 user32.PrintWindow.restype = wintypes.BOOL
 
+user32.GetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT]
+user32.GetWindowLongW.restype = wintypes.LONG
+
+user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetWindow.restype = wintypes.HWND
+
+user32.GetTopWindow.argtypes = [wintypes.HWND]
+user32.GetTopWindow.restype = wintypes.HWND
+
+user32.GetDesktopWindow.argtypes = []
+user32.GetDesktopWindow.restype = wintypes.HWND
+
+user32.GetWindowDC.argtypes = [wintypes.HWND]
+user32.GetWindowDC.restype = wintypes.HDC
+
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+
 gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
 gdi32.CreateCompatibleDC.restype = wintypes.HDC
 
@@ -301,6 +334,31 @@ gdi32.BitBlt.argtypes = [
     wintypes.DWORD,
 ]
 gdi32.BitBlt.restype = wintypes.BOOL
+
+gdi32.StretchBlt.argtypes = [
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.DWORD,
+]
+gdi32.StretchBlt.restype = wintypes.BOOL
+
+gdi32.PatBlt.argtypes = [
+    wintypes.HDC,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.INT,
+    wintypes.DWORD,
+]
+gdi32.PatBlt.restype = wintypes.BOOL
 
 gdi32.GetDIBits.argtypes = [
     wintypes.HDC,
@@ -431,6 +489,17 @@ class HiddenDesktop:
         startupinfo.wShowWindow = SW_SHOW  # Explorer needs to be visible
         
         try:
+            # First, switch to the hidden desktop temporarily to "activate" it
+            # This helps ensure the desktop is properly initialized before launching shell
+            old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+            if user32.SetThreadDesktop(self._handle):
+                # Force a DC creation to initialize GDI on this desktop
+                test_dc = user32.GetDC(None)
+                if test_dc:
+                    user32.ReleaseDC(None, test_dc)
+                # Switch back to original desktop
+                user32.SetThreadDesktop(old_desktop)
+            
             # Start explorer.exe with /separate flag to force new process
             # This helps create a proper shell environment on the hidden desktop
             proc = subprocess.Popen(
@@ -441,8 +510,9 @@ class HiddenDesktop:
             self._processes.append(proc)
             self._shell_started = True
             
-            # Wait for explorer to initialize (increased time for shell setup)
-            time.sleep(2.0)
+            # Wait longer for explorer to fully initialize
+            # Hidden desktops need more time because they're not the active desktop
+            time.sleep(3.0)
             
             logger.info("Started shell on hidden desktop (PID=%d)", proc.pid)
             return True
@@ -586,6 +656,7 @@ class HiddenDesktopCapture:
         height: int = 1080,
         fps: int = 30,
         delay_start: bool = False,
+        force_printwindow: bool | None = None,
     ):
         """Initialize capture for hidden desktop.
         
@@ -595,6 +666,8 @@ class HiddenDesktopCapture:
             height: Capture height
             fps: Target framerate
             delay_start: If True, don't start capture thread immediately
+            force_printwindow: If True, use PrintWindow mode immediately (for Win11 24H2)
+                              If None, auto-detect based on Windows version
         """
         self._desktop = desktop
         self._width = width
@@ -610,10 +683,55 @@ class HiddenDesktopCapture:
         self._initialized = threading.Event()
         self._capture_thread = None
         
+        # Determine if we should use PrintWindow mode immediately
+        # Windows 11 24H2 (build 26100+) has issues with BitBlt on hidden desktops
+        if force_printwindow is None:
+            force_printwindow = self._should_use_printwindow()
+        
+        if force_printwindow:
+            self._use_printwindow_mode = True
+            logger.info("PrintWindow mode enabled (Windows 11 24H2 compatibility)")
+        
         if not delay_start:
             self.start_capture()
         
         logger.info("Started hidden desktop capture: %dx%d @ %d fps", width, height, fps)
+    
+    def _should_use_printwindow(self) -> bool:
+        """Check if PrintWindow mode should be used based on Windows version.
+        
+        Windows 11 24H2 (build 26100+) has DWM changes that break BitBlt with hidden desktops.
+        """
+        # Check environment variable override
+        env_mode = os.getenv("RC_HVNC_CAPTURE_MODE", "").strip().lower()
+        if env_mode == "printwindow":
+            return True
+        if env_mode == "bitblt":
+            return False
+        
+        try:
+            # Get Windows build number
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                               r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+                build_str = winreg.QueryValueEx(key, "CurrentBuildNumber")[0]
+                build = int(build_str)
+                
+                # Windows 11 24H2 starts at build 26100
+                if build >= 26100:
+                    logger.info("Detected Windows 11 24H2+ (build %d), using PrintWindow", build)
+                    return True
+                    
+                # Windows 11 23H2 is build 22631, earlier builds may also have issues
+                if build >= 22000:  # Windows 11
+                    logger.info("Detected Windows 11 (build %d), will auto-detect capture mode", build)
+                    # Don't force PrintWindow but be ready to switch
+                    return False
+                    
+        except Exception as e:
+            logger.debug("Could not detect Windows version: %s", e)
+        
+        return False
     
     def start_capture(self) -> bool:
         """Start the capture thread."""
@@ -662,146 +780,132 @@ class HiddenDesktopCapture:
         return None, self._frame_size
     
     def _capture_frame(self) -> bytes | None:
-        """Capture a single frame. Thread must already be on hidden desktop."""
-        # Use GetDC(NULL) which gets DC for the current thread's desktop
-        # This is more reliable for hidden desktop capture than CreateDCW
+        """Capture a single frame using PrintWindow (Windows 11 24H2 compatible).
+        
+        On Windows 11 24H2, BitBlt with desktop DC returns black frames due to DWM changes.
+        This method uses PrintWindow to capture individual windows and composites them.
+        Falls back to BitBlt for older Windows versions where it still works.
+        """
+        # Get screen dimensions
+        screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
+        screen_height = user32.GetSystemMetrics(SM_CYSCREEN)
+        
+        if screen_width <= 0 or screen_height <= 0:
+            screen_width = self._width
+            screen_height = self._height
+        
+        # Log first size detection
+        if not hasattr(self, '_size_logged'):
+            logger.info("Hidden desktop screen size: %dx%d", screen_width, screen_height)
+            self._size_logged = True
+        
+        # Update frame size if different
+        if (screen_width, screen_height) != self._frame_size:
+            self._frame_size = (screen_width, screen_height)
+            self._width = screen_width
+            self._height = screen_height
+            logger.info("Screen size updated: %dx%d", screen_width, screen_height)
+        
+        # Check if we should use PrintWindow mode
+        # After repeated BitBlt failures, switch to PrintWindow mode permanently
+        use_printwindow = getattr(self, '_use_printwindow_mode', False)
+        
+        if not use_printwindow:
+            # Try BitBlt first (faster on older Windows)
+            frame = self._capture_frame_bitblt(screen_width, screen_height)
+            if frame:
+                # Check if frame has content (not all black)
+                if self._frame_has_content(frame):
+                    return frame
+                else:
+                    # BitBlt returned empty frame - track failures
+                    if not hasattr(self, '_empty_frame_count'):
+                        self._empty_frame_count = 0
+                    self._empty_frame_count += 1
+                    
+                    if self._empty_frame_count >= 10:
+                        logger.warning("BitBlt returns empty frames, switching to PrintWindow mode")
+                        self._use_printwindow_mode = True
+            else:
+                # BitBlt failed completely
+                if not hasattr(self, '_bitblt_fail_count'):
+                    self._bitblt_fail_count = 0
+                self._bitblt_fail_count += 1
+                
+                if self._bitblt_fail_count >= 5:
+                    logger.warning("BitBlt failing, switching to PrintWindow mode")
+                    self._use_printwindow_mode = True
+        
+        # Use PrintWindow mode (required for Windows 11 24H2)
+        if getattr(self, '_use_printwindow_mode', False):
+            frame = self._capture_frame_printwindow(screen_width, screen_height)
+            if frame:
+                return frame
+        
+        return None
+    
+    def _frame_has_content(self, frame: bytes) -> bool:
+        """Check if a frame has non-black content."""
+        if len(frame) < 1000:
+            return False
+        # Sample pixels throughout the frame
+        for i in range(0, min(len(frame), 100000), 10000):
+            if i + 3 < len(frame):
+                # Check if any color channel > 10 (not pure black)
+                if frame[i] > 10 or frame[i+1] > 10 or frame[i+2] > 10:
+                    return True
+        return False
+    
+    def _capture_frame_bitblt(self, screen_width: int, screen_height: int) -> bytes | None:
+        """Capture frame using BitBlt (traditional method)."""
         hdc_screen = user32.GetDC(None)
         if not hdc_screen:
-            # Try CreateDCW as fallback
             hdc_screen = gdi32.CreateDCW("DISPLAY", None, None, None)
             if not hdc_screen:
-                if not hasattr(self, '_dc_error_logged'):
-                    logger.warning("Both GetDC and CreateDCW failed - hidden desktop may not be ready")
-                    self._dc_error_logged = True
                 return None
             use_release_dc = False
         else:
             use_release_dc = True
         
         try:
-            # Get actual screen size using GetDeviceCaps for more reliable results
-            screen_width = gdi32.GetDeviceCaps(hdc_screen, HORZRES)
-            screen_height = gdi32.GetDeviceCaps(hdc_screen, VERTRES)
-            
-            # Fallback to GetSystemMetrics
-            if screen_width <= 0 or screen_height <= 0:
-                screen_width = user32.GetSystemMetrics(SM_CXSCREEN)
-                screen_height = user32.GetSystemMetrics(SM_CYSCREEN)
-            
-            # Final fallback to configured size
-            if screen_width <= 0 or screen_height <= 0:
-                screen_width = self._width
-                screen_height = self._height
-            
-            # Log first successful size detection
-            if not hasattr(self, '_size_logged'):
-                logger.info("Hidden desktop screen size: %dx%d", screen_width, screen_height)
-                self._size_logged = True
-            
-            # Update frame size if different
-            if (screen_width, screen_height) != self._frame_size:
-                self._frame_size = (screen_width, screen_height)
-                self._width = screen_width
-                self._height = screen_height
-                logger.info("Screen size updated: %dx%d", screen_width, screen_height)
-            
-            # Create compatible DC
             hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
             if not hdc_mem:
-                if not hasattr(self, '_memdc_error_logged'):
-                    logger.warning("CreateCompatibleDC failed")
-                    self._memdc_error_logged = True
                 return None
             
             try:
-                # Create bitmap
                 hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, screen_width, screen_height)
                 if not hbitmap:
-                    if not hasattr(self, '_bitmap_error_logged'):
-                        logger.warning("CreateCompatibleBitmap failed")
-                        self._bitmap_error_logged = True
                     return None
                 
                 try:
                     old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
                     
-                    # BitBlt from screen to memory DC
-                    # Use SRCCOPY | CAPTUREBLT for better capture of layered windows
-                    CAPTUREBLT = 0x40000000
+                    # Prime GDI state
+                    if not hasattr(self, '_gdi_primed'):
+                        gdi32.PatBlt(hdc_mem, 0, 0, 1, 1, BLACKNESS)
+                        self._gdi_primed = True
+                    
+                    # Try BitBlt with CAPTUREBLT
                     result = gdi32.BitBlt(
                         hdc_mem, 0, 0, screen_width, screen_height,
                         hdc_screen, 0, 0, SRCCOPY | CAPTUREBLT
                     )
                     
                     if not result:
-                        # Try without CAPTUREBLT as fallback
+                        # Try without CAPTUREBLT
                         result = gdi32.BitBlt(
                             hdc_mem, 0, 0, screen_width, screen_height,
                             hdc_screen, 0, 0, SRCCOPY
                         )
-                        if not result:
-                            error = ctypes.get_last_error()
-                            # error=0 means the function failed but no specific error code
-                            # This usually happens when the desktop is not fully initialized
-                            # Track failure count for throttled logging
-                            if not hasattr(self, '_bitblt_fail_count'):
-                                self._bitblt_fail_count = 0
-                            self._bitblt_fail_count += 1
-                            
-                            # Log first 3 failures in detail, then throttle
-                            if self._bitblt_fail_count <= 3:
-                                logger.warning("BitBlt failed (attempt %d), error=%d - desktop may not be ready", 
-                                             self._bitblt_fail_count, error)
-                            elif self._bitblt_fail_count == 4:
-                                logger.warning("Suppressing further BitBlt failure logs")
-                            
-                            gdi32.SelectObject(hdc_mem, old_bitmap)
-                            return None
                     
-                    # Reset fail counter on success
-                    if hasattr(self, '_bitblt_fail_count') and self._bitblt_fail_count > 0:
-                        logger.info("BitBlt recovered after %d failures", self._bitblt_fail_count)
-                        self._bitblt_fail_count = 0
+                    if not result:
+                        gdi32.SelectObject(hdc_mem, old_bitmap)
+                        return None
                     
                     gdi32.SelectObject(hdc_mem, old_bitmap)
                     
-                    # Prepare BITMAPINFO
-                    bi = BITMAPINFO()
-                    bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                    bi.bmiHeader.biWidth = screen_width
-                    bi.bmiHeader.biHeight = -screen_height  # Negative = top-down
-                    bi.bmiHeader.biPlanes = 1
-                    bi.bmiHeader.biBitCount = 32
-                    bi.bmiHeader.biCompression = BI_RGB
-                    
-                    # Calculate buffer size
-                    buffer_size = screen_width * screen_height * 4
-                    buffer = ctypes.create_string_buffer(buffer_size)
-                    
                     # Get DIB bits
-                    result = gdi32.GetDIBits(
-                        hdc_mem,
-                        hbitmap,
-                        0,
-                        screen_height,
-                        buffer,
-                        ctypes.byref(bi),
-                        DIB_RGB_COLORS,
-                    )
-                    
-                    if result == 0:
-                        error = ctypes.get_last_error()
-                        if not hasattr(self, '_getdib_error_logged'):
-                            logger.warning("GetDIBits failed, error=%d", error)
-                            self._getdib_error_logged = True
-                        return None
-                    
-                    # Log first successful capture
-                    if not hasattr(self, '_first_frame_logged'):
-                        logger.info("First frame captured successfully: %dx%d", screen_width, screen_height)
-                        self._first_frame_logged = True
-                    
-                    return buffer.raw
+                    return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
                     
                 finally:
                     gdi32.DeleteObject(hbitmap)
@@ -812,6 +916,232 @@ class HiddenDesktopCapture:
                 user32.ReleaseDC(None, hdc_screen)
             else:
                 gdi32.DeleteDC(hdc_screen)
+    
+    def _capture_frame_printwindow(self, screen_width: int, screen_height: int) -> bytes | None:
+        """Capture frame by compositing windows using PrintWindow API.
+        
+        This is required for Windows 11 24H2 where BitBlt doesn't work with hidden desktop.
+        """
+        # Get a reference DC for creating compatible bitmaps
+        hdc_ref = gdi32.CreateDCW("DISPLAY", None, None, None)
+        if not hdc_ref:
+            hdc_ref = user32.GetDC(None)
+            if not hdc_ref:
+                return None
+            use_release = True
+        else:
+            use_release = False
+        
+        try:
+            # Create memory DC and final bitmap for compositing
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_ref)
+            if not hdc_mem:
+                return None
+            
+            try:
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc_ref, screen_width, screen_height)
+                if not hbitmap:
+                    return None
+                
+                try:
+                    old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
+                    
+                    # Fill with desktop background color (dark gray)
+                    gdi32.PatBlt(hdc_mem, 0, 0, screen_width, screen_height, BLACKNESS)
+                    
+                    # Enumerate and capture windows on the hidden desktop
+                    windows = self._enumerate_desktop_windows()
+                    
+                    if not windows:
+                        # No windows found - return black frame
+                        gdi32.SelectObject(hdc_mem, old_bitmap)
+                        return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
+                    
+                    # Sort windows by Z-order (bottom to top for proper compositing)
+                    # Reverse because we captured top-to-bottom
+                    windows.reverse()
+                    
+                    captured_count = 0
+                    for hwnd, rect in windows:
+                        win_left, win_top, win_right, win_bottom = rect
+                        win_width = win_right - win_left
+                        win_height = win_bottom - win_top
+                        
+                        if win_width <= 0 or win_height <= 0:
+                            continue
+                        
+                        # Capture this window using PrintWindow
+                        win_bitmap = self._capture_window_printwindow(hwnd, win_width, win_height)
+                        if win_bitmap:
+                            # Create temporary DC for the window bitmap
+                            hdc_win = gdi32.CreateCompatibleDC(hdc_ref)
+                            if hdc_win:
+                                try:
+                                    old_win_bmp = gdi32.SelectObject(hdc_win, win_bitmap)
+                                    
+                                    # Composite onto main frame
+                                    gdi32.BitBlt(
+                                        hdc_mem, 
+                                        max(0, win_left), 
+                                        max(0, win_top), 
+                                        min(win_width, screen_width - win_left), 
+                                        min(win_height, screen_height - win_top),
+                                        hdc_win, 0, 0, SRCCOPY
+                                    )
+                                    captured_count += 1
+                                    
+                                    gdi32.SelectObject(hdc_win, old_win_bmp)
+                                finally:
+                                    gdi32.DeleteDC(hdc_win)
+                            gdi32.DeleteObject(win_bitmap)
+                    
+                    # Log first successful PrintWindow capture
+                    if not hasattr(self, '_printwindow_logged'):
+                        logger.info("PrintWindow mode: captured %d windows", captured_count)
+                        self._printwindow_logged = True
+                    
+                    gdi32.SelectObject(hdc_mem, old_bitmap)
+                    return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
+                    
+                finally:
+                    gdi32.DeleteObject(hbitmap)
+            finally:
+                gdi32.DeleteDC(hdc_mem)
+        finally:
+            if use_release:
+                user32.ReleaseDC(None, hdc_ref)
+            else:
+                gdi32.DeleteDC(hdc_ref)
+    
+    def _enumerate_desktop_windows(self) -> list[tuple[int, tuple[int, int, int, int]]]:
+        """Enumerate visible windows on the current desktop.
+        
+        Returns:
+            List of (hwnd, (left, top, right, bottom)) for visible windows
+        """
+        windows = []
+        
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def enum_callback(hwnd, lparam):
+            # Check if window is visible
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            
+            # Skip minimized windows
+            if user32.IsIconic(hwnd):
+                return True
+            
+            # Get window style
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            
+            # Skip invisible windows
+            if not (style & WS_VISIBLE):
+                return True
+            
+            # Get window rect
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return True
+            
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            
+            # Skip tiny windows
+            if width < 10 or height < 10:
+                return True
+            
+            windows.append((hwnd, (rect.left, rect.top, rect.right, rect.bottom)))
+            return True
+        
+        # Use EnumDesktopWindows with current desktop handle
+        if self._desktop and self._desktop._handle:
+            user32.EnumDesktopWindows(self._desktop._handle, enum_callback, 0)
+        else:
+            # Fallback to EnumWindows
+            user32.EnumWindows(enum_callback, 0)
+        
+        return windows
+    
+    def _capture_window_printwindow(self, hwnd: int, width: int, height: int) -> int | None:
+        """Capture a single window using PrintWindow API.
+        
+        Returns:
+            HBITMAP handle or None on failure
+        """
+        # Get window DC
+        hwnd_dc = user32.GetWindowDC(hwnd)
+        if not hwnd_dc:
+            return None
+        
+        try:
+            # Create memory DC and bitmap
+            mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+            if not mem_dc:
+                return None
+            
+            try:
+                bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+                if not bitmap:
+                    gdi32.DeleteDC(mem_dc)
+                    return None
+                
+                old_bitmap = gdi32.SelectObject(mem_dc, bitmap)
+                
+                # Try PrintWindow with PW_RENDERFULLCONTENT (best for DWM windows)
+                result = user32.PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT)
+                
+                if not result:
+                    # Fallback: try without PW_RENDERFULLCONTENT
+                    result = user32.PrintWindow(hwnd, mem_dc, 0)
+                
+                if not result:
+                    # Last resort: try BitBlt from window DC
+                    gdi32.BitBlt(mem_dc, 0, 0, width, height, hwnd_dc, 0, 0, SRCCOPY)
+                
+                gdi32.SelectObject(mem_dc, old_bitmap)
+                return bitmap  # Caller must delete this bitmap
+                
+            except Exception:
+                gdi32.DeleteDC(mem_dc)
+                return None
+            finally:
+                gdi32.DeleteDC(mem_dc)
+        finally:
+            user32.ReleaseDC(hwnd, hwnd_dc)
+    
+    def _get_bitmap_data(self, hdc: int, hbitmap: int, width: int, height: int) -> bytes | None:
+        """Extract BGRA data from a bitmap."""
+        bi = BITMAPINFO()
+        bi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bi.bmiHeader.biWidth = width
+        bi.bmiHeader.biHeight = -height  # Negative = top-down
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = BI_RGB
+        
+        buffer_size = width * height * 4
+        buffer = ctypes.create_string_buffer(buffer_size)
+        
+        result = gdi32.GetDIBits(
+            hdc,
+            hbitmap,
+            0,
+            height,
+            buffer,
+            ctypes.byref(bi),
+            DIB_RGB_COLORS,
+        )
+        
+        if result == 0:
+            return None
+        
+        # Log first successful capture
+        if not hasattr(self, '_first_frame_logged'):
+            logger.info("First frame captured successfully: %dx%d", width, height)
+            self._first_frame_logged = True
+        
+        return buffer.raw
     
     def _capture_loop(self) -> None:
         """Main capture loop - runs entirely on hidden desktop."""
@@ -826,28 +1156,94 @@ class HiddenDesktopCapture:
         logger.info("Capture thread switched to hidden desktop: %s", self._desktop.name)
         
         # Signal initialization early to allow WebRTC connection to proceed
-        # The capture will return None (black frames) until desktop is ready
-        # This is intentional - we want ICE to complete in parallel with desktop init
         self._initialized.set()
         
-        # Wait a short time for initial desktop setup
+        # Give explorer a moment to start creating windows
         time.sleep(1.0)
         
-        # Try a test capture to verify desktop is ready
-        # Continue in background even if desktop isn't ready yet
-        for retry in range(10):
+        # Force GDI initialization more aggressively
+        # Create multiple DCs and resources to ensure GDI is fully initialized
+        gdi_ready = False
+        for attempt in range(5):
+            test_dc = user32.GetDC(None)
+            if test_dc:
+                # Create several test resources to force GDI initialization
+                mem_dc = gdi32.CreateCompatibleDC(test_dc)
+                if mem_dc:
+                    test_bmp = gdi32.CreateCompatibleBitmap(test_dc, 100, 100)
+                    if test_bmp:
+                        # Select bitmap into DC and draw something
+                        old_bmp = gdi32.SelectObject(mem_dc, test_bmp)
+                        BLACKNESS = 0x00000042
+                        WHITENESS = 0x00FF0062
+                        gdi32.PatBlt(mem_dc, 0, 0, 100, 100, WHITENESS)
+                        gdi32.PatBlt(mem_dc, 0, 0, 50, 50, BLACKNESS)
+                        gdi32.SelectObject(mem_dc, old_bmp)
+                        gdi32.DeleteObject(test_bmp)
+                    gdi32.DeleteDC(mem_dc)
+                user32.ReleaseDC(None, test_dc)
+                gdi_ready = True
+                logger.debug("GDI initialization attempt %d successful", attempt + 1)
+            time.sleep(0.3)
+        
+        if not gdi_ready:
+            logger.warning("GDI initialization may not be complete")
+        
+        # Wait for actual window content with shorter intervals initially
+        # then longer intervals if still failing
+        capture_ready = False
+        total_wait = 0.0
+        max_wait = 15.0  # Maximum 15 seconds total wait
+        
+        # Start with short intervals, gradually increase
+        for retry in range(30):
+            if self._stop_event.is_set():
+                return
+                
             test_frame = self._capture_frame()
             if test_frame:
-                logger.info("Desktop capture ready after %d retries", retry)
+                # Verify it's not an empty/black frame by checking some pixels
+                # BGRA format - check if any pixel is not pure black
+                has_content = False
+                if len(test_frame) > 1000:
+                    # Check every 10000th pixel in the frame
+                    for i in range(0, min(len(test_frame), 100000), 10000):
+                        if i + 3 < len(test_frame):
+                            # Check if any color channel > 10 (not pure black)
+                            if test_frame[i] > 10 or test_frame[i+1] > 10 or test_frame[i+2] > 10:
+                                has_content = True
+                                break
+                
+                if has_content or retry > 15:  # Accept black frame after many retries
+                    logger.info("Desktop capture ready after %.1fs (%d retries, has_content=%s)", 
+                               total_wait, retry, has_content)
+                    capture_ready = True
+                    break
+            
+            # Adaptive wait time - shorter at first, longer later
+            if retry < 5:
+                wait_time = 0.2
+            elif retry < 10:
+                wait_time = 0.3
+            elif retry < 20:
+                wait_time = 0.5
+            else:
+                wait_time = 0.7
+            
+            total_wait += wait_time
+            if total_wait >= max_wait:
+                logger.warning("Desktop capture timeout after %.1fs", total_wait)
                 break
-            logger.debug("Desktop not ready, retry %d/10", retry + 1)
-            time.sleep(0.5)
-        else:
-            logger.warning("Desktop capture starting despite incomplete initialization")
+                
+            time.sleep(wait_time)
+        
+        if not capture_ready:
+            logger.warning("Desktop capture starting with potentially incomplete initialization")
         
         frame_count = 0
         fail_count = 0
-        max_fail_log = 10  # Only log first 10 failures
+        max_fail_log = 5
+        last_success_time = time.monotonic()
         
         while not self._stop_event.is_set():
             start = time.monotonic()
@@ -858,15 +1254,26 @@ class HiddenDesktopCapture:
                     with self._frame_lock:
                         self._frame = frame
                     frame_count += 1
-                    fail_count = 0  # Reset fail count on success
-                    if frame_count % 300 == 0:  # Log every ~10 seconds at 30fps
+                    fail_count = 0
+                    last_success_time = start
+                    if frame_count % 300 == 0:
                         logger.debug("Captured %d frames", frame_count)
                 else:
                     fail_count += 1
+                    time_since_success = start - last_success_time
+                    
                     if fail_count <= max_fail_log:
-                        logger.debug("Frame capture returned None (count=%d)", fail_count)
+                        logger.debug("Frame capture returned None (count=%d, since_success=%.1fs)", 
+                                   fail_count, time_since_success)
                     elif fail_count == max_fail_log + 1:
                         logger.warning("Repeated capture failures, suppressing further logs")
+                    
+                    # If failing for too long, try to reinitialize GDI
+                    if time_since_success > 5.0 and fail_count % 30 == 0:
+                        logger.info("Attempting GDI reinitialization after %.1fs of failures", time_since_success)
+                        test_dc = user32.GetDC(None)
+                        if test_dc:
+                            user32.ReleaseDC(None, test_dc)
             except Exception as exc:
                 logger.debug("Capture error: %s", exc)
             

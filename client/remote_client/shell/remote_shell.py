@@ -382,7 +382,30 @@ class RemoteShellManager:
         }
     
     def _read_output(self, session: ShellSession) -> None:
-        """Background thread to read output from shell process."""
+        """Background thread to read output from shell process.
+        
+        Includes rate limiting and chunking for large outputs to prevent
+        WebRTC channel overload.
+        """
+        # Buffer for accumulating output before sending
+        output_buffer = []
+        buffer_size = 0
+        max_buffer_size = 4096  # Send in 4KB chunks max
+        last_send_time = time.time()
+        min_send_interval = 0.05  # Minimum 50ms between sends
+        
+        def flush_buffer():
+            nonlocal output_buffer, buffer_size, last_send_time
+            if output_buffer and session.output_callback:
+                try:
+                    combined = "".join(output_buffer)
+                    session.output_callback(session.session_id, combined)
+                except Exception as e:
+                    logger.debug("Failed to send output for %s: %s", session.session_id, e)
+                output_buffer = []
+                buffer_size = 0
+                last_send_time = time.time()
+        
         try:
             while not session._stop_event.is_set() and session.is_alive:
                 try:
@@ -391,15 +414,37 @@ class RemoteShellManager:
                     if not line:
                         if not session.is_alive:
                             break
+                        # Flush any remaining buffer
+                        flush_buffer()
                         continue
                     
-                    if session.output_callback:
-                        session.output_callback(session.session_id, line)
+                    # Add to buffer
+                    output_buffer.append(line)
+                    buffer_size += len(line)
+                    
+                    # Determine if we should send now
+                    current_time = time.time()
+                    time_since_send = current_time - last_send_time
+                    
+                    should_send = (
+                        buffer_size >= max_buffer_size or  # Buffer full
+                        time_since_send >= 0.2 or  # 200ms since last send
+                        (buffer_size > 0 and time_since_send >= min_send_interval)  # Min interval passed
+                    )
+                    
+                    if should_send:
+                        flush_buffer()
+                        # Small delay to prevent flooding the channel
+                        if buffer_size > max_buffer_size * 2:
+                            time.sleep(0.01)
                         
                 except Exception as e:
                     if not session._stop_event.is_set():
                         logger.debug("Output read error for %s: %s", session.session_id, e)
                     break
+            
+            # Flush remaining buffer
+            flush_buffer()
                     
         except Exception as e:
             logger.debug("Output reader thread ended for %s: %s", session.session_id, e)

