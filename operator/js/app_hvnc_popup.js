@@ -598,16 +598,39 @@
 
   /**
    * Update HVNC frame image (for static frame mode)
+   * This function updates the HVNC desktop image in the popup
    */
   function updateHvncFrame(base64Data) {
-    if (!hvncPopupDom?.img) return;
+    if (!hvncPopupDom) {
+      initHvncPopupDom();
+    }
+    if (!hvncPopupDom?.img) {
+      console.warn("HVNC Popup: img element not found");
+      return;
+    }
     
     if (base64Data) {
-      hvncPopupDom.img.src = "data:image/jpeg;base64," + base64Data;
+      // Set the image source
+      const imgSrc = base64Data.startsWith("data:") 
+        ? base64Data 
+        : "data:image/jpeg;base64," + base64Data;
+      
+      hvncPopupDom.img.src = imgSrc;
+      
+      // Make image visible
       hvncPopupDom.img.style.display = "block";
-      if (hvncPopupDom.video) hvncPopupDom.video.style.display = "none";
+      hvncPopupDom.img.classList.add("active");
+      
+      // Hide video if present
+      if (hvncPopupDom.video) {
+        hvncPopupDom.video.style.display = "none";
+        hvncPopupDom.video.classList.remove("active");
+      }
+      
+      // Hide placeholder
       if (hvncPopupDom.placeholder) {
         hvncPopupDom.placeholder.style.display = "none";
+        hvncPopupDom.placeholder.classList.add("hidden");
       }
     }
   }
@@ -637,46 +660,31 @@
   // ===== Window Management =====
 
   /**
-   * Constrain popup position to stay within viewport bounds (for PyQt WebView)
+   * Constrain popup position - REMOVED viewport constraints
+   * Popup can now freely move and resize outside viewport bounds
+   * This allows the HVNC window to be positioned anywhere on screen
    */
   function constrainPopupToViewport() {
-    const winWidth = window.innerWidth;
-    const winHeight = window.innerHeight;
-    const padding = 10; // Keep some padding from edges
+    // REMOVED: Viewport constraints
+    // Popup can now be freely positioned and resized without restrictions
+    // This is required for proper HVNC window behavior where user may want
+    // the window to extend beyond the main app viewport
     
-    // Ensure popup doesn't exceed viewport width
-    if (hvncPopupState.size.width > winWidth - padding * 2) {
-      hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, winWidth - padding * 2);
+    // Only ensure minimum size is respected
+    if (hvncPopupState.size.width < hvncPopupState.minSize.width) {
+      hvncPopupState.size.width = hvncPopupState.minSize.width;
+    }
+    if (hvncPopupState.size.height < hvncPopupState.minSize.height) {
+      hvncPopupState.size.height = hvncPopupState.minSize.height;
     }
     
-    // Ensure popup doesn't exceed viewport height
-    if (hvncPopupState.size.height > winHeight - padding * 2) {
-      hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, winHeight - padding * 2);
-    }
-    
-    // Ensure popup doesn't go off left edge
-    if (hvncPopupState.position.x < padding) {
-      hvncPopupState.position.x = padding;
-    }
-    
-    // Ensure popup doesn't go off right edge
-    if (hvncPopupState.position.x + hvncPopupState.size.width > winWidth - padding) {
-      hvncPopupState.position.x = Math.max(padding, winWidth - hvncPopupState.size.width - padding);
-    }
-    
-    // Ensure popup doesn't go off top edge (allow title bar to show)
-    if (hvncPopupState.position.y < padding) {
-      hvncPopupState.position.y = padding;
-    }
-    
-    // Ensure popup doesn't go off bottom edge
-    if (hvncPopupState.position.y + hvncPopupState.size.height > winHeight - padding) {
-      hvncPopupState.position.y = Math.max(padding, winHeight - hvncPopupState.size.height - padding);
-    }
+    // Allow popup to be at any position (including negative or outside viewport)
+    // No position constraints - user has full control
   }
 
   /**
    * Open HVNC Popup Window
+   * NOTE: Window can be freely positioned and resized beyond viewport bounds
    */
   function openHvncPopup() {
     createHvncPopupWindow();
@@ -689,15 +697,18 @@
     hvncPopupState.isOpen = true;
     hvncPopupDom.window.style.display = "flex";
     
-    // Get viewport dimensions
+    // Get viewport dimensions for initial centering only
     const winWidth = window.innerWidth;
     const winHeight = window.innerHeight;
     
-    // Auto-size popup based on viewport (max 80% of viewport)
-    const maxWidth = Math.min(hvncPopupState.size.width, winWidth * 0.8);
-    const maxHeight = Math.min(hvncPopupState.size.height, winHeight * 0.8);
-    hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, maxWidth);
-    hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, maxHeight);
+    // Use default size or previously saved size (no max constraint)
+    // User can resize freely without viewport limits
+    if (hvncPopupState.size.width < hvncPopupState.minSize.width) {
+      hvncPopupState.size.width = 800; // Reasonable default
+    }
+    if (hvncPopupState.size.height < hvncPopupState.minSize.height) {
+      hvncPopupState.size.height = 600; // Reasonable default
+    }
     
     // Center window if first open or re-center if position is default
     if (hvncPopupState.position.x === 100 && hvncPopupState.position.y === 100) {
@@ -705,9 +716,7 @@
       hvncPopupState.position.y = Math.max(10, (winHeight - hvncPopupState.size.height) / 2);
     }
     
-    // Constrain to viewport (important for PyQt WebView)
-    constrainPopupToViewport();
-    
+    // NO viewport constraints - popup can be freely positioned
     applyHvncPopupPosition();
     applyHvncPopupSize();
     
@@ -801,27 +810,19 @@
       hvncPopupState.position.x = e.clientX - hvncPopupState.dragOffset.x;
       hvncPopupState.position.y = e.clientY - hvncPopupState.dragOffset.y;
       
-      // Constrain to viewport (for PyQt WebView - don't allow popup to go outside)
-      constrainPopupToViewport();
-      
+      // NO viewport constraints - popup can be freely positioned anywhere
       applyHvncPopupPosition();
     }
     
     if (hvncPopupState.isResizing) {
       const rect = hvncPopupDom.window.getBoundingClientRect();
+      // Allow free resize - only respect minimum size
       let newWidth = Math.max(hvncPopupState.minSize.width, e.clientX - rect.left);
       let newHeight = Math.max(hvncPopupState.minSize.height, e.clientY - rect.top);
       
-      // Constrain resize to viewport bounds
-      const winWidth = window.innerWidth;
-      const winHeight = window.innerHeight;
-      const padding = 10;
-      
-      newWidth = Math.min(newWidth, winWidth - hvncPopupState.position.x - padding);
-      newHeight = Math.min(newHeight, winHeight - hvncPopupState.position.y - padding);
-      
-      hvncPopupState.size.width = Math.max(hvncPopupState.minSize.width, newWidth);
-      hvncPopupState.size.height = Math.max(hvncPopupState.minSize.height, newHeight);
+      // NO viewport constraints - popup can be resized freely
+      hvncPopupState.size.width = newWidth;
+      hvncPopupState.size.height = newHeight;
       
       applyHvncPopupSize();
     }
