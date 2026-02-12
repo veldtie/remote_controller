@@ -55,7 +55,8 @@ class MainShell(QtWidgets.QWidget):
 
         self.sidebar = GlassFrame(radius=22, tone="card", tint_alpha=170, border_alpha=70)
         self.sidebar.setObjectName("Sidebar")
-        self.sidebar.setFixedWidth(236)
+        self.sidebar.setMinimumWidth(212)
+        self.sidebar.setMaximumWidth(292)
         sidebar_layout = QtWidgets.QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(16, 16, 16, 16)
         sidebar_layout.setSpacing(12)
@@ -117,9 +118,12 @@ class MainShell(QtWidgets.QWidget):
         sidebar_layout.addWidget(self.clear_data_button)
 
         # Local Desktop button
-        self.local_desktop_button = make_button("🖥️ Local Desktop", "nav")
+        self.local_desktop_button = make_button("Local Desktop", "nav")
         self.local_desktop_button.setProperty("nav", True)
         self.local_desktop_button.setToolTip("Open local desktop for working with client profiles")
+        self.local_desktop_button.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+        )
         self.local_desktop_button.clicked.connect(self.open_local_desktop)
         sidebar_layout.addWidget(self.local_desktop_button)
 
@@ -228,6 +232,7 @@ class MainShell(QtWidgets.QWidget):
         self.nav_buttons["instructions"].setText(self.i18n.t("nav_instructions"))
         self.language_button.setText(self.i18n.t("sidebar_language"))
         self.clear_data_button.setText(self.i18n.t("sidebar_clear_data"))
+        self.local_desktop_button.setText("Local Desktop")
         self.logout_button.setText(self.i18n.t("top_logout"))
         self.banner_text.setText(self.i18n.t("server_connection_lost"))
         self.banner_retry.setText(self.i18n.t("server_connection_retry"))
@@ -282,6 +287,11 @@ class MainShell(QtWidgets.QWidget):
         if self._local_desktop_window is None or not self._local_desktop_window.isVisible():
             # Create window without parent to make it a separate top-level window
             self._local_desktop_window = LocalDesktopWindow(parent=None)
+            host_window = self.window()
+            if host_window is not None:
+                stylesheet = host_window.styleSheet()
+                if stylesheet:
+                    self._local_desktop_window.setStyleSheet(stylesheet)
             # Set window flags to ensure it's a proper standalone window
             self._local_desktop_window.setWindowFlags(
                 QtCore.Qt.WindowType.Window |
@@ -903,3 +913,4 @@ class MainShell(QtWidgets.QWidget):
     def trigger_reconnect(self) -> None:
         self.dashboard.refresh_clients()
         self.teams_page.refresh_from_api()
+

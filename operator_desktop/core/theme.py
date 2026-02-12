@@ -13,21 +13,25 @@ THEMES = {
     "dark": Theme(
         "dark",
         {
-            "bg_start": "#0b0f16",
-            "bg_end": "#0c1422",
-            "card": "rgba(20, 26, 38, 0.62)",
-            "card_alt": "rgba(18, 24, 36, 0.72)",
-            "card_strong": "rgba(14, 20, 30, 0.86)",
-            "border": "rgba(255, 255, 255, 0.12)",
-            "border_strong": "rgba(255, 255, 255, 0.2)",
+            "bg_start": "#090d14",
+            "bg_end": "#0b111b",
+            "card": "rgba(18, 24, 34, 0.58)",
+            "card_alt": "rgba(24, 30, 42, 0.5)",
+            "card_strong": "rgba(18, 24, 34, 0.78)",
+            "border": "rgba(255, 255, 255, 0.14)",
+            "border_strong": "rgba(255, 255, 255, 0.24)",
             "text": "#eef3ff",
-            "muted": "#9fb0c3",
+            "muted": "#9eb0c3",
             "accent": "#0091FF",
+            "accent_2": "#4db8ff",
+            "accent_3": "#0077d9",
             "accent_soft": "rgba(0, 145, 255, 0.18)",
-            "accent_glow": "rgba(0, 145, 255, 0.45)",
+            "accent_glow": "rgba(77, 184, 255, 0.45)",
+            "good": "#2dd4bf",
+            "warn": "#f6c970",
             "danger": "#ff6b6b",
             "glow": "#0091FF",
-            "table_alt": "rgba(255, 255, 255, 0.03)",
+            "table_alt": "rgba(255, 255, 255, 0.035)",
         },
     ),
 }
@@ -69,8 +73,9 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QFrame#WindowFrame {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(24, 30, 42, 0.72),
-            stop:1 rgba(12, 18, 28, 0.88));
+            stop:0 rgba(24, 30, 44, 0.70),
+            stop:0.52 rgba(14, 20, 30, 0.78),
+            stop:1 rgba(12, 18, 28, 0.90));
         border: 1px solid {c["border_strong"]};
         border-radius: 30px;
     }}
@@ -118,6 +123,14 @@ def build_stylesheet(theme: Theme) -> str:
         color: {c["muted"]};
         font-size: 11px;
     }}
+    QLabel#CardSectionTitle {{
+        font-size: 14px;
+        font-weight: 650;
+    }}
+    QLabel#CardSectionLead {{
+        font-size: 12px;
+        color: {c["muted"]};
+    }}
     QLabel#CardTitle {{
         font-size: 13px;
         font-weight: 600;
@@ -144,8 +157,8 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QFrame#Sidebar {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 rgba(26, 34, 48, 0.62),
-            stop:1 rgba(14, 20, 30, 0.72));
+            stop:0 rgba(24, 30, 44, 0.66),
+            stop:1 rgba(14, 20, 30, 0.78));
         border: 1px solid {c["border"]};
         border-radius: 22px;
     }}
@@ -175,40 +188,53 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QFrame#ToolbarCard {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(24, 30, 44, 0.72),
-            stop:1 rgba(14, 20, 30, 0.82));
+            stop:0 rgba(24, 30, 44, 0.68),
+            stop:1 rgba(14, 20, 30, 0.80));
         border: 1px solid {c["border"]};
         border-radius: 18px;
     }}
     QFrame#HeroCard {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(26, 34, 48, 0.74),
-            stop:1 rgba(16, 22, 34, 0.9));
+            stop:0 rgba(26, 34, 48, 0.72),
+            stop:1 rgba(16, 22, 34, 0.88));
         border: 1px solid {c["border_strong"]};
         border-radius: 24px;
     }}
     QFrame#DrawerCard {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(20, 26, 38, 0.78),
-            stop:1 rgba(12, 18, 28, 0.9));
+            stop:0 rgba(20, 26, 38, 0.76),
+            stop:1 rgba(12, 18, 28, 0.88));
         border: 1px solid {c["border"]};
         border-radius: 20px;
     }}
     QFrame#Card {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(26, 32, 46, 0.64),
+            stop:0 rgba(24, 32, 46, 0.62),
             stop:1 rgba(14, 20, 30, 0.82));
         border: 1px solid {c["border"]};
         border-radius: 20px;
     }}
     QFrame#SettingsCard {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(24, 30, 44, 0.66),
-            stop:1 rgba(12, 18, 28, 0.86));
+            stop:0 rgba(24, 30, 44, 0.64),
+            stop:1 rgba(12, 18, 28, 0.84));
         border: 1px solid {c["border"]};
         border-radius: 18px;
     }}
+    QWidget#LocalDesktopRoot {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 {c["bg_start"]},
+            stop:1 {c["bg_end"]});
+    }}
     QScrollArea#TagArea {{
+        background: transparent;
+    }}
+    QScrollArea#PageScroll {{
+        background: transparent;
+        border: none;
+    }}
+    QWidget#PageScrollViewport,
+    QWidget#PageScrollContent {{
         background: transparent;
     }}
     QWidget#TagContainer {{
@@ -317,13 +343,14 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QPushButton[variant="primary"] {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 {c["accent"]}, stop:1 rgba(78, 187, 255, 0.95));
+            stop:0 {c["accent"]}, stop:1 {c["accent_2"]});
         color: #04101f;
-        border: none;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         font-weight: 600;
     }}
     QPushButton[variant="primary"]:hover {{
-        background: {c["accent_glow"]};
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["accent_3"]}, stop:1 {c["accent_2"]});
     }}
     QPushButton[variant="primary"]:pressed {{
         background: {c["accent"]};
@@ -369,6 +396,19 @@ def build_stylesheet(theme: Theme) -> str:
     QPushButton[variant="island"]:pressed {{
         background: rgba(255, 255, 255, 0.04);
     }}
+    QPushButton[variant="soft"] {{
+        background: rgba(255, 255, 255, 0.05);
+        color: {c["text"]};
+        border: 1px solid {c["border"]};
+        font-weight: 500;
+    }}
+    QPushButton[variant="soft"]:hover {{
+        background: rgba(255, 255, 255, 0.1);
+        border-color: {c["border_strong"]};
+    }}
+    QPushButton[variant="soft"]:pressed {{
+        background: rgba(255, 255, 255, 0.07);
+    }}
     QPushButton[nav="true"],
     QPushButton[variant="nav"] {{
         background: transparent;
@@ -411,9 +451,9 @@ def build_stylesheet(theme: Theme) -> str:
         color: {c["accent"]};
     }}
     QPushButton:disabled {{
-        background: {c["border"]};
+        background: rgba(255, 255, 255, 0.08);
         color: {c["muted"]};
-        border: none;
+        border: 1px solid rgba(255, 255, 255, 0.06);
     }}
     QToolButton {{
         border: 1px solid transparent;
@@ -469,8 +509,8 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QTextBrowser {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(12, 16, 26, 0.62),
-            stop:1 rgba(10, 14, 22, 0.78));
+            stop:0 rgba(12, 18, 28, 0.66),
+            stop:1 rgba(10, 14, 22, 0.82));
         border: 1px solid {c["border"]};
         border-radius: 14px;
         padding: 8px 12px;
@@ -486,11 +526,16 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QLineEdit#SearchInput {{
         padding-left: 34px;
-        background: rgba(10, 14, 22, 0.6);
+        background: rgba(10, 14, 22, 0.68);
         border-radius: 16px;
     }}
     QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus, QTextBrowser:focus {{
         border-color: {c["accent"]};
+    }}
+    QTextBrowser[flat="true"] {{
+        background: transparent;
+        border: none;
+        padding: 0;
     }}
     QTableWidget {{
         background: transparent;
@@ -502,7 +547,7 @@ def build_stylesheet(theme: Theme) -> str:
         background: transparent;
     }}
     QHeaderView::section {{
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.06);
         border: none;
         padding: 8px 10px;
         font-weight: 600;
@@ -523,6 +568,11 @@ def build_stylesheet(theme: Theme) -> str:
     QTableWidget::item:selected {{
         background: {c["accent_soft"]};
         color: {c["text"]};
+    }}
+    QLabel#TableOverflowHint {{
+        color: {c["muted"]};
+        font-size: 11px;
+        padding: 2px 2px 0 2px;
     }}
     QSplitter::handle {{
         background: rgba(255, 255, 255, 0.06);
@@ -643,6 +693,22 @@ def build_stylesheet(theme: Theme) -> str:
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 9px;
+        margin: 2px 6px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        min-width: 30px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: rgba(255, 255, 255, 0.34);
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
     QComboBox QAbstractItemView {{
         background: {c["card"]};
         color: {c["text"]};
@@ -696,6 +762,48 @@ def build_stylesheet(theme: Theme) -> str:
     QTabBar::tab:hover {{
         border-color: rgba(255, 255, 255, 0.2);
     }}
+    QLabel#InlineStatus {{
+        color: {c["muted"]};
+        padding: 2px 0;
+    }}
+    QLabel#InlineStatus[state="ok"] {{
+        color: {c["good"]};
+    }}
+    QLabel#InlineStatus[state="warn"] {{
+        color: {c["warn"]};
+    }}
+    QLabel#InlineStatus[state="error"] {{
+        color: {c["danger"]};
+    }}
+    QLabel#InlineHint {{
+        color: {c["muted"]};
+        font-size: 12px;
+    }}
+    QLabel#TagText {{
+        font-size: 11px;
+        font-weight: 600;
+        color: {c["text"]};
+        padding: 2px 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.05);
+    }}
+    QGroupBox {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(18, 24, 34, 0.56),
+            stop:1 rgba(12, 18, 28, 0.76));
+        border: 1px solid {c["border"]};
+        border-radius: 14px;
+        margin-top: 14px;
+        padding-top: 12px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 12px;
+        padding: 0 6px;
+        color: {c["text"]};
+        font-weight: 600;
+    }}
     QPushButton::menu-indicator {{
         image: none;
         width: 0px;
@@ -706,5 +814,32 @@ def build_stylesheet(theme: Theme) -> str:
         border: 1px solid {c["border"]};
         border-radius: 8px;
         padding: 6px 8px;
+    }}
+    """
+
+
+def build_dialog_stylesheet(theme: Theme) -> str:
+    c = theme.colors
+    return f"""
+    QMessageBox {{
+        background: {c["card_strong"]};
+        color: {c["text"]};
+    }}
+    QMessageBox QLabel {{
+        color: {c["text"]};
+    }}
+    QMessageBox QPushButton {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid {c["border"]};
+        border-radius: 10px;
+        padding: 7px 12px;
+        min-width: 72px;
+    }}
+    QMessageBox QPushButton:hover {{
+        border-color: {c["border_strong"]};
+        background: rgba(255, 255, 255, 0.1);
+    }}
+    QMessageBox QPushButton:pressed {{
+        background: rgba(255, 255, 255, 0.06);
     }}
     """

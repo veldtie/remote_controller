@@ -442,15 +442,20 @@ class CompilerPage(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        header = QtWidgets.QVBoxLayout()
+        toolbar = GlassFrame(radius=18, tone="card_alt", tint_alpha=160, border_alpha=70)
+        toolbar.setObjectName("ToolbarCard")
+        header = QtWidgets.QVBoxLayout(toolbar)
+        header.setContentsMargins(16, 14, 16, 14)
+        header.setSpacing(6)
         self.title_label = QtWidgets.QLabel()
         self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
         self.subtitle_label.setObjectName("PageSubtitle")
         header.addWidget(self.title_label)
         header.addWidget(self.subtitle_label)
-        layout.addLayout(header)
+        layout.addWidget(toolbar)
 
         form_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         form_card.setObjectName("Card")
@@ -557,7 +562,8 @@ class CompilerPage(QtWidgets.QWidget):
         self.clear_button = make_button("", "ghost")
         self.clear_button.clicked.connect(self.clear_log)
         self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("Muted")
+        self.status_label.setObjectName("InlineStatus")
+        self.status_label.setProperty("state", "warn")
         actions.addWidget(self.build_button)
         actions.addWidget(self.clear_button)
         actions.addStretch()
@@ -619,6 +625,9 @@ class CompilerPage(QtWidgets.QWidget):
         self.build_button.setText(self.i18n.t("compiler_build"))
         self.clear_button.setText(self.i18n.t("compiler_clear"))
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
+        self.status_label.setProperty("state", "warn")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self.mode_combo.setItemText(0, self.i18n.t("compiler_mode_onefile"))
         if self.log_output.toPlainText().strip() == "":
             self.log_output.setPlaceholderText(self.i18n.t("compiler_log_placeholder"))
@@ -714,6 +723,9 @@ class CompilerPage(QtWidgets.QWidget):
         )
         self.persist_builder_state(options)
         self.status_label.setText(self.i18n.t("compiler_status_building"))
+        self.status_label.setProperty("state", "warn")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self.build_button.setEnabled(False)
         self.log_output.clear()
         self.logger.log("log_build_start", entry=entrypoint.name)
@@ -727,16 +739,23 @@ class CompilerPage(QtWidgets.QWidget):
         self.build_button.setEnabled(True)
         if success:
             self.status_label.setText(self.i18n.t("compiler_status_done"))
+            self.status_label.setProperty("state", "ok")
             self.logger.log("log_build_done", output=output)
         else:
             if reason == "missing":
                 self.log_output.appendPlainText(self.i18n.t("log_build_missing"))
             self.status_label.setText(self.i18n.t("compiler_status_failed"))
+            self.status_label.setProperty("state", "error")
             self.logger.log("log_build_failed")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def clear_log(self) -> None:
         self.log_output.clear()
         self.status_label.setText(self.i18n.t("compiler_status_idle"))
+        self.status_label.setProperty("state", "warn")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)

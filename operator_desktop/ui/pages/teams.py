@@ -5,7 +5,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ...core.api import RemoteControllerApi
 from ...core.i18n import I18n
 from ...core.settings import SettingsStore
-from ...core.theme import Theme, THEMES
+from ...core.theme import Theme, THEMES, build_dialog_stylesheet
 from ..common import GlassFrame, make_button
 from ..dialogs import AddMemberDialog, EditMemberDialog
 
@@ -45,24 +45,31 @@ class TeamsPage(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(16)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        header = QtWidgets.QVBoxLayout()
+        toolbar = GlassFrame(radius=18, tone="card_alt", tint_alpha=160, border_alpha=70)
+        toolbar.setObjectName("ToolbarCard")
+        header = QtWidgets.QVBoxLayout(toolbar)
+        header.setContentsMargins(16, 14, 16, 14)
+        header.setSpacing(6)
         self.title_label = QtWidgets.QLabel()
         self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
         self.subtitle_label.setObjectName("PageSubtitle")
         header.addWidget(self.title_label)
         header.addWidget(self.subtitle_label)
-        layout.addLayout(header)
+        layout.addWidget(toolbar)
 
-        body = QtWidgets.QHBoxLayout()
-        body.setSpacing(16)
+        body = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        body.setHandleWidth(8)
 
         self.list_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.list_card.setObjectName("Card")
         list_layout = QtWidgets.QVBoxLayout(self.list_card)
+        list_layout.setContentsMargins(14, 14, 14, 14)
+        list_layout.setSpacing(10)
         self.list_title = QtWidgets.QLabel()
-        self.list_title.setStyleSheet("font-weight: 600;")
+        self.list_title.setObjectName("CardSectionTitle")
         list_layout.addWidget(self.list_title)
         team_actions = QtWidgets.QHBoxLayout()
         self.add_team_button = make_button("", "ghost")
@@ -77,13 +84,15 @@ class TeamsPage(QtWidgets.QWidget):
         self.team_list.setMouseTracking(True)
         self.team_list.itemSelectionChanged.connect(self.on_team_selected)
         list_layout.addWidget(self.team_list, 1)
-        self.list_card.setMinimumWidth(200)
-        self.list_card.setMaximumWidth(280)
-        body.addWidget(self.list_card, 1)
+        self.list_card.setMinimumWidth(220)
+        self.list_card.setMaximumWidth(420)
+        body.addWidget(self.list_card)
 
         self.details_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         self.details_card.setObjectName("Card")
         details_layout = QtWidgets.QVBoxLayout(self.details_card)
+        details_layout.setContentsMargins(14, 14, 14, 14)
+        details_layout.setSpacing(10)
 
         self.details_stack = QtWidgets.QStackedWidget()
         placeholder = QtWidgets.QLabel()
@@ -107,10 +116,12 @@ class TeamsPage(QtWidgets.QWidget):
 
         self.team_status_label = QtWidgets.QLabel()
         self.team_status_value = QtWidgets.QLabel()
-        self.team_status_value.setStyleSheet("font-weight: 600;")
+        self.team_status_value.setObjectName("InlineStatus")
+        self.team_status_value.setProperty("state", "warn")
 
         self.team_subscription_label = QtWidgets.QLabel()
         self.team_subscription_value = QtWidgets.QLabel()
+        self.team_subscription_value.setObjectName("DetailValue")
 
         form.addWidget(self.team_name_label, 0, 0)
         form.addWidget(self.team_name_input, 0, 1, 1, 3)
@@ -140,7 +151,7 @@ class TeamsPage(QtWidgets.QWidget):
         self.unassigned_table.setAlternatingRowColors(True)
         self.unassigned_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.unassigned_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.unassigned_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.unassigned_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.unassigned_table.setMouseTracking(True)
         unassigned_header = self.unassigned_table.horizontalHeader()
         unassigned_header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -150,6 +161,9 @@ class TeamsPage(QtWidgets.QWidget):
         unassigned_header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.unassigned_table.verticalHeader().setDefaultSectionSize(40)
         unassigned_layout.addWidget(self.unassigned_table, 1)
+        self.unassigned_hint = QtWidgets.QLabel("Horizontal scroll indicates hidden columns")
+        self.unassigned_hint.setObjectName("TableOverflowHint")
+        unassigned_layout.addWidget(self.unassigned_hint)
 
         self.members_tab = QtWidgets.QWidget()
         members_layout = QtWidgets.QVBoxLayout(self.members_tab)
@@ -161,12 +175,15 @@ class TeamsPage(QtWidgets.QWidget):
         self.members_table.setAlternatingRowColors(True)
         self.members_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.members_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.members_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.members_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.members_table.setMouseTracking(True)
         header = self.members_table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.members_table.verticalHeader().setDefaultSectionSize(40)
         members_layout.addWidget(self.members_table, 1)
+        self.members_hint = QtWidgets.QLabel("Horizontal scroll indicates hidden columns")
+        self.members_hint.setObjectName("TableOverflowHint")
+        members_layout.addWidget(self.members_hint)
 
         member_actions = QtWidgets.QHBoxLayout()
         self.add_member_button = make_button("", "ghost")
@@ -222,9 +239,10 @@ class TeamsPage(QtWidgets.QWidget):
 
         self.details_stack.addWidget(details_container)
         details_layout.addWidget(self.details_stack, 1)
-        body.addWidget(self.details_card, 6)
-
-        layout.addLayout(body, 1)
+        body.addWidget(self.details_card)
+        body.setStretchFactor(0, 1)
+        body.setStretchFactor(1, 4)
+        layout.addWidget(body, 1)
 
         self.apply_translations()
         self.populate_team_list()
@@ -291,9 +309,11 @@ class TeamsPage(QtWidgets.QWidget):
                 self.i18n.t("table_delete"),
             ]
         )
+        self.unassigned_hint.setText("Horizontal scroll indicates hidden columns")
         self.add_member_button.setText(self.i18n.t("team_add_member"))
         self.edit_member_button.setText(self.i18n.t("team_edit_member"))
         self.remove_member_button.setText(self.i18n.t("team_remove_member"))
+        self.members_hint.setText("Horizontal scroll indicates hidden columns")
         self.tag_name_input.setPlaceholderText(self.i18n.t("tags_name_placeholder"))
         self._update_tag_controls_text()
         self.members_table.setHorizontalHeaderLabels(
@@ -437,8 +457,9 @@ class TeamsPage(QtWidgets.QWidget):
         is_active = bool(team.get("activity", True))
         status_key = "team_status_active" if is_active else "team_status_inactive"
         self.team_status_value.setText(self.i18n.t(status_key))
-        color = self.theme.colors["accent"] if is_active else self.theme.colors["danger"]
-        self.team_status_value.setStyleSheet(f"font-weight: 600; color: {color};")
+        self.team_status_value.setProperty("state", "ok" if is_active else "warn")
+        self.team_status_value.style().unpolish(self.team_status_value)
+        self.team_status_value.style().polish(self.team_status_value)
         activity_key = "team_activity_on" if is_active else "team_activity_off"
         self.team_subscription_value.setText(self.i18n.t(activity_key))
 
@@ -901,24 +922,7 @@ class TeamsPage(QtWidgets.QWidget):
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         dialog.setWindowTitle(self.i18n.t("team_remove_title"))
         dialog.setText(self.i18n.t("team_remove_body", name=team.get("name", "")))
-        dialog.setStyleSheet(
-            "QMessageBox {"
-            f"background: {self.theme.colors['card']};"
-            f"color: {self.theme.colors['text']};"
-            "}"
-            "QLabel {"
-            f"color: {self.theme.colors['text']};"
-            "}"
-            "QPushButton {"
-            f"background: {self.theme.colors['card_alt']};"
-            f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 10px;"
-            "padding: 6px 12px;"
-            "}"
-            "QPushButton:hover {"
-            f"border-color: {self.theme.colors['accent']};"
-            "}"
-        )
+        dialog.setStyleSheet(build_dialog_stylesheet(self.theme))
         confirm = dialog.addButton(
             self.i18n.t("team_remove_confirm"),
             QtWidgets.QMessageBox.ButtonRole.DestructiveRole,

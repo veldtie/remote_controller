@@ -49,7 +49,7 @@ class CookiesPage(QtWidgets.QWidget):
 
         self.search_input = QtWidgets.QLineEdit()
         self.search_input.setObjectName("SearchInput")
-        self.search_input.setMinimumWidth(240)
+        self.search_input.setMinimumWidth(280)
         self.search_input.setClearButtonEnabled(True)
         search_icon = load_icon("search", self.theme.name)
         if not search_icon.isNull():
@@ -79,26 +79,30 @@ class CookiesPage(QtWidgets.QWidget):
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setMouseTracking(True)
         self.table.setShowGrid(False)
+        self.table.viewport().installEventFilter(self)
         header_view = self.table.horizontalHeader()
-        header_view.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        header_view.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setStretchLastSection(False)
+        header_view.setMinimumSectionSize(52)
+        for index in range(self.table.columnCount()):
+            header_view.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.cellDoubleClicked.connect(self._emit_client_selected)
         table_layout.addWidget(self.table)
+        self.table_overflow_hint = QtWidgets.QLabel("Horizontal scroll indicates hidden columns")
+        self.table_overflow_hint.setObjectName("TableOverflowHint")
+        table_layout.addWidget(self.table_overflow_hint)
         layout.addWidget(self.table_card, 1)
 
         self.apply_translations()
         self.refresh_from_settings()
+        QtCore.QTimer.singleShot(0, self.update_adaptive_columns)
 
     def apply_translations(self) -> None:
         self.title_label.setText(self.i18n.t("cookies_title"))
         self.subtitle_label.setText(self.i18n.t("cookies_subtitle"))
         self.search_input.setPlaceholderText(self.i18n.t("cookies_search_placeholder"))
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
+        self.table_overflow_hint.setText("Horizontal scroll indicates hidden columns")
         self.table.setHorizontalHeaderLabels(
             [
                 self.i18n.t("table_name"),
@@ -109,6 +113,7 @@ class CookiesPage(QtWidgets.QWidget):
                 self.i18n.t("table_cookies"),
             ]
         )
+        self.update_adaptive_columns()
 
     def refresh_from_settings(self) -> None:
         self.clients = list(self.settings.get("clients", []) or [])
@@ -256,6 +261,46 @@ class CookiesPage(QtWidgets.QWidget):
             )
             export_button.setMenu(menu)
             self.table.setCellWidget(row, 5, export_button)
+        self.update_adaptive_columns()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.update_adaptive_columns()
+
+    def eventFilter(self, source: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if source is self.table.viewport() and event.type() == QtCore.QEvent.Type.Resize:
+            self.update_adaptive_columns()
+        return super().eventFilter(source, event)
+
+    def update_adaptive_columns(self) -> None:
+        header = self.table.horizontalHeader()
+        total = self.table.viewport().width()
+        if total <= 0:
+            return
+        config = {
+            0: (2.2, 180),
+            1: (2.2, 220),
+            2: (1.1, 130),
+            3: (1.3, 150),
+            4: (1.2, 140),
+            5: (1.2, 130),
+        }
+        min_total = sum(min_w for _, min_w in config.values())
+        if total <= min_total:
+            for column, (_, min_w) in config.items():
+                header.resizeSection(column, min_w)
+            return
+        extra = total - min_total
+        weight_total = sum(weight for weight, _ in config.values())
+        allocated = 0
+        widths: dict[int, int] = {}
+        for column, (weight, min_w) in config.items():
+            width = min_w + int(extra * (weight / weight_total))
+            widths[column] = width
+            allocated += width
+        widths[0] += total - allocated
+        for column, width in widths.items():
+            header.resizeSection(column, width)
 
     def _emit_client_selected(self, row: int, _column: int) -> None:
         item = self.table.item(row, 0)

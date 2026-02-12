@@ -46,44 +46,60 @@ class BackgroundWidget(QtWidgets.QWidget):
         painter.end()
 
     def _paint_background(self, painter: QtGui.QPainter, rect: QtCore.QRect) -> None:
-        gradient = QtGui.QLinearGradient(0, 0, rect.width(), rect.height())
+        gradient = QtGui.QLinearGradient(0, 0, 0, rect.height())
         gradient.setColorAt(0.0, QtGui.QColor(self.theme.colors["bg_start"]))
         gradient.setColorAt(1.0, QtGui.QColor(self.theme.colors["bg_end"]))
         painter.fillRect(rect, gradient)
 
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         accent = QtGui.QColor(self.theme.colors["accent"])
-        accent.setAlpha(36)
-        painter.setBrush(accent)
-        painter.drawEllipse(
-            QtCore.QPoint(int(rect.width() * 0.18), int(rect.height() * 0.12)),
-            260,
-            260,
-        )
+        accent_soft = QtGui.QColor(self.theme.colors.get("accent_2", self.theme.colors["accent"]))
 
-        accent.setAlpha(26)
-        painter.setBrush(accent)
-        painter.drawEllipse(
-            QtCore.QPoint(int(rect.width() * 0.82), int(rect.height() * 0.18)),
-            240,
-            240,
+        glow_1 = QtGui.QRadialGradient(
+            QtCore.QPointF(rect.width() * 0.12, rect.height() * -0.10),
+            max(rect.width(), rect.height()) * 0.48,
         )
+        glow_1.setColorAt(0.0, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 70))
+        glow_1.setColorAt(0.75, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 12))
+        glow_1.setColorAt(1.0, QtCore.Qt.GlobalColor.transparent)
+        painter.setBrush(glow_1)
+        painter.drawRect(rect)
 
-        accent.setAlpha(20)
-        painter.setBrush(accent)
-        painter.drawEllipse(
-            QtCore.QPoint(int(rect.width() * 0.7), int(rect.height() * 0.78)),
-            340,
-            340,
+        glow_2 = QtGui.QRadialGradient(
+            QtCore.QPointF(rect.width() * 0.88, rect.height() * 0.02),
+            max(rect.width(), rect.height()) * 0.44,
         )
+        glow_2.setColorAt(
+            0.0, QtGui.QColor(accent_soft.red(), accent_soft.green(), accent_soft.blue(), 56)
+        )
+        glow_2.setColorAt(
+            0.7, QtGui.QColor(accent_soft.red(), accent_soft.green(), accent_soft.blue(), 12)
+        )
+        glow_2.setColorAt(1.0, QtCore.Qt.GlobalColor.transparent)
+        painter.setBrush(glow_2)
+        painter.drawRect(rect)
 
-        highlight = QtGui.QColor(255, 255, 255, 18)
-        painter.setBrush(highlight)
-        painter.drawEllipse(
-            QtCore.QPoint(int(rect.width() * 0.45), int(rect.height() * -0.05)),
-            520,
-            520,
+        glow_3 = QtGui.QRadialGradient(
+            QtCore.QPointF(rect.width() * 0.45, rect.height() * 1.02),
+            max(rect.width(), rect.height()) * 0.42,
         )
+        glow_3.setColorAt(
+            0.0, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 38)
+        )
+        glow_3.setColorAt(
+            0.72, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 8)
+        )
+        glow_3.setColorAt(1.0, QtCore.Qt.GlobalColor.transparent)
+        painter.setBrush(glow_3)
+        painter.drawRect(rect)
+
+        sheen = QtGui.QLinearGradient(0, 0, rect.width(), rect.height())
+        sheen.setColorAt(0.0, QtGui.QColor(255, 255, 255, 22))
+        sheen.setColorAt(0.33, QtCore.Qt.GlobalColor.transparent)
+        sheen.setColorAt(0.72, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 24))
+        sheen.setColorAt(1.0, QtCore.Qt.GlobalColor.transparent)
+        painter.setBrush(sheen)
+        painter.drawRect(rect)
 
     def _build_blur_cache(self) -> None:
         if not self._blur_enabled:

@@ -14,7 +14,7 @@ from ...core.i18n import I18n
 from ...core.constants import APP_VERSION
 from ...core.logging import EventLogger
 from ...core.settings import SettingsStore
-from ...core.theme import THEMES
+from ...core.theme import THEMES, build_dialog_stylesheet
 from ..common import GlassFrame, load_icon, make_button
 from ..browser_catalog import browser_choices_from_config
 
@@ -236,7 +236,7 @@ class DashboardPage(QtWidgets.QWidget):
 
         self.search_input = QtWidgets.QLineEdit()
         self.search_input.setObjectName("SearchInput")
-        self.search_input.setMinimumWidth(240)
+        self.search_input.setMinimumWidth(280)
         self.search_input.setClearButtonEnabled(True)
         search_icon = load_icon("search", self.theme.name)
         if not search_icon.isNull():
@@ -287,6 +287,9 @@ class DashboardPage(QtWidgets.QWidget):
         self.table.verticalHeader().setDefaultSectionSize(56)
         self.table.itemChanged.connect(self.handle_item_changed)
         table_layout.addWidget(self.table)
+        self.table_overflow_hint = QtWidgets.QLabel("Shift + mouse wheel to reveal more columns")
+        self.table_overflow_hint.setObjectName("TableOverflowHint")
+        table_layout.addWidget(self.table_overflow_hint)
         self.splitter.addWidget(self.table_card)
 
         self.log_card = GlassFrame(radius=20, tone="card_strong", tint_alpha=180, border_alpha=70)
@@ -296,7 +299,7 @@ class DashboardPage(QtWidgets.QWidget):
         log_layout.setSpacing(10)
         log_header = QtWidgets.QHBoxLayout()
         self.log_title = QtWidgets.QLabel()
-        self.log_title.setStyleSheet("font-weight: 600;")
+        self.log_title.setObjectName("CardSectionTitle")
         log_header.addWidget(self.log_title)
         log_header.addStretch()
         self.log_close = make_button("", "ghost")
@@ -306,6 +309,9 @@ class DashboardPage(QtWidgets.QWidget):
         self.log_list = QtWidgets.QListWidget()
         self.log_list.setMouseTracking(True)
         log_layout.addWidget(self.log_list, 1)
+        self.log_overflow_hint = QtWidgets.QLabel("Logs are scrollable")
+        self.log_overflow_hint.setObjectName("TableOverflowHint")
+        log_layout.addWidget(self.log_overflow_hint)
         self.splitter.addWidget(self.log_card)
         self.splitter.setStretchFactor(0, 4)
         self.splitter.setStretchFactor(1, 1)
@@ -590,22 +596,26 @@ class DashboardPage(QtWidgets.QWidget):
         for tag in safe_tags[:max_visible]:
             label = QtWidgets.QLabel(str(tag.get("name")))
             color = str(tag.get("color") or "#64748b")
+            chip_color = QtGui.QColor(color)
+            luma = (chip_color.red() * 0.299) + (chip_color.green() * 0.587) + (chip_color.blue() * 0.114)
+            text_color = "#061325" if luma >= 150 else "#eef3ff"
+            label.setObjectName("TagText")
             label.setStyleSheet(
                 "QLabel {"
                 f"background: {color};"
-                "color: #0b0f16;"
+                f"color: {text_color};"
                 "padding: 2px 8px;"
                 "border-radius: 8px;"
                 "font-size: 11px;"
                 "font-weight: 600;"
+                "border: 1px solid rgba(255, 255, 255, 0.16);"
                 "}"
             )
             layout.addWidget(label)
         remaining = len(safe_tags) - max_visible
         if remaining > 0:
             more = QtWidgets.QLabel(f"+{remaining}")
-            more.setObjectName("Muted")
-            more.setStyleSheet("font-size: 11px;")
+            more.setObjectName("InlineHint")
             layout.addWidget(more)
         layout.addStretch()
         return container
@@ -892,9 +902,11 @@ class DashboardPage(QtWidgets.QWidget):
         self.search_input.setPlaceholderText(self.i18n.t("main_search_placeholder"))
         self.refresh_button.setText(self.i18n.t("main_refresh_button"))
         self.activity_button.setText(self.i18n.t("log_title"))
+        self.table_overflow_hint.setText("Horizontal scroll indicates hidden columns")
         self._configure_columns()
         self.log_title.setText(self.i18n.t("log_title"))
         self.log_close.setText(self.i18n.t("storage_close"))
+        self.log_overflow_hint.setText("Scroll to view older entries")
         if self.status_label is not None:
             self.status_label.setText(self.i18n.t("main_status_ready"))
         self.update_last_sync_label()
@@ -1083,19 +1095,8 @@ class DashboardPage(QtWidgets.QWidget):
 
         min_total = sum(min_w for _, min_w in config.values())
         if total <= min_total:
-            scale = total / min_total if min_total else 1
-            widths = {}
-            allocated = 0
-            min_size = header.minimumSectionSize()
             for col, (_, min_w) in config.items():
-                width = max(int(min_w * scale), min_size)
-                widths[col] = width
-                allocated += width
-            remainder = total - allocated
-            if widths:
-                widths[0] = max(widths[0] + remainder, min_size)
-            for col, width in widths.items():
-                header.resizeSection(col, width)
+                header.resizeSection(col, min_w)
             return
 
         extra = total - min_total
@@ -1161,8 +1162,7 @@ class DashboardPage(QtWidgets.QWidget):
         name_button.setFont(name_font)
         name_button.clicked.connect(lambda _, cid=client["id"]: self.client_selected.emit(cid))
         id_label = QtWidgets.QLabel(client.get("id", ""))
-        id_label.setObjectName("Muted")
-        id_label.setStyleSheet("font-size: 12px;")
+        id_label.setObjectName("InlineHint")
         text_stack.addWidget(name_button)
         text_stack.addWidget(id_label)
         button = QtWidgets.QToolButton()
@@ -1193,22 +1193,12 @@ class DashboardPage(QtWidgets.QWidget):
         button = QtWidgets.QToolButton()
         button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         button.setToolTip(self.i18n.t("button_more"))
-        button.setAutoRaise(True)
+        button.setAutoRaise(False)
+        button.setProperty("variant", "icon")
         button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        button.setFixedSize(40, 30)
+        button.setFixedSize(36, 30)
         button.setArrowType(QtCore.Qt.ArrowType.NoArrow)
-        button.setStyleSheet(
-            "QToolButton::menu-indicator { image: none; width: 0px; }"
-            "QToolButton {"
-            f"background: {self.theme.colors['card_alt']};"
-            f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 12px;"
-            "padding: 0;"
-            "}"
-            "QToolButton:hover {"
-            f"border-color: {self.theme.colors['accent']};"
-            "}"
-        )
+        button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
         more_icon = load_icon("more", self.theme.name)
         if more_icon.isNull():
             button.setText("...")
@@ -1274,24 +1264,7 @@ class DashboardPage(QtWidgets.QWidget):
         dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         dialog.setWindowTitle(self.i18n.t("dialog_delete_title"))
         dialog.setText(self.i18n.t("dialog_delete_body"))
-        dialog.setStyleSheet(
-            "QMessageBox {"
-            f"background: {self.theme.colors['card']};"
-            f"color: {self.theme.colors['text']};"
-            "}"
-            "QLabel {"
-            f"color: {self.theme.colors['text']};"
-            "}"
-            "QPushButton {"
-            f"background: {self.theme.colors['card_alt']};"
-            f"border: 1px solid {self.theme.colors['border']};"
-            "border-radius: 10px;"
-            "padding: 6px 12px;"
-            "}"
-            "QPushButton:hover {"
-            f"border-color: {self.theme.colors['accent']};"
-            "}"
-        )
+        dialog.setStyleSheet(build_dialog_stylesheet(self.theme))
         confirm = dialog.addButton(
             self.i18n.t("dialog_delete_confirm"),
             QtWidgets.QMessageBox.ButtonRole.DestructiveRole,
