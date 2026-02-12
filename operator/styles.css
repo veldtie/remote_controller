@@ -1817,3 +1817,130 @@ body.hidden-manage .hidden-desktop-controls {
 body:not(.hidden-manage) .hidden-desktop-controls {
   display: none !important;
 }
+
+/* Dual-stream HVNC styles */
+.hvnc-dual-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  z-index: 1;
+}
+
+#screenFrame {
+  position: relative;
+}
+
+#screen {
+  position: relative;
+  z-index: 2;
+}
+
+/* When HVNC is primary (main is secondary/hidden) */
+body.hvnc-primary #screen {
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.hvnc-primary #hvncScreen {
+  z-index: 2;
+  display: block !important;
+}
+
+/* Dual-stream controls */
+.dual-stream-controls {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: rgba(15, 22, 35, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.dual-stream-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dual-stream-toggle:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.dual-stream-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.indicator-dot.main-active {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.indicator-dot.hvnc-active {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+
+/* Side-by-side mode for dual-stream */
+body.dual-stream-split #screenFrame {
+  display: flex;
+  gap: 4px;
+}
+
+body.dual-stream-split #screen,
+body.dual-stream-split #hvncScreen {
+  position: relative;
+  width: 50%;
+  height: 100%;
+  z-index: 1;
+}
+
+body.dual-stream-split #hvncScreen {
+  display: block !important;
+  border-left: 2px solid var(--accent);
+}
+
+/* Picture-in-picture mode */
+body.dual-stream-pip #hvncScreen {
+  display: block !important;
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 320px;
+  height: 180px;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}

