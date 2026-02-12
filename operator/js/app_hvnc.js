@@ -341,6 +341,13 @@
       }
     }
 
+    // Update integrated popup window (hvncPopup)
+    if (remdesk.hvncPopup && imageData) {
+      remdesk.hvncPopup.updateFrame(imageData);
+    } else if (remdesk.hvncPopup && !imageData) {
+      remdesk.hvncPopup.showPlaceholder();
+    }
+
     // Send frame to external HVNC window
     if (hvncExternalWindow && !hvncExternalWindow.closed && imageData) {
       sendToHvncWindow("frame", { frame: imageData });

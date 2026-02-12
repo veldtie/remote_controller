@@ -49,6 +49,7 @@
       body: document.getElementById("hvncPopupBody"),
       screenFrame: document.getElementById("hvncPopupScreenFrame"),
       video: document.getElementById("hvncPopupVideo"),
+      img: document.getElementById("hvncPopupImg"),
       placeholder: document.getElementById("hvncPopupPlaceholder"),
       statusBar: document.getElementById("hvncPopupStatus"),
       controlPanel: document.getElementById("hvncPopupControlPanel"),
@@ -89,7 +90,8 @@
       </div>
       <div class="hvnc-popup-body" id="hvncPopupBody">
         <div class="hvnc-popup-screen-frame" id="hvncPopupScreenFrame" tabindex="0">
-          <video id="hvncPopupVideo" autoplay playsinline muted></video>
+          <video id="hvncPopupVideo" autoplay playsinline muted style="display:none;"></video>
+          <img id="hvncPopupImg" class="hvnc-popup-img" alt="HVNC Screen" style="display:none;" />
           <div class="hvnc-popup-placeholder" id="hvncPopupPlaceholder">
             <span class="hvnc-popup-icon">🖥️</span>
             <span class="hvnc-popup-text">HVNC Desktop</span>
@@ -550,6 +552,7 @@
     
     if (stream) {
       hvncPopupDom.video.style.display = "block";
+      if (hvncPopupDom.img) hvncPopupDom.img.style.display = "none";
       if (hvncPopupDom.placeholder) {
         hvncPopupDom.placeholder.style.display = "none";
       }
@@ -558,6 +561,35 @@
       if (hvncPopupDom.placeholder) {
         hvncPopupDom.placeholder.style.display = "flex";
       }
+    }
+  }
+
+  /**
+   * Update HVNC frame image (for static frame mode)
+   */
+  function updateHvncFrame(base64Data) {
+    if (!hvncPopupDom?.img) return;
+    
+    if (base64Data) {
+      hvncPopupDom.img.src = "data:image/jpeg;base64," + base64Data;
+      hvncPopupDom.img.style.display = "block";
+      if (hvncPopupDom.video) hvncPopupDom.video.style.display = "none";
+      if (hvncPopupDom.placeholder) {
+        hvncPopupDom.placeholder.style.display = "none";
+      }
+    }
+  }
+
+  /**
+   * Show placeholder (no HVNC active)
+   */
+  function showHvncPlaceholder() {
+    if (!hvncPopupDom) return;
+    
+    if (hvncPopupDom.img) hvncPopupDom.img.style.display = "none";
+    if (hvncPopupDom.video) hvncPopupDom.video.style.display = "none";
+    if (hvncPopupDom.placeholder) {
+      hvncPopupDom.placeholder.style.display = "flex";
     }
   }
 
@@ -682,9 +714,8 @@
       hvncPopupState.position.x = e.clientX - hvncPopupState.dragOffset.x;
       hvncPopupState.position.y = e.clientY - hvncPopupState.dragOffset.y;
       
-      // Keep in bounds
-      hvncPopupState.position.x = Math.max(0, Math.min(window.innerWidth - 100, hvncPopupState.position.x));
-      hvncPopupState.position.y = Math.max(0, Math.min(window.innerHeight - 50, hvncPopupState.position.y));
+      // Allow moving outside window bounds (only keep title bar grabbable)
+      hvncPopupState.position.y = Math.max(-30, hvncPopupState.position.y);
       
       applyHvncPopupPosition();
     }
@@ -715,6 +746,8 @@
     minimize: minimizeHvncPopup,
     toggleMaximize: toggleMaximizeHvncPopup,
     setVideoStream: setHvncVideoStream,
+    updateFrame: updateHvncFrame,
+    showPlaceholder: showHvncPlaceholder,
     setStatus: setHvncPopupStatus,
     sendControl: sendHvncControl,
     releaseInputs: releaseHvncInputs,
