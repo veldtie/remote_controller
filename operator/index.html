@@ -10,7 +10,11 @@
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
+<<<<<<< HEAD
   <link rel="stylesheet" href="styles.css?v=20260212-1" />
+=======
+  <link rel="stylesheet" href="styles.css?v=20260211-dual" />
+>>>>>>> dff38be9a234cf7e3593789553260714391d0ccd
 </head>
 <body class="view-mode">
   <div id="managePanel">
@@ -385,7 +389,23 @@
   </div>
 
   <div id="screenFrame" tabindex="0">
+    <!-- Main desktop video (primary view, or real desktop in dual-stream mode) -->
     <video id="screen" autoplay playsinline muted></video>
+    <!-- HVNC desktop video (only visible in dual-stream HVNC mode) -->
+    <video id="hvncScreen" autoplay playsinline muted class="hvnc-dual-video" style="display: none;"></video>
+  </div>
+
+  <!-- Dual-stream controls (shown when in HVNC dual-stream mode) -->
+  <div id="dualStreamControls" class="dual-stream-controls" style="display: none;">
+    <button id="dualStreamToggle" class="dual-stream-toggle" type="button" title="Switch between Main/HVNC view">
+      <span id="dualStreamLabel">Main Desktop</span>
+    </button>
+    <div class="dual-stream-indicator">
+      <span class="indicator-dot main-active" id="mainIndicator"></span>
+      <span>Main</span>
+      <span class="indicator-dot" id="hvncIndicator"></span>
+      <span>HVNC</span>
+    </div>
   </div>
 
   <!-- HVNC Popup Window -->
@@ -471,9 +491,9 @@
       document.head.appendChild(script);
     }
   </script>
-  <script src="js/app_core.js?v=20260211-1" defer></script>
+  <script src="js/app_core.js?v=20260211-dual" defer></script>
   <script src="js/app_display.js?v=20260203-2" defer></script>
-  <script src="js/app_connection.js?v=20260210-2" defer></script>
+  <script src="js/app_connection.js?v=20260211-dual" defer></script>
   <script src="js/app_storage.js?v=20260203-2" defer></script>
   <script src="js/app_hvnc.js?v=20260211-1" defer></script>
   <script src="js/app_shell.js?v=20260210-1" defer></script>

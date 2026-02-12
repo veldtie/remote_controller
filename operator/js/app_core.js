@@ -206,7 +206,12 @@
     lastFrameBounds: null,
     metricsCache: null,
     layoutTimer: null,
-    sessionMode: "manage"
+    sessionMode: "manage",
+    // Dual-stream HVNC state
+    dualStreamActive: false,
+    dualStreamMode: "main",  // "main", "hvnc", "split", "pip"
+    mainVideoTrack: null,
+    hvncVideoTrack: null
   };
 
   const dom = {
@@ -254,7 +259,14 @@
     // Hidden Desktop Controls
     hiddenDesktopControls: document.getElementById("hiddenDesktopControls"),
     inputBlockingToggle: document.getElementById("inputBlockingToggle"),
-    inputBlockingStatus: document.getElementById("inputBlockingStatus")
+    inputBlockingStatus: document.getElementById("inputBlockingStatus"),
+    // Dual-stream HVNC elements
+    hvncScreenEl: document.getElementById("hvncScreen"),
+    dualStreamControls: document.getElementById("dualStreamControls"),
+    dualStreamToggle: document.getElementById("dualStreamToggle"),
+    dualStreamLabel: document.getElementById("dualStreamLabel"),
+    mainIndicator: document.getElementById("mainIndicator"),
+    hvncIndicator: document.getElementById("hvncIndicator")
   };
 
   const KEY_MAP = {

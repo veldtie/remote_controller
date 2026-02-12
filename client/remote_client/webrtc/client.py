@@ -536,19 +536,42 @@ class WebRTCClient:
                     await _apply_ice_candidate(message)
                 pending_ice.clear()
 
-            offered_kinds = {
-                transceiver.kind for transceiver in peer_connection.getTransceivers()
-            }
-            logger.info("Offered kinds from operator: %s, available tracks: %s", 
-                       offered_kinds, [t.kind for t in media_tracks])
-            for track in media_tracks:
-                if track.kind in offered_kinds:
-                    logger.info("Adding track: kind=%s, id=%s", track.kind, getattr(track, 'id', 'unknown'))
-                    sender = peer_connection.addTrack(track)
-                    if track.kind == "video":
-                        self._video_sender = sender
-                        await self._tune_video_sender(sender, bitrate_bps=_resolve_profile_bitrate(None))
-                        logger.info("Video sender configured")
+            # Count offered transceivers by kind
+            transceivers = peer_connection.getTransceivers()
+            offered_video_count = sum(1 for t in transceivers if t.kind == "video")
+            offered_audio_count = sum(1 for t in transceivers if t.kind == "audio")
+            
+            # Count available tracks by kind  
+            video_tracks = [t for t in media_tracks if t.kind == "video"]
+            audio_tracks = [t for t in media_tracks if t.kind == "audio"]
+            
+            logger.info("Offered transceivers: video=%d, audio=%d | Available tracks: video=%d, audio=%d", 
+                       offered_video_count, offered_audio_count, len(video_tracks), len(audio_tracks))
+            
+            # Add video tracks (up to the number of offered transceivers)
+            video_senders = []
+            for i, track in enumerate(video_tracks):
+                if i >= offered_video_count:
+                    logger.info("Skipping video track %d - no more transceivers available", i)
+                    break
+                track_id = getattr(track, 'id', getattr(track, '_id', f'video_{i}'))
+                track_label = getattr(track, 'label', getattr(track, '_label', f'Video {i}'))
+                logger.info("Adding video track %d: id=%s, label=%s", i, track_id, track_label)
+                sender = peer_connection.addTrack(track)
+                video_senders.append(sender)
+                await self._tune_video_sender(sender, bitrate_bps=_resolve_profile_bitrate(None))
+            
+            # Store primary video sender for profile changes
+            if video_senders:
+                self._video_sender = video_senders[0]
+                logger.info("Video senders configured: %d", len(video_senders))
+            
+            # Add audio tracks
+            for i, track in enumerate(audio_tracks):
+                if i >= offered_audio_count:
+                    break
+                logger.info("Adding audio track %d", i)
+                peer_connection.addTrack(track)
 
             answer = await peer_connection.createAnswer()
             await peer_connection.setLocalDescription(answer)

