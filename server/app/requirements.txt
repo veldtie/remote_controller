@@ -1,4 +1,5 @@
+asyncpg==0.29.0
 fastapi
+pydantic
 uvicorn
 websockets>=12,<13
-asyncpg==0.29.0

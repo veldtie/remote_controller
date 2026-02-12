@@ -318,22 +318,21 @@ TRANSLATIONS = {
         "instructions_title": "Instructions",
         "instructions_subtitle": "How to use the operator console",
         "instructions_body": """
-            <h3>Quick start</h3>
-              <ol>
-                <li>Sign in with your operator account ID and password.</li>
-                <li>Open Clients to view connected devices.</li>
-                <li>Click Connect to start a remote session.</li>
-                <li>Use Storage to browse and download files with permission.</li>
-                <li>Use Compiler to build a Windows client from the selected folder.</li>
-                <li>Open Settings to change language, or log out.</li>
-              </ol>
-            <h3>Security &amp; compliance</h3>
+            <h3>Operator workflow</h3>
+            <ol>
+              <li>Sign in with your operator account ID and password.</li>
+              <li>Open Clients and use search or filters to find a device.</li>
+              <li>Open the client card and click Connect to launch the session.</li>
+              <li>Use Storage to browse/download files, Cookies for browser exports, and Proxy for SOCKS5 details.</li>
+              <li>Use Build to package a Windows client and assign a team if needed.</li>
+              <li>In Settings, change language/theme or download error logs.</li>
+            </ol>
+            <h3>Remote sessions &amp; safety</h3>
             <ul>
-              <li>Only access devices you are authorized to manage.</li>
-              <li>Protect session tokens and IDs like passwords.</li>
-              <li>Support cookie exports.</li>
-              <li>Support proxy exports.</li>
-              <li>Keep audit logs for support sessions.</li>
+              <li>Toggle Manage/View to enable or disable remote input.</li>
+              <li>If HVNC is available, switch view modes: Main, HVNC, Split, or PiP.</li>
+              <li>Protect tokens, session IDs, and downloads like credentials.</li>
+              <li>Access only authorized devices and retain required audit logs.</li>
             </ul>
         """,
         "nav_teams": "My team",
@@ -745,22 +744,21 @@ TRANSLATIONS.update(
             "instructions_title": "使用说明",
             "instructions_subtitle": "如何使用操作员控制台",
             "instructions_body": """
-            <h3>快速开始</h3>
+            <h3>????</h3>
             <ol>
-              <li>使用操作员账户 ID 和密码登录。</li>
-              <li>在“客户端”查看已连接设备。</li>
-              <li>点击“连接”开始远程会话。</li>
-              <li>使用“存储”在授权下浏览并下载文件。</li>
-              <li>在“编译器”从选定文件夹构建 Windows 客户端。</li>
-              <li>在“设置”中切换主题或语言，或退出登录。</li>
+              <li>??????? ID ??????</li>
+              <li>????????????????????</li>
+              <li>???????????????????</li>
+              <li>????????/??????Cookies??????????Proxy??? SOCKS5 ???</li>
+              <li>????????? Windows ????????????</li>
+              <li>??????????/??????????</li>
             </ol>
-            <h3>安全与合规</h3>
+            <h3>???????</h3>
             <ul>
-              <li>仅访问你被授权管理的设备。</li>
-              <li>妥善保护会话令牌和 ID，等同于密码。</li>
-              <li>支持导出 cookies。</li>
-              <li>支持导出代理。</li>
-              <li>为支持会话保留审计日志。</li>
+              <li>?????/??????????</li>
+              <li>??? HVNC???????????HVNC????????</li>
+              <li>??????? ID ???????????</li>
+              <li>???????????????????</li>
             </ul>
         """,
         "nav_teams": "团队",
@@ -1166,22 +1164,21 @@ TRANSLATIONS.update(
             "instructions_title": "Instrucciones",
             "instructions_subtitle": "Cómo usar la consola del operador",
             "instructions_body": """
-            <h3>Inicio rápido</h3>
+            <h3>Flujo de trabajo</h3>
             <ol>
-              <li>Inicia sesión con tu ID de operador y contraseña.</li>
-              <li>Abre Clientes para ver los dispositivos conectados.</li>
-              <li>Haz clic en Conectar para iniciar una sesión remota.</li>
-              <li>Usa Almacenamiento para explorar y descargar archivos con permiso.</li>
-              <li>Usa Compilador para crear un cliente Windows desde la carpeta seleccionada.</li>
-              <li>En Ajustes cambia tema o idioma, o cierra sesión.</li>
+              <li>Inicia sesi?n con tu ID de operador y contrase?a.</li>
+              <li>Abre Clientes y usa la b?squeda o filtros para encontrar un dispositivo.</li>
+              <li>Abre la ficha del cliente y haz clic en Conectar para iniciar la sesi?n.</li>
+              <li>Usa Almacenamiento para explorar/descargar archivos, Cookies para exportaciones del navegador y Proxy para datos SOCKS5.</li>
+              <li>Usa Compilador para empaquetar un cliente Windows y asignar un equipo si hace falta.</li>
+              <li>En Ajustes cambia idioma/tema o descarga registros de error.</li>
             </ol>
-            <h3>Seguridad y cumplimiento</h3>
+            <h3>Sesi?n remota y seguridad</h3>
             <ul>
-              <li>Accede solo a dispositivos que estés autorizado a gestionar.</li>
-              <li>Protege tokens e IDs de sesión como contraseñas.</li>
-              <li>Soporte de exportación de cookies.</li>
-              <li>Soporte de exportación de proxies.</li>
-              <li>Conserva registros de auditoría de las sesiones.</li>
+              <li>Alterna Gestionar/Ver para activar o desactivar el control de entrada.</li>
+              <li>Si hay HVNC, cambia el modo de vista: Principal, HVNC, Dividida o PiP.</li>
+              <li>Protege tokens, IDs de sesi?n y descargas como credenciales.</li>
+              <li>Accede solo a dispositivos autorizados y conserva los registros requeridos.</li>
             </ul>
         """,
         "nav_teams": "Equipos",
@@ -1607,22 +1604,21 @@ TRANSLATIONS.update(
             "instructions_title": "Инструкции",
             "instructions_subtitle": "Как пользоваться консолью оператора",
             "instructions_body": """
-            <h3>Быстрый старт</h3>
+            <h3>??????? ???????</h3>
             <ol>
-              <li>Войдите, используя ID оператора и пароль.</li>
-              <li>Откройте «Клиенты», чтобы увидеть подключенные устройства.</li>
-              <li>Нажмите «Подключить», чтобы начать удаленную сессию.</li>
-              <li>Используйте «Хранилище» для просмотра и скачивания файлов с разрешения.</li>
-              <li>В «Сборщике» создайте Windows-клиент из выбранной папки.</li>
-              <li>В «Настройках» меняйте тему, язык или выходите из аккаунта.</li>
+              <li>??????? ?? ID ????????? ? ??????.</li>
+              <li>???????? ????????? ? ??????? ?????????? ????? ????? ??? ???????.</li>
+              <li>???????? ???????? ??????? ? ??????? ????????????, ????? ?????? ??????.</li>
+              <li>??????????? ??????????? ??? ??????, ?Cookies? ??? ???????? ? ?Proxy? ??? ?????? SOCKS5.</li>
+              <li>? ?????????? ???????? Windows-?????? ? ??? ????????????? ??????? ???????.</li>
+              <li>? ???????????? ??????? ????/???? ??? ?????????? ?????? ??????.</li>
             </ol>
-            <h3>Безопасность и соответствие</h3>
+            <h3>????????? ?????? ? ????????????</h3>
             <ul>
-              <li>Доступ только к устройствам, которыми вы уполномочены управлять.</li>
-              <li>Защищайте токены и ID сессий как пароли.</li>
-              <li>Поддержка выгрузки куков.</li>
-              <li>Поддержка выгрузки прокси.</li>
-              <li>Сохраняйте аудит-логи для сессий поддержки.</li>
+              <li>???????????? ???????????/?????????, ????? ???????? ??? ????????? ????.</li>
+              <li>???? ???????? HVNC, ??????? ??????: ???????, HVNC, ???????????, ??? ????????-?-????????.</li>
+              <li>????????? ??????, ID ?????? ? ???????? ??? ??????.</li>
+              <li>????????? ?????? ? ???????????? ???????????? ? ?????????? ?????-????.</li>
             </ul>
         """,
             "nav_teams": "Моя команда",

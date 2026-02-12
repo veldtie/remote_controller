@@ -1,18 +1,22 @@
+PyInstaller
 PyQt6>=6.5
 PyQt6-WebEngine>=6.5
-requests>=2.31
-PyInstaller
-fastapi
-uvicorn
-websockets>=12,<13
-asyncpg==0.29.0
 aiortc
-websockets>=12,<13
-mss
+asyncpg==0.29.0
 av
-sounddevice
-numpy
+comtypes; platform_system == "Windows"
 cryptography
+fastapi
 geoip2
+mss
+numpy
+Pillow
+pydantic
 pynput; platform_system == "Windows"
+pyperclip; platform_system == "Windows"
 pywin32; platform_system == "Windows"
+requests>=2.31
+sounddevice
+uvicorn
+websocket-client
+websockets>=12,<13
