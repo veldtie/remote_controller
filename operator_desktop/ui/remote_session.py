@@ -145,7 +145,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._last_download_dir = QtCore.QStandardPaths.writableLocation(
             QtCore.QStandardPaths.StandardLocation.DownloadLocation
         )
-        self.setWindowTitle(f"RemDesk - {session_id}")
+        self.setWindowTitle(f"OBNULENIE - {session_id}")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         if not show_window:
             self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)

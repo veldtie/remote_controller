@@ -81,6 +81,15 @@ class MainShell(QtWidgets.QWidget):
             self.nav_buttons[key] = button
             sidebar_layout.addWidget(button)
             button.clicked.connect(lambda _, page_key=key: self.switch_page(page_key))
+            if key == "cookies":
+                self.local_desktop_button = make_button("Local Desktop", "nav")
+                self.local_desktop_button.setProperty("nav", True)
+                self.local_desktop_button.setToolTip("Open local desktop for working with client profiles")
+                self.local_desktop_button.setIcon(
+                    self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+                )
+                self.local_desktop_button.clicked.connect(self.open_local_desktop)
+                sidebar_layout.addWidget(self.local_desktop_button)
 
         self.settings_label = QtWidgets.QLabel()
         self.settings_label.setObjectName("SidebarSection")
@@ -116,16 +125,6 @@ class MainShell(QtWidgets.QWidget):
         self._apply_nav_icon(self.clear_data_button, "trash")
         self.clear_data_button.clicked.connect(self.clear_local_data)
         sidebar_layout.addWidget(self.clear_data_button)
-
-        # Local Desktop button
-        self.local_desktop_button = make_button("Local Desktop", "nav")
-        self.local_desktop_button.setProperty("nav", True)
-        self.local_desktop_button.setToolTip("Open local desktop for working with client profiles")
-        self.local_desktop_button.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
-        )
-        self.local_desktop_button.clicked.connect(self.open_local_desktop)
-        sidebar_layout.addWidget(self.local_desktop_button)
 
         sidebar_layout.addStretch()
         self.operator_label = QtWidgets.QLabel()
@@ -631,7 +630,7 @@ class MainShell(QtWidgets.QWidget):
         if not client_id:
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "Unable to open session: missing client id.",
             )
             return False
@@ -695,7 +694,7 @@ class MainShell(QtWidgets.QWidget):
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "PyQt6-WebEngine is required to open remote sessions in a window.",
             )
             return False
@@ -726,7 +725,7 @@ class MainShell(QtWidgets.QWidget):
         if not client_id:
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "Unable to open storage: missing client id.",
             )
             return False
@@ -766,7 +765,7 @@ class MainShell(QtWidgets.QWidget):
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "PyQt6-WebEngine is required to open storage sessions in a window.",
             )
             return False
@@ -793,7 +792,7 @@ class MainShell(QtWidgets.QWidget):
         if not client_id:
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "Unable to open session: missing client id.",
             )
             return None
@@ -831,7 +830,7 @@ class MainShell(QtWidgets.QWidget):
         if not webengine_available():
             QtWidgets.QMessageBox.warning(
                 self,
-                "RemDesk",
+                APP_NAME,
                 "PyQt6-WebEngine is required to export client data.",
             )
             return None

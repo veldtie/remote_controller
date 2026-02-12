@@ -123,6 +123,10 @@ def build_stylesheet(theme: Theme) -> str:
         color: {c["muted"]};
         font-size: 11px;
     }}
+    QLabel#AbeDialogTitle {{
+        font-size: 20px;
+        font-weight: 700;
+    }}
     QLabel#CardSectionTitle {{
         font-size: 14px;
         font-weight: 650;
@@ -181,6 +185,13 @@ def build_stylesheet(theme: Theme) -> str:
     QDialog {{
         background: {c["card_strong"]};
     }}
+    QDialog#AbeDiagnosticsDialog {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(24, 30, 44, 0.78),
+            stop:1 rgba(12, 18, 28, 0.90));
+        border: 1px solid {c["border"]};
+        border-radius: 18px;
+    }}
     QFrame#ConnectionBanner {{
         background: rgba(40, 16, 20, 0.68);
         border: 1px solid rgba(255, 107, 107, 0.5);
@@ -233,8 +244,16 @@ def build_stylesheet(theme: Theme) -> str:
         background: transparent;
         border: none;
     }}
+    QScrollArea#AbeDiagnosticsScroll {{
+        background: transparent;
+        border: none;
+    }}
     QWidget#PageScrollViewport,
     QWidget#PageScrollContent {{
+        background: transparent;
+    }}
+    QWidget#AbeDiagnosticsViewport,
+    QWidget#AbeDiagnosticsContent {{
         background: transparent;
     }}
     QWidget#TagContainer {{
@@ -242,6 +261,11 @@ def build_stylesheet(theme: Theme) -> str:
     }}
     QLabel#Muted {{
         color: {c["muted"]};
+    }}
+    QLabel#ProxyBodyLarge {{
+        color: {c["text"]};
+        font-size: 14px;
+        line-height: 1.45;
     }}
     QLabel#TagHint {{
         color: {c["muted"]};
@@ -537,6 +561,34 @@ def build_stylesheet(theme: Theme) -> str:
         border: none;
         padding: 0;
     }}
+    QProgressBar {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid {c["border"]};
+        border-radius: 10px;
+        text-align: center;
+        color: {c["text"]};
+    }}
+    QProgressBar::chunk {{
+        margin: 1px;
+        border-radius: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["accent"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="idle"]::chunk {{
+        background: rgba(255, 255, 255, 0.22);
+    }}
+    QProgressBar[status="active"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["accent"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="ok"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["good"]}, stop:1 {c["accent_2"]});
+    }}
+    QProgressBar[status="error"]::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {c["danger"]}, stop:1 {c["warn"]});
+    }}
     QTableWidget {{
         background: transparent;
         alternate-background-color: {c["table_alt"]};
@@ -778,6 +830,22 @@ def build_stylesheet(theme: Theme) -> str:
     QLabel#InlineHint {{
         color: {c["muted"]};
         font-size: 12px;
+    }}
+    QLabel#AbeBoolValue {{
+        font-weight: 650;
+    }}
+    QLabel#AbeBoolValue[state="ok"] {{
+        color: {c["good"]};
+    }}
+    QLabel#AbeBoolValue[state="bad"] {{
+        color: {c["danger"]};
+    }}
+    QLabel#AbeBoolValue[state="na"] {{
+        color: {c["muted"]};
+    }}
+    QFrame#AbeSeparator {{
+        background: rgba(255, 255, 255, 0.12);
+        border: none;
     }}
     QLabel#TagText {{
         font-size: 11px;
