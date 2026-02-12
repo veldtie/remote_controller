@@ -2064,11 +2064,13 @@ body.dual-stream-pip #hvncScreen {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  position: relative;
+  z-index: 2;
 }
 
 .hvnc-popup-screen-frame video.active,
 .hvnc-popup-screen-frame img.active {
-  display: block;
+  display: block !important;
 }
 
 .hvnc-popup-placeholder {
@@ -2081,6 +2083,7 @@ body.dual-stream-pip #hvncScreen {
   color: rgba(255, 255, 255, 0.4);
   gap: 12px;
   pointer-events: none;
+  z-index: 1;
 }
 
 .hvnc-popup-placeholder.hidden {

