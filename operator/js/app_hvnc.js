@@ -412,7 +412,26 @@
   }
 
   /**
-   * Show HVNC popup window - opens as a separate browser window
+   * Check if running in PyQt6 WebEngine (desktop app) or browser
+   */
+  function isDesktopApp() {
+    return typeof qt !== 'undefined' || 
+           (typeof window.remdeskHost !== 'undefined') ||
+           (typeof QWebChannel !== 'undefined');
+  }
+
+  /**
+   * Get session ID from state or URL
+   */
+  function getSessionId() {
+    if (state && state.sessionId) return state.sessionId;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('session_id') || 'unknown';
+  }
+
+  /**
+   * Show HVNC popup window - opens as a separate window
+   * Uses QWebChannel for PyQt6 desktop app, window.open for browser
    */
   function showHvncWindow() {
     // Check if window already exists and is open
@@ -421,13 +440,29 @@
       return;
     }
 
-    // Calculate window position (centered on screen)
+    const sessionId = getSessionId();
+
+    // Try PyQt6 QWebChannel first (desktop app)
+    if (isDesktopApp() && window.remdeskHost && window.remdeskHost.openHvncWindow) {
+      console.log("Opening HVNC window via QWebChannel");
+      window.remdeskHost.openHvncWindow("hidden", sessionId);
+      hvncState.windowOpen = true;
+      
+      // Start HVNC if not already active
+      if (!hvncState.active) {
+        startHvnc();
+      } else {
+        startPreview();
+      }
+      return;
+    }
+
+    // Fallback to window.open for browser
     const width = 850;
     const height = 600;
     const left = (screen.width - width) / 2;
     const top = (screen.height - height) / 2;
 
-    // Open new window
     hvncExternalWindow = window.open(
       "hvnc_window.html",
       "HVNCWindow",
@@ -437,16 +472,29 @@
     if (hvncExternalWindow) {
       hvncState.windowOpen = true;
       
-      // Start HVNC if not already active
       if (!hvncState.active) {
         startHvnc();
       } else {
-        // Just start preview if HVNC already active
         startPreview();
       }
     } else {
       console.error("Failed to open HVNC window - popup may be blocked");
-      alert("Failed to open HVNC window. Please allow popups for this site.");
+      // In desktop app, try QWebChannel as last resort
+      if (isDesktopApp()) {
+        console.log("Retrying via QWebChannel...");
+        // Wait for QWebChannel to initialize
+        setTimeout(() => {
+          if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
+            window.remdeskHost.openHvncWindow("hidden", sessionId);
+            hvncState.windowOpen = true;
+            if (!hvncState.active) startHvnc();
+          } else {
+            setHvncStatus("HVNC: Window open failed", "error");
+          }
+        }, 500);
+      } else {
+        alert("Failed to open HVNC window. Please allow popups for this site.");
+      }
     }
   }
 
@@ -462,7 +510,30 @@
   }
 
   /**
-   * Handle messages from HVNC external window
+   * Called by PyQt when HVNC window is opened
+   */
+  function _onWindowOpened(windowType, sessionId) {
+    console.log(`HVNC window opened: ${windowType} for session ${sessionId}`);
+    hvncState.windowOpen = true;
+    
+    // Start HVNC if not active
+    if (!hvncState.active) {
+      startHvnc();
+    } else {
+      startPreview();
+    }
+  }
+
+  /**
+   * Called by PyQt when HVNC window is closed
+   */
+  function _onWindowClosed(windowType) {
+    console.log(`HVNC window closed: ${windowType}`);
+    hvncState.windowOpen = false;
+  }
+
+  /**
+   * Handle messages from HVNC external window (browser mode)
    */
   function handleHvncWindowMessage(event) {
     const data = event.data;
@@ -470,7 +541,6 @@
 
     switch (data.action) {
       case "ready":
-        // Window is ready, send current settings and state
         sendToHvncWindow("settings", { settings: hvncState.settings });
         if (hvncState.active) {
           sendToHvncWindow("status", { 
@@ -481,7 +551,6 @@
         break;
 
       case "action":
-        // Forward HVNC action to client
         if (data.hvncAction) {
           const payload = { ...data };
           delete payload.type;
@@ -492,7 +561,6 @@
         break;
 
       case "settings_changed":
-        // Update settings
         if (data.setting && data.value !== undefined) {
           hvncState.settings[data.setting] = data.value;
           if (data.setting === "interval") {
@@ -502,14 +570,13 @@
         break;
 
       case "closed":
-        // Window was closed
         hvncExternalWindow = null;
         hvncState.windowOpen = false;
         break;
     }
   }
 
-  // Listen for messages from HVNC window
+  // Listen for messages from HVNC window (browser mode)
   window.addEventListener("message", handleHvncWindowMessage);
 
   /**
@@ -884,6 +951,10 @@
     updatePreviewImage: updatePreviewImage,
     showWindow: showHvncWindow,
     hideWindow: hideHvncWindow,
+    // Internal callbacks for PyQt integration
+    _onWindowOpened: _onWindowOpened,
+    _onWindowClosed: _onWindowClosed,
+    isDesktopApp: isDesktopApp,
   };
 
   // Auto-init when DOM is ready

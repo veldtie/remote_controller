@@ -881,41 +881,94 @@ class HiddenDesktopCapture:
         logger.info("Capture thread switched to hidden desktop: %s", self._desktop.name)
         
         # Signal initialization early to allow WebRTC connection to proceed
-        # The capture will return None (black frames) until desktop is ready
-        # This is intentional - we want ICE to complete in parallel with desktop init
         self._initialized.set()
         
-        # Wait longer for desktop to fully initialize
-        # Hidden desktops need time for GDI resources to be ready
-        time.sleep(2.0)
+        # Give explorer a moment to start creating windows
+        time.sleep(1.0)
         
-        # Force GDI initialization by creating and releasing resources
-        # This helps "wake up" the hidden desktop's GDI subsystem
-        for _ in range(3):
+        # Force GDI initialization more aggressively
+        # Create multiple DCs and resources to ensure GDI is fully initialized
+        gdi_ready = False
+        for attempt in range(5):
             test_dc = user32.GetDC(None)
             if test_dc:
-                # Create a test bitmap to force GDI initialization
-                test_bmp = gdi32.CreateCompatibleBitmap(test_dc, 1, 1)
-                if test_bmp:
-                    gdi32.DeleteObject(test_bmp)
+                # Create several test resources to force GDI initialization
+                mem_dc = gdi32.CreateCompatibleDC(test_dc)
+                if mem_dc:
+                    test_bmp = gdi32.CreateCompatibleBitmap(test_dc, 100, 100)
+                    if test_bmp:
+                        # Select bitmap into DC and draw something
+                        old_bmp = gdi32.SelectObject(mem_dc, test_bmp)
+                        BLACKNESS = 0x00000042
+                        WHITENESS = 0x00FF0062
+                        gdi32.PatBlt(mem_dc, 0, 0, 100, 100, WHITENESS)
+                        gdi32.PatBlt(mem_dc, 0, 0, 50, 50, BLACKNESS)
+                        gdi32.SelectObject(mem_dc, old_bmp)
+                        gdi32.DeleteObject(test_bmp)
+                    gdi32.DeleteDC(mem_dc)
                 user32.ReleaseDC(None, test_dc)
-                time.sleep(0.5)
+                gdi_ready = True
+                logger.debug("GDI initialization attempt %d successful", attempt + 1)
+            time.sleep(0.3)
         
-        # Try a test capture to verify desktop is ready
-        # More retries with longer delays for hidden desktop
-        for retry in range(20):
+        if not gdi_ready:
+            logger.warning("GDI initialization may not be complete")
+        
+        # Wait for actual window content with shorter intervals initially
+        # then longer intervals if still failing
+        capture_ready = False
+        total_wait = 0.0
+        max_wait = 15.0  # Maximum 15 seconds total wait
+        
+        # Start with short intervals, gradually increase
+        for retry in range(30):
+            if self._stop_event.is_set():
+                return
+                
             test_frame = self._capture_frame()
             if test_frame:
-                logger.info("Desktop capture ready after %d retries", retry)
+                # Verify it's not an empty/black frame by checking some pixels
+                # BGRA format - check if any pixel is not pure black
+                has_content = False
+                if len(test_frame) > 1000:
+                    # Check every 10000th pixel in the frame
+                    for i in range(0, min(len(test_frame), 100000), 10000):
+                        if i + 3 < len(test_frame):
+                            # Check if any color channel > 10 (not pure black)
+                            if test_frame[i] > 10 or test_frame[i+1] > 10 or test_frame[i+2] > 10:
+                                has_content = True
+                                break
+                
+                if has_content or retry > 15:  # Accept black frame after many retries
+                    logger.info("Desktop capture ready after %.1fs (%d retries, has_content=%s)", 
+                               total_wait, retry, has_content)
+                    capture_ready = True
+                    break
+            
+            # Adaptive wait time - shorter at first, longer later
+            if retry < 5:
+                wait_time = 0.2
+            elif retry < 10:
+                wait_time = 0.3
+            elif retry < 20:
+                wait_time = 0.5
+            else:
+                wait_time = 0.7
+            
+            total_wait += wait_time
+            if total_wait >= max_wait:
+                logger.warning("Desktop capture timeout after %.1fs", total_wait)
                 break
-            logger.debug("Desktop not ready, retry %d/20", retry + 1)
-            time.sleep(0.5)
-        else:
-            logger.warning("Desktop capture starting despite incomplete initialization")
+                
+            time.sleep(wait_time)
+        
+        if not capture_ready:
+            logger.warning("Desktop capture starting with potentially incomplete initialization")
         
         frame_count = 0
         fail_count = 0
-        max_fail_log = 10  # Only log first 10 failures
+        max_fail_log = 5
+        last_success_time = time.monotonic()
         
         while not self._stop_event.is_set():
             start = time.monotonic()
@@ -926,15 +979,26 @@ class HiddenDesktopCapture:
                     with self._frame_lock:
                         self._frame = frame
                     frame_count += 1
-                    fail_count = 0  # Reset fail count on success
-                    if frame_count % 300 == 0:  # Log every ~10 seconds at 30fps
+                    fail_count = 0
+                    last_success_time = start
+                    if frame_count % 300 == 0:
                         logger.debug("Captured %d frames", frame_count)
                 else:
                     fail_count += 1
+                    time_since_success = start - last_success_time
+                    
                     if fail_count <= max_fail_log:
-                        logger.debug("Frame capture returned None (count=%d)", fail_count)
+                        logger.debug("Frame capture returned None (count=%d, since_success=%.1fs)", 
+                                   fail_count, time_since_success)
                     elif fail_count == max_fail_log + 1:
                         logger.warning("Repeated capture failures, suppressing further logs")
+                    
+                    # If failing for too long, try to reinitialize GDI
+                    if time_since_success > 5.0 and fail_count % 30 == 0:
+                        logger.info("Attempting GDI reinitialization after %.1fs of failures", time_since_success)
+                        test_dc = user32.GetDC(None)
+                        if test_dc:
+                            user32.ReleaseDC(None, test_dc)
             except Exception as exc:
                 logger.debug("Capture error: %s", exc)
             

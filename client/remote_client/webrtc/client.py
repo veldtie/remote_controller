@@ -1001,14 +1001,37 @@ class WebRTCClient:
         return self._e2ee.decrypt_envelope(envelope)
 
     def _send_payload(self, data_channel, payload: dict[str, Any] | str) -> None:
-        """Send a payload over the data channel, applying E2EE if configured."""
+        """Send a payload over the data channel, applying E2EE if configured.
+        
+        Silently fails if the channel is not in a valid state to prevent
+        InvalidStateError exceptions when connection is being closed.
+        """
+        # Check channel state before sending
+        if data_channel is None:
+            logger.debug("Cannot send: data channel is None")
+            return
+        
+        try:
+            # Check if channel is open
+            state = getattr(data_channel, 'readyState', None)
+            if state != 'open':
+                logger.debug("Cannot send: data channel state is %s", state)
+                return
+        except Exception:
+            pass  # If we can't check state, try to send anyway
+        
         if isinstance(payload, str):
             message = payload
         else:
             message = json.dumps(payload)
         if self._e2ee:
             message = self._e2ee.encrypt_text(message)
-        data_channel.send(message)
+        
+        try:
+            data_channel.send(message)
+        except Exception as e:
+            # Log but don't raise - the connection may be closing
+            logger.debug("Failed to send payload: %s", e)
 
     async def _send_chunked_payload(self, data_channel, payload_base64: str, kind: str) -> None:
         """Send large base64 payloads over the data channel in chunks."""
