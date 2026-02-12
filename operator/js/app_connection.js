@@ -18,6 +18,8 @@
 
   let connectTimeoutId = null;
   let offerTimeoutId = null;
+  let connectStuckTimerId = null;
+  const CONNECT_STUCK_TIMEOUT_MS = 15000; // Time to wait for connection to establish after registration
 
   function isSecureCryptoAvailable() {
     return window.isSecureContext && window.crypto && window.crypto.subtle;
@@ -187,6 +189,41 @@
       clearTimeout(offerTimeoutId);
       offerTimeoutId = null;
     }
+  }
+
+  function clearConnectStuckTimer() {
+    if (connectStuckTimerId) {
+      clearTimeout(connectStuckTimerId);
+      connectStuckTimerId = null;
+    }
+  }
+
+  function scheduleConnectStuckTimeout() {
+    clearConnectStuckTimer();
+    connectStuckTimerId = setTimeout(() => {
+      connectStuckTimerId = null;
+      // Check if we're still waiting for connection
+      if (state.isConnected) {
+        return;
+      }
+      if (!state.peerConnection) {
+        return;
+      }
+      const connectionState = state.peerConnection.connectionState;
+      const iceState = state.peerConnection.iceConnectionState;
+      
+      // If stuck in connecting/checking state
+      if (connectionState === "connecting" || connectionState === "new" || 
+          iceState === "checking" || iceState === "new") {
+        console.warn("Connection appears stuck, resetting...", {
+          connectionState,
+          iceState
+        });
+        remdesk.setStatus("Connection stuck, retrying...", "warn");
+        cleanupConnection();
+        scheduleReconnect("Connection stuck", true);
+      }
+    }, CONNECT_STUCK_TIMEOUT_MS);
   }
 
   function clearConnectReadyTimeout() {
@@ -457,6 +494,7 @@
     clearOfferTimeout();
     clearConnectReadyTimeout();
     clearConnectionDropTimer();
+    clearConnectStuckTimer();
     if (state.controlChannel) {
       state.controlChannel.onclose = null;
       try {
@@ -501,6 +539,11 @@
       dom.dualStreamControls.style.display = "none";
     }
     document.body.classList.remove("hvnc-primary", "dual-stream-split", "dual-stream-pip");
+    
+    // Release HVNC popup inputs on disconnect
+    if (remdesk.hvncPopup && remdesk.hvncPopup.releaseInputs) {
+      remdesk.hvncPopup.releaseInputs();
+    }
     
     if (remdesk.releasePointerLock) {
       remdesk.releasePointerLock();
@@ -806,6 +849,9 @@
         );
       }
       startSignalingPing(signalingSocket, sessionId);
+      
+      // Schedule stuck timeout to detect when connection doesn't establish
+      scheduleConnectStuckTimeout();
 
       // Track counter for dual-stream detection
       let videoTrackCount = 0;
@@ -926,6 +972,7 @@
         remdesk.setModeLocked(false);
         state.hadConnection = true;
         clearConnectionDropTimer();
+        clearConnectStuckTimer();
         resetReconnectBackoff();
         clearOfferTimeout();
         clearConnectReadyTimeout();
