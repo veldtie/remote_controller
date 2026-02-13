@@ -47,6 +47,8 @@ def load_proxy_settings_from_env() -> Optional[ProxySettings]:
         port = int(port_raw)
     except ValueError:
         return None
+    if port <= 0 or port > 65535:
+        return None
     username = os.getenv("RC_PROXY_USER", "").strip()
     password = os.getenv("RC_PROXY_PASS", "").strip()
     proxy_type = os.getenv("RC_PROXY_TYPE", "").strip() or "http"
