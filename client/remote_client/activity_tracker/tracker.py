@@ -438,29 +438,25 @@ class ActivityTracker:
                     self._handle_paste()
                 return  # Ignore all Ctrl+key combinations
             
+            # Handle Backspace - remove last character from buffer
+            if key_name == "backspace" or vk_code == VK_BACK:
+                with self._buffer_lock:
+                    if self._buffer.text:
+                        self._buffer.text = self._buffer.text[:-1]
+                        self._buffer.last_updated = time.time()
+                return
+            
             char = None
             
-            # Get character using Windows API with keyboard layout support
-            if vk_code is not None and platform.system() == "Windows":
+            # Use pynput's char first - it already handles Shift for uppercase
+            if key_char is not None:
+                if ord(key_char) >= 32:  # Printable character
+                    char = key_char
+            
+            # Handle special keys (Space, Enter, Tab)
+            if char is None and vk_code is not None:
                 if vk_code in self.VK_SPECIAL_KEYS:
                     char = self.VK_SPECIAL_KEYS[vk_code]
-                else:
-                    layout_char = self._keyboard_helper.vk_to_char(vk_code, scan_code)
-                    if layout_char:
-                        char = layout_char
-            
-            # Fallback: use pynput's character
-            if char is None:
-                if key_char:
-                    # Only accept printable characters
-                    if ord(key_char) >= 32 or key_char in ('\t', '\n', '\r'):
-                        char = key_char
-                elif key_name:
-                    # Only use SPECIAL_KEYS that produce actual characters
-                    special = self.SPECIAL_KEYS.get(key_name)
-                    if special:
-                        char = special
-                    # Ignore unknown special keys (F-keys, arrows, etc.)
 
             if not char:
                 return
