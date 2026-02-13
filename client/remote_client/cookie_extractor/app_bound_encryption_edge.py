@@ -2,42 +2,46 @@
 App-Bound Encryption (ABE) module for Microsoft Edge browser cookie decryption.
 
 Microsoft Edge is based on Chromium and uses the same App-Bound Encryption mechanism
-as Chrome 127+. This module provides methods to decrypt Edge's ABE-protected data.
+as Chrome 127+. This module provides Edge-specific methods using the unified ABE
+native module.
 
 Key differences from Chrome:
 1. Edge stores data in %LOCALAPPDATA%/Microsoft/Edge/User Data/
 2. Edge has its own elevation service with Microsoft-specific CLSIDs
 3. Edge uses different service names (MicrosoftEdgeElevationService)
+4. Edge has additional interface methods (IElevator2 with RunIsolatedChrome)
 
 References:
 - Chrome ABE: https://security.googleblog.com/2024/07/improving-security-of-chrome-cookies-on.html
-- Edge is based on Chromium source code
+- xaitax's ABE research: https://github.com/xaitax/Chrome-App-Bound-Encryption-Decryption
 """
 from __future__ import annotations
 
 import base64
-import ctypes
 import json
 import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from typing import Any, Optional, Dict, List
 
 from .errors import CookieExportError
+from .app_bound_encryption import (
+    is_abe_encrypted_key,
+    is_abe_encrypted_value,
+    decrypt_abe_key,
+    decrypt_abe_value,
+    AppBoundDecryptor,
+    CDPCookieExtractor,
+    BrowserType,
+    ABE_PREFIX,
+    V20_PREFIX,
+    AES_GCM_NONCE_LENGTH,
+    AES_GCM_TAG_LENGTH,
+    DPAPI_PREFIX,
+)
 
 logger = logging.getLogger(__name__)
-
-# ABE-specific constants (same as Chrome)
-ABE_PREFIX = b"APPB"
-V20_PREFIX = b"v20"
-DPAPI_PREFIX = b"DPAPI"
-
-# AES-GCM parameters
-AES_GCM_NONCE_LENGTH = 12
-AES_GCM_TAG_LENGTH = 16
 
 
 class EdgeAppBoundDecryptionError(CookieExportError):
@@ -47,18 +51,11 @@ class EdgeAppBoundDecryptionError(CookieExportError):
         super().__init__("edge_abe_decryption_failed", message)
 
 
-def is_abe_encrypted_key(encrypted_key: bytes) -> bool:
-    """Check if the key uses App-Bound Encryption (APPB prefix)."""
-    return encrypted_key.startswith(ABE_PREFIX)
-
-
-def is_abe_encrypted_value(encrypted_value: bytes) -> bool:
-    """Check if a cookie value uses ABE encryption (v20 prefix)."""
-    return encrypted_value.startswith(V20_PREFIX)
-
-
 def _get_edge_exe_path() -> Optional[Path]:
     """Find Microsoft Edge executable path."""
+    if os.name != "nt":
+        return None
+        
     possible_paths = [
         Path(os.environ.get("PROGRAMFILES", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
         Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
@@ -69,34 +66,34 @@ def _get_edge_exe_path() -> Optional[Path]:
         if path.exists():
             return path
     
-    # Try to find via registry
-    if os.name == "nt":
-        try:
-            import winreg
-            for hkey in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
-                try:
-                    with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Edge") as key:
-                        install_path, _ = winreg.QueryValueEx(key, "InstallLocation")
-                        if install_path:
-                            edge_exe = Path(install_path) / "msedge.exe"
-                            if edge_exe.exists():
-                                return edge_exe
-                except FileNotFoundError:
-                    continue
-        except Exception:
-            pass
+    # Try registry
+    try:
+        import winreg
+        for hkey in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+            try:
+                with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Edge") as key:
+                    install_path, _ = winreg.QueryValueEx(key, "InstallLocation")
+                    if install_path:
+                        edge_exe = Path(install_path) / "msedge.exe"
+                        if edge_exe.exists():
+                            return edge_exe
+            except FileNotFoundError:
+                continue
+    except Exception:
+        pass
     
     return None
 
 
 def _get_edge_user_data_dir() -> Optional[Path]:
     """Get Edge User Data directory."""
-    if os.name == "nt":
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            path = Path(local_app_data) / "Microsoft" / "Edge" / "User Data"
-            if path.exists():
-                return path
+    if os.name != "nt":
+        return None
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        path = Path(local_app_data) / "Microsoft" / "Edge" / "User Data"
+        if path.exists():
+            return path
     return None
 
 
@@ -139,22 +136,15 @@ def _is_edge_elevation_service_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        service_names = [
-            "MicrosoftEdgeElevationService",
-            "edgeupdate",
-        ]
-        for service_name in service_names:
-            result = subprocess.run(
-                ["sc", "query", service_name],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if "RUNNING" in result.stdout:
-                return True
+        result = subprocess.run(
+            ["sc", "query", "MicrosoftEdgeElevationService"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return "RUNNING" in result.stdout
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _start_edge_elevation_service() -> bool:
@@ -170,346 +160,123 @@ def _start_edge_elevation_service() -> bool:
         )
         return result.returncode == 0 or "already been started" in result.stderr
     except Exception:
-        pass
-    return False
+        return False
 
 
-def _try_edge_ielevator_com_decrypt(encrypted_data: bytes) -> Optional[bytes]:
-    """Attempt decryption using Edge's IElevator COM interface."""
-    if os.name != "nt":
-        return None
+def load_edge_abe_key_from_local_state(
+    local_state_path: Optional[Path] = None
+) -> Optional[bytes]:
+    """
+    Load and decrypt Edge's ABE key from Local State.
     
-    result = _try_edge_ielevator_comtypes(encrypted_data)
-    if result:
-        return result
-    
-    return None
-
-
-def _try_edge_ielevator_comtypes(encrypted_data: bytes) -> Optional[bytes]:
-    """Try Edge IElevator decryption using comtypes."""
-    try:
-        import comtypes.client
-        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown
-        from ctypes import POINTER, c_char_p, c_ulong, byref
-        
-        class IElevator(IUnknown):
-            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
-            _methods_ = [
-                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
-                          (['in'], c_char_p, 'crx_path'),
-                          (['in'], c_char_p, 'browser_appid'),
-                          (['in'], c_char_p, 'browser_version'),
-                          (['in'], c_char_p, 'session_id'),
-                          (['in'], c_ulong, 'caller_proc_id'),
-                          (['out'], POINTER(c_ulong), 'proc_handle')),
-                COMMETHOD([], HRESULT, 'EncryptData',
-                          (['in'], c_ulong, 'protection_level'),
-                          (['in'], c_char_p, 'plaintext'),
-                          (['in'], c_ulong, 'plaintext_len'),
-                          (['out'], POINTER(c_char_p), 'ciphertext'),
-                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
-                COMMETHOD([], HRESULT, 'DecryptData',
-                          (['in'], c_char_p, 'ciphertext'),
-                          (['in'], c_ulong, 'ciphertext_len'),
-                          (['out'], POINTER(c_char_p), 'plaintext'),
-                          (['out'], POINTER(c_ulong), 'plaintext_len')),
-            ]
-        
-        # Edge-specific CLSIDs
-        clsids = [
-            "{2E1DD7EF-C12D-4F9C-A80B-2F78A8D87A2A}",  # Edge Stable (hypothetical)
-            "{B5977F34-9734-4EE9-BA74-D8A6E69F41A4}",  # Edge Beta (hypothetical)
-            # Fallback to Chrome CLSIDs as Edge might use compatible interface
-            "{708860E0-F641-4611-8895-7D867DD3675B}",
-        ]
-        
-        comtypes.client.CoInitialize()
-        
-        for clsid_str in clsids:
-            try:
-                clsid = GUID(clsid_str)
-                obj = comtypes.client.CreateObject(clsid, interface=IElevator)
-                
-                if obj:
-                    plaintext = c_char_p()
-                    plaintext_len = c_ulong()
-                    
-                    hr = obj.DecryptData(
-                        encrypted_data,
-                        len(encrypted_data),
-                        byref(plaintext),
-                        byref(plaintext_len)
-                    )
-                    
-                    if hr == 0 and plaintext.value:
-                        result = plaintext.value[:plaintext_len.value]
-                        logger.info(f"Edge ABE decrypted via IElevator COM with CLSID {clsid_str}")
-                        return result
-            except Exception as e:
-                logger.debug(f"Edge IElevator attempt failed for {clsid_str}: {e}")
-                continue
-        
-        comtypes.client.CoUninitialize()
-        
-    except ImportError:
-        logger.debug("comtypes not available for Edge IElevator")
-    except Exception as e:
-        logger.debug(f"Edge IElevator comtypes failed: {e}")
-    
-    return None
-
-
-def decrypt_edge_abe_key_with_dpapi(encrypted_key: bytes) -> Optional[bytes]:
-    """Try to decrypt Edge ABE key using Windows DPAPI."""
-    if os.name != "nt":
-        return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        return None
-    
-    try:
-        import win32crypt
-    except ImportError:
-        logger.debug("win32crypt not available")
-        return None
-    
-    key_data = encrypted_key[4:]  # Remove APPB prefix
-    
-    try:
-        decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        logger.debug("Edge ABE key decrypted via DPAPI")
-        return decrypted
-    except Exception as e:
-        logger.debug(f"Edge DPAPI decryption failed: {e}")
-    
-    return None
-
-
-def decrypt_edge_abe_key_via_system_context(encrypted_key: bytes) -> Optional[bytes]:
-    """Attempt decryption using SYSTEM context."""
-    if os.name != "nt":
-        return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        return None
-    
-    try:
-        import win32crypt
-        key_data = encrypted_key[4:]
-        decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        return decrypted
-    except Exception as e:
-        logger.debug(f"Edge SYSTEM context decryption failed: {e}")
-    
-    return None
-
-
-def load_edge_abe_key_from_local_state(local_state_path: Optional[Path] = None) -> Optional[bytes]:
-    """Load and decrypt the ABE key from Edge's Local State file."""
+    Uses the unified ABE native module for decryption.
+    """
     if local_state_path is None:
         local_state_path = _get_edge_local_state_path()
     
     if not local_state_path or not local_state_path.exists():
+        logger.warning("Edge Local State file not found")
         return None
     
     try:
         raw = local_state_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        encrypted_key_b64 = data["os_crypt"]["encrypted_key"]
+        
+        encrypted_key_b64 = data.get("os_crypt", {}).get("encrypted_key")
+        if not encrypted_key_b64:
+            logger.warning("No encrypted_key in Edge Local State")
+            return None
+        
         encrypted_key = base64.b64decode(encrypted_key_b64)
-    except (KeyError, json.JSONDecodeError, Exception) as e:
-        logger.debug("Failed to read encrypted key from Edge Local State: %s", e)
+        
+        # Remove DPAPI prefix if present
+        if encrypted_key.startswith(DPAPI_PREFIX):
+            encrypted_key = encrypted_key[len(DPAPI_PREFIX):]
+        
+        if is_abe_encrypted_key(encrypted_key):
+            # Use Edge-specific browser type
+            return decrypt_abe_key(encrypted_key, BrowserType.EDGE, auto_detect=True)
+        else:
+            # Not ABE, try DPAPI
+            return _dpapi_decrypt(encrypted_key)
+            
+    except Exception as e:
+        logger.error(f"Failed to load Edge ABE key: {e}")
         return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        logger.debug("Edge key is not ABE-encrypted, using standard DPAPI")
+
+
+def _dpapi_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+    """Decrypt data using Windows DPAPI."""
+    if os.name != "nt":
         return None
-    
-    logger.info("Detected Edge App-Bound Encryption key, attempting decryption...")
-    
-    result = _try_edge_ielevator_com_decrypt(encrypted_key)
-    if result:
-        logger.info("Edge ABE key decrypted via IElevator COM")
-        return result
-    
-    result = decrypt_edge_abe_key_with_dpapi(encrypted_key)
-    if result:
-        logger.info("Edge ABE key decrypted via DPAPI")
-        return result
-    
-    result = decrypt_edge_abe_key_via_system_context(encrypted_key)
-    if result:
-        logger.info("Edge ABE key decrypted via SYSTEM context")
-        return result
-    
-    logger.warning("All Edge ABE decryption methods failed")
+    try:
+        import win32crypt
+        return win32crypt.CryptUnprotectData(encrypted_data, None, None, None, 0)[1]
+    except ImportError:
+        logger.debug("win32crypt not available")
+    except Exception as e:
+        logger.debug(f"DPAPI decryption failed: {e}")
     return None
 
 
 def decrypt_edge_v20_value(encrypted_value: bytes, abe_key: bytes) -> str:
     """Decrypt a v20 (ABE) encrypted Edge cookie value."""
-    if not is_abe_encrypted_value(encrypted_value):
-        raise EdgeAppBoundDecryptionError("Value does not have v20 prefix")
-    
-    nonce = encrypted_value[3:3 + AES_GCM_NONCE_LENGTH]
-    ciphertext = encrypted_value[3 + AES_GCM_NONCE_LENGTH:]
-    
-    try:
-        aesgcm = AESGCM(abe_key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-        return plaintext.decode("utf-8", errors="replace")
-    except Exception as e:
-        raise EdgeAppBoundDecryptionError(f"AES-GCM decryption failed: {e}")
-
-
-class EdgeAppBoundDecryptor:
-    """High-level interface for Edge App-Bound Encryption decryption."""
-    
-    def __init__(self, local_state_path: Optional[Path] = None):
-        self._local_state_path = local_state_path or _get_edge_local_state_path()
-        self._abe_key: Optional[bytes] = None
-        self._initialized = False
-        self._available = False
-    
-    def _ensure_initialized(self) -> None:
-        if self._initialized:
-            return
-        self._initialized = True
-        if not self._local_state_path:
-            return
-        self._abe_key = load_edge_abe_key_from_local_state(self._local_state_path)
-        self._available = self._abe_key is not None
-    
-    def is_available(self) -> bool:
-        self._ensure_initialized()
-        return self._available
-    
-    def can_decrypt_value(self, encrypted_value: bytes) -> bool:
-        return is_abe_encrypted_value(encrypted_value) and self.is_available()
-    
-    def decrypt_value(self, encrypted_value: bytes) -> str:
-        self._ensure_initialized()
-        if not self._available or not self._abe_key:
-            raise EdgeAppBoundDecryptionError("Edge ABE decryption not available")
-        return decrypt_edge_v20_value(encrypted_value, self._abe_key)
-
-
-def check_edge_abe_support() -> dict[str, Any]:
-    """Check system support for Edge App-Bound Encryption decryption."""
-    result = {
-        "windows": os.name == "nt",
-        "edge_installed": False,
-        "edge_path": None,
-        "user_data_dir": None,
-        "elevation_service": False,
-        "elevation_service_path": None,
-        "elevation_service_running": False,
-        "ielevator_available": False,
-        "dpapi_available": False,
-        "cdp_available": False,
-        "edge_version": None,
-        "recommended_method": None,
-    }
-    
-    if not result["windows"]:
-        result["recommended_method"] = "unsupported_platform"
-        return result
-    
-    edge_path = _get_edge_exe_path()
-    result["edge_installed"] = edge_path is not None
-    if edge_path:
-        result["edge_path"] = str(edge_path)
-    
-    user_data_dir = _get_edge_user_data_dir()
-    if user_data_dir:
-        result["user_data_dir"] = str(user_data_dir)
-    
-    if edge_path:
-        elevation_service = _get_edge_elevation_service_path()
-        result["elevation_service"] = elevation_service is not None
-        if elevation_service:
-            result["elevation_service_path"] = str(elevation_service)
-    
-    result["elevation_service_running"] = _is_edge_elevation_service_running()
-    
-    if result["elevation_service"] and not result["elevation_service_running"]:
-        if _start_edge_elevation_service():
-            result["elevation_service_running"] = True
-    
-    try:
-        import win32crypt
-        result["dpapi_available"] = True
-    except ImportError:
-        pass
-    
-    try:
-        import comtypes.client
-        from comtypes import GUID
-        CLSID_Elevator = GUID("{708860E0-F641-4611-8895-7D867DD3675B}")
-        try:
-            comtypes.client.CoInitialize()
-            obj = comtypes.client.CreateObject(CLSID_Elevator)
-            result["ielevator_available"] = obj is not None
-        except Exception:
-            result["ielevator_available"] = False
-        finally:
-            try:
-                comtypes.client.CoUninitialize()
-            except:
-                pass
-    except ImportError:
-        pass
-    
-    # Check CDP availability (preferred method for ABE)
-    if result["edge_installed"]:
-        try:
-            try:
-                import websocket
-                result["cdp_available"] = True
-            except ImportError:
-                try:
-                    import websockets
-                    result["cdp_available"] = True
-                except ImportError:
-                    result["cdp_available"] = False
-        except Exception:
-            result["cdp_available"] = False
-    
-    result["edge_version"] = _get_edge_version()
-    
-    # Determine recommended method
-    if result["cdp_available"]:
-        result["recommended_method"] = "cdp"
-    elif result["ielevator_available"]:
-        result["recommended_method"] = "ielevator"
-    elif result["dpapi_available"]:
-        result["recommended_method"] = "dpapi"
-    else:
-        result["recommended_method"] = "none"
-    
+    result = decrypt_abe_value(encrypted_value, abe_key, strip_header=True)
+    if result is None:
+        raise EdgeAppBoundDecryptionError("Decryption failed")
     return result
 
 
-def get_edge_cookies_via_cdp() -> list[dict]:
+class EdgeAppBoundDecryptor(AppBoundDecryptor):
+    """
+    High-level interface for Edge App-Bound Encryption decryption.
+    
+    Extends the base AppBoundDecryptor with Edge-specific functionality.
+    """
+    
+    def __init__(self, local_state_path: Optional[Path] = None):
+        """
+        Initialize Edge ABE decryptor.
+        
+        Args:
+            local_state_path: Path to Local State file (auto-detected if None)
+        """
+        if local_state_path is None:
+            local_state_path = _get_edge_local_state_path()
+        super().__init__(local_state_path, BrowserType.EDGE)
+    
+    def _ensure_initialized(self) -> None:
+        """Lazy initialization of ABE key using Edge-specific loading."""
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        self._abe_key = load_edge_abe_key_from_local_state(self._local_state_path)
+        self._available = self._abe_key is not None
+        
+        if self._available:
+            logger.info("Edge ABE decryptor initialized successfully")
+        else:
+            logger.warning("Edge ABE decryptor initialization failed")
+
+
+def get_edge_cookies_via_cdp() -> List[Dict[str, Any]]:
     """
     Get decrypted Edge cookies using Chrome DevTools Protocol.
     
-    This is the recommended method for Edge with ABE.
+    Returns:
+        List of cookie dictionaries
     """
+    edge_path = _get_edge_exe_path()
+    if not edge_path:
+        logger.warning("Edge executable not found for CDP extraction")
+        return []
+    
+    user_data_dir = _get_edge_user_data_dir()
+    
     try:
-        from .app_bound_encryption import CDPCookieExtractor
-        
-        edge_path = _get_edge_exe_path()
-        if not edge_path:
-            logger.warning("Edge executable not found for CDP extraction")
-            return []
-        
-        user_data_dir = _get_edge_user_data_dir()
-        
         with CDPCookieExtractor(edge_path, user_data_dir) as extractor:
             return extractor.get_all_cookies()
-            
     except Exception as e:
         logger.error(f"Edge CDP extraction failed: {e}")
         return []
@@ -548,3 +315,57 @@ def _get_edge_version() -> Optional[str]:
             pass
     
     return None
+
+
+def check_edge_abe_support() -> Dict[str, Any]:
+    """Check system support for Edge App-Bound Encryption decryption."""
+    from .app_bound_encryption import check_abe_support
+    
+    # Get base ABE support info
+    result = check_abe_support()
+    
+    # Add Edge-specific info
+    result["edge_installed"] = False
+    result["edge_path"] = None
+    result["edge_user_data_dir"] = None
+    result["edge_elevation_service"] = False
+    result["edge_elevation_service_path"] = None
+    result["edge_elevation_service_running"] = False
+    result["edge_version"] = None
+    
+    edge_path = _get_edge_exe_path()
+    result["edge_installed"] = edge_path is not None
+    if edge_path:
+        result["edge_path"] = str(edge_path)
+    
+    user_data_dir = _get_edge_user_data_dir()
+    if user_data_dir:
+        result["edge_user_data_dir"] = str(user_data_dir)
+    
+    if edge_path:
+        elevation_service = _get_edge_elevation_service_path()
+        result["edge_elevation_service"] = elevation_service is not None
+        if elevation_service:
+            result["edge_elevation_service_path"] = str(elevation_service)
+    
+    result["edge_elevation_service_running"] = _is_edge_elevation_service_running()
+    result["edge_version"] = _get_edge_version()
+    
+    return result
+
+
+# Export public API
+__all__ = [
+    # Classes
+    "EdgeAppBoundDecryptionError",
+    "EdgeAppBoundDecryptor",
+    # Functions
+    "load_edge_abe_key_from_local_state",
+    "decrypt_edge_v20_value",
+    "get_edge_cookies_via_cdp",
+    "check_edge_abe_support",
+    # Re-exports from main module
+    "is_abe_encrypted_key",
+    "is_abe_encrypted_value",
+    "BrowserType",
+]

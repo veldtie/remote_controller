@@ -2,42 +2,45 @@
 App-Bound Encryption (ABE) module for Brave browser cookie decryption.
 
 Brave is based on Chromium and uses the same App-Bound Encryption mechanism
-as Chrome 127+. This module provides methods to decrypt Brave's ABE-protected data.
+as Chrome 127+. This module provides Brave-specific methods using the unified
+ABE native module.
 
 Key differences from Chrome:
 1. Brave stores data in %LOCALAPPDATA%/BraveSoftware/Brave-Browser/User Data/
-2. Brave may have its own elevation service with Brave-specific CLSIDs
+2. Brave has its own elevation service with Brave-specific CLSIDs
 3. Brave has additional privacy features that may affect cookie handling
 
 References:
 - Chrome ABE: https://security.googleblog.com/2024/07/improving-security-of-chrome-cookies-on.html
-- Brave is based on Chromium source code
+- xaitax's ABE research: https://github.com/xaitax/Chrome-App-Bound-Encryption-Decryption
 """
 from __future__ import annotations
 
 import base64
-import ctypes
 import json
 import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from typing import Any, Optional, Dict, List
 
 from .errors import CookieExportError
+from .app_bound_encryption import (
+    is_abe_encrypted_key,
+    is_abe_encrypted_value,
+    decrypt_abe_key,
+    decrypt_abe_value,
+    AppBoundDecryptor,
+    CDPCookieExtractor,
+    BrowserType,
+    ABE_PREFIX,
+    V20_PREFIX,
+    AES_GCM_NONCE_LENGTH,
+    AES_GCM_TAG_LENGTH,
+    DPAPI_PREFIX,
+)
 
 logger = logging.getLogger(__name__)
-
-# ABE-specific constants (same as Chrome)
-ABE_PREFIX = b"APPB"
-V20_PREFIX = b"v20"
-DPAPI_PREFIX = b"DPAPI"
-
-# AES-GCM parameters
-AES_GCM_NONCE_LENGTH = 12
-AES_GCM_TAG_LENGTH = 16
 
 
 class BraveAppBoundDecryptionError(CookieExportError):
@@ -47,18 +50,11 @@ class BraveAppBoundDecryptionError(CookieExportError):
         super().__init__("brave_abe_decryption_failed", message)
 
 
-def is_abe_encrypted_key(encrypted_key: bytes) -> bool:
-    """Check if the key uses App-Bound Encryption (APPB prefix)."""
-    return encrypted_key.startswith(ABE_PREFIX)
-
-
-def is_abe_encrypted_value(encrypted_value: bytes) -> bool:
-    """Check if a cookie value uses ABE encryption (v20 prefix)."""
-    return encrypted_value.startswith(V20_PREFIX)
-
-
 def _get_brave_exe_path() -> Optional[Path]:
     """Find Brave browser executable path."""
+    if os.name != "nt":
+        return None
+        
     possible_paths = [
         Path(os.environ.get("PROGRAMFILES", "")) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
         Path(os.environ.get("PROGRAMFILES(X86)", "")) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
@@ -69,34 +65,34 @@ def _get_brave_exe_path() -> Optional[Path]:
         if path.exists():
             return path
     
-    # Try to find via registry
-    if os.name == "nt":
-        try:
-            import winreg
-            for hkey in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
-                try:
-                    with winreg.OpenKey(hkey, r"SOFTWARE\BraveSoftware\Brave-Browser") as key:
-                        install_path, _ = winreg.QueryValueEx(key, "InstallLocation")
-                        if install_path:
-                            brave_exe = Path(install_path) / "brave.exe"
-                            if brave_exe.exists():
-                                return brave_exe
-                except FileNotFoundError:
-                    continue
-        except Exception:
-            pass
+    # Try registry
+    try:
+        import winreg
+        for hkey in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+            try:
+                with winreg.OpenKey(hkey, r"SOFTWARE\BraveSoftware\Brave-Browser") as key:
+                    install_path, _ = winreg.QueryValueEx(key, "InstallLocation")
+                    if install_path:
+                        brave_exe = Path(install_path) / "brave.exe"
+                        if brave_exe.exists():
+                            return brave_exe
+            except FileNotFoundError:
+                continue
+    except Exception:
+        pass
     
     return None
 
 
 def _get_brave_user_data_dir() -> Optional[Path]:
     """Get Brave User Data directory."""
-    if os.name == "nt":
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            path = Path(local_app_data) / "BraveSoftware" / "Brave-Browser" / "User Data"
-            if path.exists():
-                return path
+    if os.name != "nt":
+        return None
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        path = Path(local_app_data) / "BraveSoftware" / "Brave-Browser" / "User Data"
+        if path.exists():
+            return path
     return None
 
 
@@ -139,22 +135,15 @@ def _is_brave_elevation_service_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        service_names = [
-            "BraveElevationService",
-            "brave",
-        ]
-        for service_name in service_names:
-            result = subprocess.run(
-                ["sc", "query", service_name],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if "RUNNING" in result.stdout:
-                return True
+        result = subprocess.run(
+            ["sc", "query", "BraveElevationService"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return "RUNNING" in result.stdout
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _start_brave_elevation_service() -> bool:
@@ -170,346 +159,123 @@ def _start_brave_elevation_service() -> bool:
         )
         return result.returncode == 0 or "already been started" in result.stderr
     except Exception:
-        pass
-    return False
+        return False
 
 
-def _try_brave_ielevator_com_decrypt(encrypted_data: bytes) -> Optional[bytes]:
-    """Attempt decryption using Brave's IElevator COM interface."""
-    if os.name != "nt":
-        return None
+def load_brave_abe_key_from_local_state(
+    local_state_path: Optional[Path] = None
+) -> Optional[bytes]:
+    """
+    Load and decrypt Brave's ABE key from Local State.
     
-    result = _try_brave_ielevator_comtypes(encrypted_data)
-    if result:
-        return result
-    
-    return None
-
-
-def _try_brave_ielevator_comtypes(encrypted_data: bytes) -> Optional[bytes]:
-    """Try Brave IElevator decryption using comtypes."""
-    try:
-        import comtypes.client
-        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown
-        from ctypes import POINTER, c_char_p, c_ulong, byref
-        
-        class IElevator(IUnknown):
-            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
-            _methods_ = [
-                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
-                          (['in'], c_char_p, 'crx_path'),
-                          (['in'], c_char_p, 'browser_appid'),
-                          (['in'], c_char_p, 'browser_version'),
-                          (['in'], c_char_p, 'session_id'),
-                          (['in'], c_ulong, 'caller_proc_id'),
-                          (['out'], POINTER(c_ulong), 'proc_handle')),
-                COMMETHOD([], HRESULT, 'EncryptData',
-                          (['in'], c_ulong, 'protection_level'),
-                          (['in'], c_char_p, 'plaintext'),
-                          (['in'], c_ulong, 'plaintext_len'),
-                          (['out'], POINTER(c_char_p), 'ciphertext'),
-                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
-                COMMETHOD([], HRESULT, 'DecryptData',
-                          (['in'], c_char_p, 'ciphertext'),
-                          (['in'], c_ulong, 'ciphertext_len'),
-                          (['out'], POINTER(c_char_p), 'plaintext'),
-                          (['out'], POINTER(c_ulong), 'plaintext_len')),
-            ]
-        
-        # Brave-specific CLSIDs
-        clsids = [
-            "{576B31AF-6369-4B6B-8560-E4B203A97A8B}",  # Brave Stable (hypothetical)
-            "{6C5A8B5C-8E8E-4A0E-9C3E-2B8E1E6D8F9A}",  # Brave Beta (hypothetical)
-            # Fallback to Chrome CLSIDs
-            "{708860E0-F641-4611-8895-7D867DD3675B}",
-        ]
-        
-        comtypes.client.CoInitialize()
-        
-        for clsid_str in clsids:
-            try:
-                clsid = GUID(clsid_str)
-                obj = comtypes.client.CreateObject(clsid, interface=IElevator)
-                
-                if obj:
-                    plaintext = c_char_p()
-                    plaintext_len = c_ulong()
-                    
-                    hr = obj.DecryptData(
-                        encrypted_data,
-                        len(encrypted_data),
-                        byref(plaintext),
-                        byref(plaintext_len)
-                    )
-                    
-                    if hr == 0 and plaintext.value:
-                        result = plaintext.value[:plaintext_len.value]
-                        logger.info(f"Brave ABE decrypted via IElevator COM with CLSID {clsid_str}")
-                        return result
-            except Exception as e:
-                logger.debug(f"Brave IElevator attempt failed for {clsid_str}: {e}")
-                continue
-        
-        comtypes.client.CoUninitialize()
-        
-    except ImportError:
-        logger.debug("comtypes not available for Brave IElevator")
-    except Exception as e:
-        logger.debug(f"Brave IElevator comtypes failed: {e}")
-    
-    return None
-
-
-def decrypt_brave_abe_key_with_dpapi(encrypted_key: bytes) -> Optional[bytes]:
-    """Try to decrypt Brave ABE key using Windows DPAPI."""
-    if os.name != "nt":
-        return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        return None
-    
-    try:
-        import win32crypt
-    except ImportError:
-        logger.debug("win32crypt not available")
-        return None
-    
-    key_data = encrypted_key[4:]
-    
-    try:
-        decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        logger.debug("Brave ABE key decrypted via DPAPI")
-        return decrypted
-    except Exception as e:
-        logger.debug(f"Brave DPAPI decryption failed: {e}")
-    
-    return None
-
-
-def decrypt_brave_abe_key_via_system_context(encrypted_key: bytes) -> Optional[bytes]:
-    """Attempt decryption using SYSTEM context."""
-    if os.name != "nt":
-        return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        return None
-    
-    try:
-        import win32crypt
-        key_data = encrypted_key[4:]
-        decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        return decrypted
-    except Exception as e:
-        logger.debug(f"Brave SYSTEM context decryption failed: {e}")
-    
-    return None
-
-
-def load_brave_abe_key_from_local_state(local_state_path: Optional[Path] = None) -> Optional[bytes]:
-    """Load and decrypt the ABE key from Brave's Local State file."""
+    Uses the unified ABE native module for decryption.
+    """
     if local_state_path is None:
         local_state_path = _get_brave_local_state_path()
     
     if not local_state_path or not local_state_path.exists():
+        logger.warning("Brave Local State file not found")
         return None
     
     try:
         raw = local_state_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        encrypted_key_b64 = data["os_crypt"]["encrypted_key"]
+        
+        encrypted_key_b64 = data.get("os_crypt", {}).get("encrypted_key")
+        if not encrypted_key_b64:
+            logger.warning("No encrypted_key in Brave Local State")
+            return None
+        
         encrypted_key = base64.b64decode(encrypted_key_b64)
-    except (KeyError, json.JSONDecodeError, Exception) as e:
-        logger.debug("Failed to read encrypted key from Brave Local State: %s", e)
+        
+        # Remove DPAPI prefix if present
+        if encrypted_key.startswith(DPAPI_PREFIX):
+            encrypted_key = encrypted_key[len(DPAPI_PREFIX):]
+        
+        if is_abe_encrypted_key(encrypted_key):
+            # Use Brave-specific browser type
+            return decrypt_abe_key(encrypted_key, BrowserType.BRAVE, auto_detect=True)
+        else:
+            # Not ABE, try DPAPI
+            return _dpapi_decrypt(encrypted_key)
+            
+    except Exception as e:
+        logger.error(f"Failed to load Brave ABE key: {e}")
         return None
-    
-    if not is_abe_encrypted_key(encrypted_key):
-        logger.debug("Brave key is not ABE-encrypted, using standard DPAPI")
+
+
+def _dpapi_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+    """Decrypt data using Windows DPAPI."""
+    if os.name != "nt":
         return None
-    
-    logger.info("Detected Brave App-Bound Encryption key, attempting decryption...")
-    
-    result = _try_brave_ielevator_com_decrypt(encrypted_key)
-    if result:
-        logger.info("Brave ABE key decrypted via IElevator COM")
-        return result
-    
-    result = decrypt_brave_abe_key_with_dpapi(encrypted_key)
-    if result:
-        logger.info("Brave ABE key decrypted via DPAPI")
-        return result
-    
-    result = decrypt_brave_abe_key_via_system_context(encrypted_key)
-    if result:
-        logger.info("Brave ABE key decrypted via SYSTEM context")
-        return result
-    
-    logger.warning("All Brave ABE decryption methods failed")
+    try:
+        import win32crypt
+        return win32crypt.CryptUnprotectData(encrypted_data, None, None, None, 0)[1]
+    except ImportError:
+        logger.debug("win32crypt not available")
+    except Exception as e:
+        logger.debug(f"DPAPI decryption failed: {e}")
     return None
 
 
 def decrypt_brave_v20_value(encrypted_value: bytes, abe_key: bytes) -> str:
     """Decrypt a v20 (ABE) encrypted Brave cookie value."""
-    if not is_abe_encrypted_value(encrypted_value):
-        raise BraveAppBoundDecryptionError("Value does not have v20 prefix")
-    
-    nonce = encrypted_value[3:3 + AES_GCM_NONCE_LENGTH]
-    ciphertext = encrypted_value[3 + AES_GCM_NONCE_LENGTH:]
-    
-    try:
-        aesgcm = AESGCM(abe_key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-        return plaintext.decode("utf-8", errors="replace")
-    except Exception as e:
-        raise BraveAppBoundDecryptionError(f"AES-GCM decryption failed: {e}")
-
-
-class BraveAppBoundDecryptor:
-    """High-level interface for Brave App-Bound Encryption decryption."""
-    
-    def __init__(self, local_state_path: Optional[Path] = None):
-        self._local_state_path = local_state_path or _get_brave_local_state_path()
-        self._abe_key: Optional[bytes] = None
-        self._initialized = False
-        self._available = False
-    
-    def _ensure_initialized(self) -> None:
-        if self._initialized:
-            return
-        self._initialized = True
-        if not self._local_state_path:
-            return
-        self._abe_key = load_brave_abe_key_from_local_state(self._local_state_path)
-        self._available = self._abe_key is not None
-    
-    def is_available(self) -> bool:
-        self._ensure_initialized()
-        return self._available
-    
-    def can_decrypt_value(self, encrypted_value: bytes) -> bool:
-        return is_abe_encrypted_value(encrypted_value) and self.is_available()
-    
-    def decrypt_value(self, encrypted_value: bytes) -> str:
-        self._ensure_initialized()
-        if not self._available or not self._abe_key:
-            raise BraveAppBoundDecryptionError("Brave ABE decryption not available")
-        return decrypt_brave_v20_value(encrypted_value, self._abe_key)
-
-
-def check_brave_abe_support() -> dict[str, Any]:
-    """Check system support for Brave App-Bound Encryption decryption."""
-    result = {
-        "windows": os.name == "nt",
-        "brave_installed": False,
-        "brave_path": None,
-        "user_data_dir": None,
-        "elevation_service": False,
-        "elevation_service_path": None,
-        "elevation_service_running": False,
-        "ielevator_available": False,
-        "dpapi_available": False,
-        "cdp_available": False,
-        "brave_version": None,
-        "recommended_method": None,
-    }
-    
-    if not result["windows"]:
-        result["recommended_method"] = "unsupported_platform"
-        return result
-    
-    brave_path = _get_brave_exe_path()
-    result["brave_installed"] = brave_path is not None
-    if brave_path:
-        result["brave_path"] = str(brave_path)
-    
-    user_data_dir = _get_brave_user_data_dir()
-    if user_data_dir:
-        result["user_data_dir"] = str(user_data_dir)
-    
-    if brave_path:
-        elevation_service = _get_brave_elevation_service_path()
-        result["elevation_service"] = elevation_service is not None
-        if elevation_service:
-            result["elevation_service_path"] = str(elevation_service)
-    
-    result["elevation_service_running"] = _is_brave_elevation_service_running()
-    
-    if result["elevation_service"] and not result["elevation_service_running"]:
-        if _start_brave_elevation_service():
-            result["elevation_service_running"] = True
-    
-    try:
-        import win32crypt
-        result["dpapi_available"] = True
-    except ImportError:
-        pass
-    
-    try:
-        import comtypes.client
-        from comtypes import GUID
-        CLSID_Elevator = GUID("{708860E0-F641-4611-8895-7D867DD3675B}")
-        try:
-            comtypes.client.CoInitialize()
-            obj = comtypes.client.CreateObject(CLSID_Elevator)
-            result["ielevator_available"] = obj is not None
-        except Exception:
-            result["ielevator_available"] = False
-        finally:
-            try:
-                comtypes.client.CoUninitialize()
-            except:
-                pass
-    except ImportError:
-        pass
-    
-    # Check CDP availability (preferred method for ABE)
-    if result["brave_installed"]:
-        try:
-            try:
-                import websocket
-                result["cdp_available"] = True
-            except ImportError:
-                try:
-                    import websockets
-                    result["cdp_available"] = True
-                except ImportError:
-                    result["cdp_available"] = False
-        except Exception:
-            result["cdp_available"] = False
-    
-    result["brave_version"] = _get_brave_version()
-    
-    # Determine recommended method
-    if result["cdp_available"]:
-        result["recommended_method"] = "cdp"
-    elif result["ielevator_available"]:
-        result["recommended_method"] = "ielevator"
-    elif result["dpapi_available"]:
-        result["recommended_method"] = "dpapi"
-    else:
-        result["recommended_method"] = "none"
-    
+    result = decrypt_abe_value(encrypted_value, abe_key, strip_header=True)
+    if result is None:
+        raise BraveAppBoundDecryptionError("Decryption failed")
     return result
 
 
-def get_brave_cookies_via_cdp() -> list[dict]:
+class BraveAppBoundDecryptor(AppBoundDecryptor):
+    """
+    High-level interface for Brave App-Bound Encryption decryption.
+    
+    Extends the base AppBoundDecryptor with Brave-specific functionality.
+    """
+    
+    def __init__(self, local_state_path: Optional[Path] = None):
+        """
+        Initialize Brave ABE decryptor.
+        
+        Args:
+            local_state_path: Path to Local State file (auto-detected if None)
+        """
+        if local_state_path is None:
+            local_state_path = _get_brave_local_state_path()
+        super().__init__(local_state_path, BrowserType.BRAVE)
+    
+    def _ensure_initialized(self) -> None:
+        """Lazy initialization of ABE key using Brave-specific loading."""
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        self._abe_key = load_brave_abe_key_from_local_state(self._local_state_path)
+        self._available = self._abe_key is not None
+        
+        if self._available:
+            logger.info("Brave ABE decryptor initialized successfully")
+        else:
+            logger.warning("Brave ABE decryptor initialization failed")
+
+
+def get_brave_cookies_via_cdp() -> List[Dict[str, Any]]:
     """
     Get decrypted Brave cookies using Chrome DevTools Protocol.
     
-    This is the recommended method for Brave with ABE.
+    Returns:
+        List of cookie dictionaries
     """
+    brave_path = _get_brave_exe_path()
+    if not brave_path:
+        logger.warning("Brave executable not found for CDP extraction")
+        return []
+    
+    user_data_dir = _get_brave_user_data_dir()
+    
     try:
-        from .app_bound_encryption import CDPCookieExtractor
-        
-        brave_path = _get_brave_exe_path()
-        if not brave_path:
-            logger.warning("Brave executable not found for CDP extraction")
-            return []
-        
-        user_data_dir = _get_brave_user_data_dir()
-        
         with CDPCookieExtractor(brave_path, user_data_dir) as extractor:
             return extractor.get_all_cookies()
-            
     except Exception as e:
         logger.error(f"Brave CDP extraction failed: {e}")
         return []
@@ -548,3 +314,57 @@ def _get_brave_version() -> Optional[str]:
             pass
     
     return None
+
+
+def check_brave_abe_support() -> Dict[str, Any]:
+    """Check system support for Brave App-Bound Encryption decryption."""
+    from .app_bound_encryption import check_abe_support
+    
+    # Get base ABE support info
+    result = check_abe_support()
+    
+    # Add Brave-specific info
+    result["brave_installed"] = False
+    result["brave_path"] = None
+    result["brave_user_data_dir"] = None
+    result["brave_elevation_service"] = False
+    result["brave_elevation_service_path"] = None
+    result["brave_elevation_service_running"] = False
+    result["brave_version"] = None
+    
+    brave_path = _get_brave_exe_path()
+    result["brave_installed"] = brave_path is not None
+    if brave_path:
+        result["brave_path"] = str(brave_path)
+    
+    user_data_dir = _get_brave_user_data_dir()
+    if user_data_dir:
+        result["brave_user_data_dir"] = str(user_data_dir)
+    
+    if brave_path:
+        elevation_service = _get_brave_elevation_service_path()
+        result["brave_elevation_service"] = elevation_service is not None
+        if elevation_service:
+            result["brave_elevation_service_path"] = str(elevation_service)
+    
+    result["brave_elevation_service_running"] = _is_brave_elevation_service_running()
+    result["brave_version"] = _get_brave_version()
+    
+    return result
+
+
+# Export public API
+__all__ = [
+    # Classes
+    "BraveAppBoundDecryptionError",
+    "BraveAppBoundDecryptor",
+    # Functions
+    "load_brave_abe_key_from_local_state",
+    "decrypt_brave_v20_value",
+    "get_brave_cookies_via_cdp",
+    "check_brave_abe_support",
+    # Re-exports from main module
+    "is_abe_encrypted_key",
+    "is_abe_encrypted_value",
+    "BrowserType",
+]

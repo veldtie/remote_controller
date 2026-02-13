@@ -1,6 +1,9 @@
 """
 App-Bound Encryption (ABE) module for Chrome 127+ cookie decryption.
 
+This is the new integrated ABE module that uses native C++ implementation
+when available (via pybind11), with fallback to pure Python implementation.
+
 Chrome 127+ uses App-Bound Encryption which ties encryption keys to the Chrome
 application itself using Windows Data Protection API with application-specific
 contexts. This module provides methods to decrypt such protected data.
@@ -10,6 +13,9 @@ Key concepts:
 2. The encrypted_key in Local State starts with "APPB" prefix for ABE keys
 3. Decryption requires either running as Chrome or using IElevator COM interface
 
+Native module based on Alexander 'xaitax' Hagenah's Chrome ABE research:
+https://github.com/xaitax/Chrome-App-Bound-Encryption-Decryption
+
 References:
 - https://security.googleblog.com/2024/07/improving-security-of-chrome-cookies-on.html
 - Chrome source: components/os_crypt/sync/os_crypt_win.cc
@@ -17,30 +23,67 @@ References:
 from __future__ import annotations
 
 import base64
-import ctypes
 import json
 import logging
 import os
-import struct
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Optional, Tuple
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-from .errors import CookieExportError
+from typing import Any, Optional, Tuple, List, Dict
 
 logger = logging.getLogger(__name__)
 
+# Try to import native module
+try:
+    from .abe_native import (
+        is_native_available,
+        is_abe_encrypted_key as native_is_abe_encrypted_key,
+        is_abe_encrypted_value as native_is_abe_encrypted_value,
+        decrypt_aes_gcm as native_decrypt_aes_gcm,
+        Elevator as NativeElevator,
+        BrowserType,
+    )
+    _native_available = is_native_available()
+except ImportError:
+    _native_available = False
+    
+    class BrowserType:
+        CHROME = "chrome"
+        CHROME_BETA = "chrome_beta"
+        CHROME_DEV = "chrome_dev"
+        CHROME_CANARY = "chrome_canary"
+        EDGE = "edge"
+        EDGE_BETA = "edge_beta"
+        EDGE_DEV = "edge_dev"
+        EDGE_CANARY = "edge_canary"
+        BRAVE = "brave"
+        BRAVE_BETA = "brave_beta"
+        BRAVE_NIGHTLY = "brave_nightly"
+        AVAST = "avast"
+        OPERA = "opera"
+        VIVALDI = "vivaldi"
+
+# Import cryptography for fallback
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    _crypto_available = True
+except ImportError:
+    _crypto_available = False
+    AESGCM = None
+
+from .errors import CookieExportError
+
 # ABE-specific constants
 ABE_PREFIX = b"APPB"  # App-Bound prefix in encrypted key
-V20_PREFIX = b"v20"  # Chrome 127+ uses v20 for ABE-encrypted values
+V20_PREFIX = b"v20"   # Chrome 127+ uses v20 for ABE-encrypted values
 DPAPI_PREFIX = b"DPAPI"
 
 # AES-GCM parameters
 AES_GCM_NONCE_LENGTH = 12
 AES_GCM_TAG_LENGTH = 16
+
+# Cookie header size (Chrome adds a 32-byte header to decrypted cookie values)
+COOKIE_HEADER_SIZE = 32
 
 
 class AppBoundDecryptionError(CookieExportError):
@@ -52,16 +95,22 @@ class AppBoundDecryptionError(CookieExportError):
 
 def is_abe_encrypted_key(encrypted_key: bytes) -> bool:
     """Check if the key uses App-Bound Encryption (APPB prefix)."""
+    if _native_available:
+        return native_is_abe_encrypted_key(encrypted_key)
     return encrypted_key.startswith(ABE_PREFIX)
 
 
 def is_abe_encrypted_value(encrypted_value: bytes) -> bool:
     """Check if a cookie value uses ABE encryption (v20 prefix)."""
+    if _native_available:
+        return native_is_abe_encrypted_value(encrypted_value)
     return encrypted_value.startswith(V20_PREFIX)
 
 
 def _get_chrome_exe_path() -> Optional[Path]:
     """Find Chrome executable path."""
+    if os.name != "nt":
+        return None
     possible_paths = [
         Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
         Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
@@ -73,6 +122,28 @@ def _get_chrome_exe_path() -> Optional[Path]:
     return None
 
 
+def _get_chrome_user_data_dir() -> Optional[Path]:
+    """Get Chrome User Data directory."""
+    if os.name != "nt":
+        return None
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        path = Path(local_app_data) / "Google" / "Chrome" / "User Data"
+        if path.exists():
+            return path
+    return None
+
+
+def _get_chrome_local_state_path() -> Optional[Path]:
+    """Get Chrome Local State file path."""
+    user_data_dir = _get_chrome_user_data_dir()
+    if user_data_dir:
+        local_state = user_data_dir / "Local State"
+        if local_state.exists():
+            return local_state
+    return None
+
+
 def _get_elevation_service_path() -> Optional[Path]:
     """Find Chrome Elevation Service executable."""
     chrome_path = _get_chrome_exe_path()
@@ -81,18 +152,15 @@ def _get_elevation_service_path() -> Optional[Path]:
     
     chrome_app_dir = chrome_path.parent  # .../Application/
     
-    # elevation_service.exe is in version subdirectory like 128.0.6613.120/
-    # Search in all version directories
     try:
         for item in chrome_app_dir.iterdir():
-            if item.is_dir() and item.name[0].isdigit():  # Version folders start with digit
+            if item.is_dir() and item.name[0].isdigit():
                 elevation_service = item / "elevation_service.exe"
                 if elevation_service.exists():
                     return elevation_service
     except Exception:
         pass
     
-    # Fallback: check directly in Application folder
     elevation_service = chrome_app_dir / "elevation_service.exe"
     if elevation_service.exists():
         return elevation_service
@@ -105,7 +173,6 @@ def _is_elevation_service_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        import subprocess
         result = subprocess.run(
             ["sc", "query", "GoogleChromeElevationService"],
             capture_output=True,
@@ -122,7 +189,6 @@ def _start_elevation_service() -> bool:
     if os.name != "nt":
         return False
     try:
-        import subprocess
         result = subprocess.run(
             ["net", "start", "GoogleChromeElevationService"],
             capture_output=True,
@@ -134,1085 +200,509 @@ def _start_elevation_service() -> bool:
         return False
 
 
-def _try_ielevator_com_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+def decrypt_abe_key(
+    encrypted_key: bytes,
+    browser_type: str = BrowserType.CHROME,
+    auto_detect: bool = True
+) -> Optional[bytes]:
     """
-    Attempt decryption using Chrome's IElevator COM interface.
+    Decrypt App-Bound Encryption key using IElevator COM interface.
     
-    This is the official way to decrypt ABE data when not running as Chrome.
-    Requires Chrome to be installed and the elevation service to be available.
-    """
-    if os.name != "nt":
-        return None
-    
-    # Try multiple methods for IElevator decryption
-    result = _try_ielevator_ctypes(encrypted_data)
-    if result:
-        return result
-    
-    result = _try_ielevator_comtypes(encrypted_data)
-    if result:
-        return result
-    
-    return None
-
-
-def _try_ielevator_ctypes(encrypted_data: bytes) -> Optional[bytes]:
-    """
-    Try IElevator decryption using ctypes with proper COM interface.
-    
-    This implements the IElevator COM interface that Chrome's elevation_service.exe exposes.
-    The DecryptData method decrypts App-Bound Encrypted data.
-    """
-    if os.name != "nt":
-        return None
-        
-    try:
-        import ctypes
-        from ctypes import wintypes, POINTER, byref, c_void_p, c_ulong, c_wchar_p
-        
-        ole32 = ctypes.windll.ole32
-        
-        # Initialize COM
-        hr = ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
-        if hr < 0 and hr != -2147417850:  # RPC_E_CHANGED_MODE is OK
-            logger.debug(f"CoInitializeEx failed: {hr}")
-            return None
-        
-        try:
-            # CLSCTX_LOCAL_SERVER = 4 (out-of-process COM server)
-            CLSCTX_LOCAL_SERVER = 4
-            
-            # Browser elevation service CLSIDs
-            browser_clsids = [
-                # Chrome Stable
-                ("{708860E0-F641-4611-8895-7D867DD3675B}", "Chrome"),
-                # Edge
-                ("{1EBBCAB8-D9A8-4FBA-8BC2-7B7687B31B52}", "Edge"),
-                # Brave
-                ("{576B31AF-6369-4B6B-8560-E4B203A97A8B}", "Brave"),
-                # Chrome Beta
-                ("{DD2646BA-3707-4BF8-B9A7-038691A68FC2}", "Chrome Beta"),
-                # Chrome Dev
-                ("{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}", "Chrome Dev"),
-                # Chrome Canary
-                ("{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}", "Chrome Canary"),
-            ]
-            
-            # IElevator interface IID
-            IID_IElevator = "{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}"
-            
-            for clsid_str, browser_name in browser_clsids:
-                try:
-                    # Convert string CLSIDs to GUID structures
-                    clsid = (ctypes.c_byte * 16)()
-                    iid = (ctypes.c_byte * 16)()
-                    
-                    ole32.CLSIDFromString(clsid_str, byref(clsid))
-                    ole32.CLSIDFromString(IID_IElevator, byref(iid))
-                    
-                    # Create COM object
-                    punk = c_void_p()
-                    hr = ole32.CoCreateInstance(
-                        byref(clsid),
-                        None,
-                        CLSCTX_LOCAL_SERVER,
-                        byref(iid),
-                        byref(punk)
-                    )
-                    
-                    if hr == 0 and punk.value:
-                        logger.debug(f"Successfully connected to {browser_name} IElevator")
-                        
-                        # Get vtable pointer
-                        vtable = ctypes.cast(punk, POINTER(POINTER(c_void_p))).contents
-                        
-                        # DecryptData is typically at vtable index 4 (after IUnknown methods)
-                        # IUnknown: QueryInterface(0), AddRef(1), Release(2)
-                        # IElevator: RunRecoveryCRXElevated(3), EncryptData(4), DecryptData(5)
-                        
-                        # Prepare input data
-                        data_len = len(encrypted_data)
-                        input_buffer = (ctypes.c_byte * data_len)(*encrypted_data)
-                        output_buffer = POINTER(ctypes.c_byte)()
-                        output_len = c_ulong()
-                        
-                        # Call DecryptData (vtable index 5)
-                        # HRESULT DecryptData(DWORD protection_level, const BYTE* input, DWORD input_len, 
-                        #                     BYTE** output, DWORD* output_len)
-                        DecryptData = ctypes.WINFUNCTYPE(
-                            ctypes.c_long,  # HRESULT
-                            c_void_p,       # this
-                            c_ulong,        # protection_level
-                            POINTER(ctypes.c_byte),  # input
-                            c_ulong,        # input_len
-                            POINTER(POINTER(ctypes.c_byte)),  # output
-                            POINTER(c_ulong)  # output_len
-                        )(vtable[5])
-                        
-                        hr = DecryptData(
-                            punk,
-                            1,  # protection_level
-                            input_buffer,
-                            data_len,
-                            byref(output_buffer),
-                            byref(output_len)
-                        )
-                        
-                        if hr == 0 and output_buffer and output_len.value > 0:
-                            result = bytes(output_buffer[:output_len.value])
-                            logger.info(f"IElevator decryption successful via {browser_name}")
-                            
-                            # Release COM object
-                            Release = ctypes.WINFUNCTYPE(c_ulong, c_void_p)(vtable[2])
-                            Release(punk)
-                            
-                            return result
-                        
-                        # Release COM object
-                        Release = ctypes.WINFUNCTYPE(c_ulong, c_void_p)(vtable[2])
-                        Release(punk)
-                        
-                except Exception as e:
-                    logger.debug(f"IElevator attempt failed for {browser_name}: {e}")
-                    continue
-                    
-        finally:
-            ole32.CoUninitialize()
-        
-    except Exception as e:
-        logger.debug(f"ctypes IElevator failed: {e}")
-    
-    return None
-
-
-def _try_ielevator_comtypes(encrypted_data: bytes) -> Optional[bytes]:
-    """Try IElevator decryption using comtypes."""
-    try:
-        import comtypes.client  # type: ignore
-        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown  # type: ignore
-        from ctypes import POINTER, c_char_p, c_ulong, byref, create_string_buffer
-        
-        # Define IElevator interface
-        class IElevator(IUnknown):
-            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
-            _methods_ = [
-                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
-                          (['in'], c_char_p, 'crx_path'),
-                          (['in'], c_char_p, 'browser_appid'),
-                          (['in'], c_char_p, 'browser_version'),
-                          (['in'], c_char_p, 'session_id'),
-                          (['in'], c_ulong, 'caller_proc_id'),
-                          (['out'], POINTER(c_ulong), 'proc_handle')),
-                COMMETHOD([], HRESULT, 'EncryptData',
-                          (['in'], c_ulong, 'protection_level'),
-                          (['in'], c_char_p, 'plaintext'),
-                          (['in'], c_ulong, 'plaintext_len'),
-                          (['out'], POINTER(c_char_p), 'ciphertext'),
-                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
-                COMMETHOD([], HRESULT, 'DecryptData',
-                          (['in'], c_char_p, 'ciphertext'),
-                          (['in'], c_ulong, 'ciphertext_len'),
-                          (['out'], POINTER(c_char_p), 'plaintext'),
-                          (['out'], POINTER(c_ulong), 'plaintext_len')),
-            ]
-        
-        # Chrome Stable CLSID
-        CLSID_Elevator = GUID("{708860E0-F641-4611-8895-7D867DD3675B}")
-        
-        try:
-            comtypes.client.CoInitialize()
-            elevator = comtypes.client.CreateObject(CLSID_Elevator, interface=IElevator)
-            
-            plaintext = c_char_p()
-            plaintext_len = c_ulong()
-            
-            hr = elevator.DecryptData(
-                encrypted_data,
-                len(encrypted_data),
-                byref(plaintext),
-                byref(plaintext_len)
-            )
-            
-            if hr == 0 and plaintext.value:
-                return plaintext.value[:plaintext_len.value]
-                
-        except Exception as e:
-            logger.debug(f"comtypes IElevator failed: {e}")
-        finally:
-            try:
-                comtypes.client.CoUninitialize()
-            except:
-                pass
-                
-    except ImportError:
-        logger.debug("comtypes not available for IElevator")
-    except Exception as e:
-        logger.debug(f"comtypes IElevator setup failed: {e}")
-    
-    return None
-
-
-def _try_chrome_remote_debugging_decrypt(encrypted_key: bytes) -> Optional[bytes]:
-    """
-    Attempt to decrypt using Chrome's remote debugging interface.
-    
-    This method launches Chrome with remote debugging enabled and uses
-    the DevTools protocol to access decryption functionality.
-    """
-    chrome_path = _get_chrome_exe_path()
-    if not chrome_path:
-        return None
-    
-    # This approach is complex and requires careful implementation
-    # For now, we'll use other methods first
-    return None
-
-
-def _try_decrypt_with_chrome_keyring(encrypted_key: bytes) -> Optional[bytes]:
-    """
-    Alternative method: Try to decrypt ABE key using Chrome's internal keyring.
-    
-    This works by reading additional encryption context from Chrome's data.
-    """
-    if os.name != "nt":
-        return None
-        
-    try:
-        import win32crypt  # type: ignore
-        import win32api  # type: ignore
-        import win32security  # type: ignore
-        
-        # ABE uses application-bound DPAPI with Chrome's SID
-        # Try decryption with different entropy values
-        if not encrypted_key.startswith(ABE_PREFIX):
-            return None
-            
-        key_data = encrypted_key[len(ABE_PREFIX):]
-        
-        # Method 1: Try with Chrome's app path as entropy
-        chrome_path = _get_chrome_exe_path()
-        if chrome_path:
-            try:
-                entropy = str(chrome_path).encode('utf-16-le')
-                decrypted = win32crypt.CryptUnprotectData(
-                    key_data, None, entropy, None, 0
-                )[1]
-                if decrypted and len(decrypted) == 32:  # AES-256 key
-                    return decrypted
-            except Exception:
-                pass
-        
-        # Method 2: Try with no entropy (user-level protection only)
-        try:
-            decrypted = win32crypt.CryptUnprotectData(
-                key_data, None, None, None, 0
-            )[1]
-            if decrypted and len(decrypted) >= 16:
-                return decrypted
-        except Exception:
-            pass
-            
-        # Method 3: Try with CRYPTPROTECT_LOCAL_MACHINE flag
-        try:
-            CRYPTPROTECT_LOCAL_MACHINE = 0x04
-            decrypted = win32crypt.CryptUnprotectData(
-                key_data, None, None, None, CRYPTPROTECT_LOCAL_MACHINE
-            )[1]
-            if decrypted:
-                return decrypted
-        except Exception:
-            pass
-            
-    except ImportError:
-        logger.debug("win32crypt not available for keyring decryption")
-    except Exception as e:
-        logger.debug(f"Chrome keyring decryption failed: {e}")
-    
-    return None
-
-
-def _extract_abe_key_components(encrypted_key: bytes) -> Tuple[bytes, bytes]:
-    """
-    Extract components from an ABE-wrapped key.
-    
-    ABE key format after APPB prefix:
-    - 4 bytes: version/header
-    - Remaining: encrypted DPAPI blob with app binding
-    """
-    if not is_abe_encrypted_key(encrypted_key):
-        raise AppBoundDecryptionError("Not an ABE-encrypted key")
-    
-    # Remove APPB prefix
-    key_data = encrypted_key[len(ABE_PREFIX):]
-    
-    # The remaining data is a DPAPI blob with additional Chrome-specific binding
-    return key_data[:4], key_data[4:]
-
-
-def decrypt_abe_key_with_dpapi(encrypted_key: bytes) -> Optional[bytes]:
-    """
-    Attempt to decrypt an ABE key using DPAPI with Chrome's context.
-    
-    This method works when:
-    1. Running with the same user context as Chrome
-    2. On systems where ABE enforcement is relaxed
-    """
-    if os.name != "nt":
-        return None
-    
-    try:
-        import win32crypt  # type: ignore
-        
-        if is_abe_encrypted_key(encrypted_key):
-            key_data = encrypted_key[len(ABE_PREFIX):]
-            
-            # Method 1: Direct DPAPI decryption (works on some configurations)
-            try:
-                decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-                if decrypted and len(decrypted) >= 16:
-                    logger.info("ABE key decrypted via direct DPAPI")
-                    return decrypted
-            except Exception as e:
-                logger.debug("Direct DPAPI decryption of ABE key failed: %s", e)
-            
-            # Method 2: Try Chrome keyring method
-            result = _try_decrypt_with_chrome_keyring(encrypted_key)
-            if result:
-                logger.info("ABE key decrypted via Chrome keyring method")
-                return result
-            
-            # Method 3: Try with CRYPTPROTECT_UI_FORBIDDEN flag
-            try:
-                CRYPTPROTECT_UI_FORBIDDEN = 0x01
-                decrypted = win32crypt.CryptUnprotectData(
-                    key_data, None, None, None, CRYPTPROTECT_UI_FORBIDDEN
-                )[1]
-                if decrypted and len(decrypted) >= 16:
-                    logger.info("ABE key decrypted via DPAPI (UI_FORBIDDEN)")
-                    return decrypted
-            except Exception:
-                pass
-            
-            # Method 4: Try decrypting the full key with APPB prefix
-            # Some Chrome versions may use different formats
-            try:
-                decrypted = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
-                if decrypted and len(decrypted) >= 16:
-                    logger.info("ABE key decrypted via full key DPAPI")
-                    return decrypted
-            except Exception:
-                pass
-        
-        # Fallback: try decrypting with DPAPI prefix handling
-        if encrypted_key.startswith(DPAPI_PREFIX):
-            key_data = encrypted_key[len(DPAPI_PREFIX):]
-            try:
-                decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
-                return decrypted
-            except Exception:
-                pass
-    
-    except ImportError:
-        logger.debug("win32crypt not available")
-    
-    return None
-
-
-def decrypt_abe_key_via_system_context(encrypted_key: bytes) -> Optional[bytes]:
-    """
-    Attempt ABE key decryption using SYSTEM context via scheduled task.
-    
-    This is an advanced technique that creates a temporary scheduled task
-    running as SYSTEM to perform the decryption.
-    """
-    if os.name != "nt":
-        return None
-    
-    # This requires admin privileges and is complex to implement safely
-    # Reserved for future implementation
-    return None
-
-
-def load_abe_key_from_local_state(local_state_path: Path) -> Optional[bytes]:
-    """
-    Load and decrypt the ABE-protected key from Chrome's Local State.
+    This uses the native C++ implementation when available for better
+    performance and reliability.
     
     Args:
-        local_state_path: Path to Chrome's Local State file
+        encrypted_key: APPB-prefixed encrypted key from Local State
+        browser_type: Browser type for elevation service
+        auto_detect: If True, try all available browsers automatically
         
     Returns:
-        Decrypted AES key or None if decryption fails
+        Decrypted key bytes or None on failure
     """
-    if not local_state_path.exists():
+    if not is_abe_encrypted_key(encrypted_key):
+        logger.debug("Key is not ABE-encrypted")
+        return None
+    
+    try:
+        if _native_available:
+            elevator = NativeElevator()
+            if auto_detect:
+                result = elevator.decrypt_key_auto(encrypted_key)
+            else:
+                result = elevator.decrypt_key(encrypted_key, browser_type)
+            
+            if result.get("success"):
+                logger.info("ABE key decrypted via native IElevator")
+                return result.get("data")
+            else:
+                logger.warning(f"Native IElevator failed: {result.get('error')}")
+        else:
+            # Try Python COM fallback
+            result = _python_ielevator_decrypt(encrypted_key, browser_type, auto_detect)
+            if result:
+                logger.info("ABE key decrypted via Python IElevator")
+                return result
+    except Exception as e:
+        logger.error(f"ABE key decryption failed: {e}")
+    
+    return None
+
+
+def _python_ielevator_decrypt(
+    encrypted_key: bytes,
+    browser_type: str,
+    auto_detect: bool
+) -> Optional[bytes]:
+    """Python COM fallback for IElevator decryption."""
+    if os.name != "nt":
+        return None
+    
+    try:
+        import comtypes.client
+        from comtypes import GUID
+        
+        # Browser CLSIDs
+        clsids = {
+            BrowserType.CHROME: "{708860E0-F641-4611-8895-7D867DD3675B}",
+            BrowserType.CHROME_BETA: "{DD2646BA-3707-4BF8-B9A7-038691A68FC2}",
+            BrowserType.CHROME_DEV: "{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}",
+            BrowserType.CHROME_CANARY: "{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}",
+            BrowserType.EDGE: "{1EBBCAB8-D9A8-4FBA-8BC2-7B7687B31B52}",
+            BrowserType.BRAVE: "{576B31AF-6369-4B6B-8560-E4B203A97A8B}",
+            BrowserType.AVAST: "{30D7F8EB-1F8E-4D77-A15E-C93C342AE54D}",
+        }
+        
+        browsers_to_try = list(clsids.keys()) if auto_detect else [browser_type]
+        
+        for browser in browsers_to_try:
+            clsid_str = clsids.get(browser)
+            if not clsid_str:
+                continue
+            
+            try:
+                comtypes.client.CoInitialize()
+                clsid = GUID(clsid_str)
+                obj = comtypes.client.CreateObject(clsid)
+                
+                if hasattr(obj, 'DecryptData'):
+                    # Try BSTR-based interface
+                    from ctypes import create_string_buffer, byref, c_ulong
+                    import ctypes.wintypes as wintypes
+                    
+                    result = obj.DecryptData(encrypted_key)
+                    if result:
+                        return bytes(result)
+                        
+            except Exception as e:
+                logger.debug(f"Python COM {browser} failed: {e}")
+            finally:
+                try:
+                    comtypes.client.CoUninitialize()
+                except:
+                    pass
+                    
+    except ImportError:
+        logger.debug("comtypes not available for Python COM fallback")
+    except Exception as e:
+        logger.debug(f"Python IElevator failed: {e}")
+    
+    return None
+
+
+def decrypt_abe_value(
+    encrypted_value: bytes,
+    abe_key: bytes,
+    strip_header: bool = True
+) -> Optional[str]:
+    """
+    Decrypt a v20 (ABE) encrypted value using AES-GCM.
+    
+    Args:
+        encrypted_value: Data with v20 prefix + IV + ciphertext + tag
+        abe_key: 32-byte AES key from decrypt_abe_key()
+        strip_header: If True, remove Chrome's 32-byte cookie header
+        
+    Returns:
+        Decrypted string or None on failure
+    """
+    if not is_abe_encrypted_value(encrypted_value):
+        logger.debug("Value does not have v20 prefix")
+        return None
+    
+    try:
+        if _native_available:
+            result = native_decrypt_aes_gcm(abe_key, encrypted_value)
+            if result:
+                if strip_header and len(result) > COOKIE_HEADER_SIZE:
+                    result = result[COOKIE_HEADER_SIZE:]
+                return result.decode("utf-8", errors="replace")
+        
+        # Python fallback
+        if _crypto_available:
+            nonce = encrypted_value[3:3 + AES_GCM_NONCE_LENGTH]
+            ciphertext = encrypted_value[3 + AES_GCM_NONCE_LENGTH:]
+            
+            aesgcm = AESGCM(abe_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            
+            if strip_header and len(plaintext) > COOKIE_HEADER_SIZE:
+                plaintext = plaintext[COOKIE_HEADER_SIZE:]
+            
+            return plaintext.decode("utf-8", errors="replace")
+            
+    except Exception as e:
+        logger.debug(f"AES-GCM decryption failed: {e}")
+    
+    return None
+
+
+def load_abe_key_from_local_state(local_state_path: Optional[Path] = None) -> Optional[bytes]:
+    """
+    Load and decrypt ABE key from Chrome's Local State file.
+    
+    Args:
+        local_state_path: Path to Local State file (auto-detected if None)
+        
+    Returns:
+        Decrypted ABE key or None
+    """
+    if local_state_path is None:
+        local_state_path = _get_chrome_local_state_path()
+    
+    if not local_state_path or not local_state_path.exists():
+        logger.warning("Local State file not found")
         return None
     
     try:
         raw = local_state_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        encrypted_key_b64 = data["os_crypt"]["encrypted_key"]
+        
+        encrypted_key_b64 = data.get("os_crypt", {}).get("encrypted_key")
+        if not encrypted_key_b64:
+            logger.warning("No encrypted_key in Local State")
+            return None
+        
         encrypted_key = base64.b64decode(encrypted_key_b64)
-    except (KeyError, json.JSONDecodeError, Exception) as e:
-        logger.debug("Failed to read encrypted key from Local State: %s", e)
+        
+        # Remove DPAPI prefix if present
+        if encrypted_key.startswith(DPAPI_PREFIX):
+            encrypted_key = encrypted_key[len(DPAPI_PREFIX):]
+        
+        if is_abe_encrypted_key(encrypted_key):
+            return decrypt_abe_key(encrypted_key, auto_detect=True)
+        else:
+            # Not ABE, try DPAPI
+            return _dpapi_decrypt(encrypted_key)
+            
+    except Exception as e:
+        logger.error(f"Failed to load ABE key: {e}")
+        return None
+
+
+def _dpapi_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+    """Decrypt data using Windows DPAPI."""
+    if os.name != "nt":
         return None
     
-    # Check if this is an ABE key
-    if not is_abe_encrypted_key(encrypted_key):
-        logger.debug("Key is not ABE-encrypted, using standard DPAPI")
-        return None  # Let the standard decrypt path handle it
-    
-    logger.info("Detected App-Bound Encryption key, attempting decryption...")
-    
-    # Try various decryption methods in order of preference
-    
-    # Method 1: IElevator COM interface (cleanest method)
-    result = _try_ielevator_com_decrypt(encrypted_key)
-    if result:
-        logger.info("ABE key decrypted via IElevator COM")
-        return result
-    
-    # Method 2: Direct DPAPI (works on some configurations)
-    result = decrypt_abe_key_with_dpapi(encrypted_key)
-    if result:
-        logger.info("ABE key decrypted via DPAPI")
-        return result
-    
-    # Method 3: SYSTEM context (requires elevation)
-    result = decrypt_abe_key_via_system_context(encrypted_key)
-    if result:
-        logger.info("ABE key decrypted via SYSTEM context")
-        return result
-    
-    logger.warning("All ABE decryption methods failed")
-    return None
-
-
-def decrypt_v20_value(
-    encrypted_value: bytes,
-    abe_key: bytes,
-) -> str:
-    """
-    Decrypt a v20 (ABE) encrypted cookie value.
-    
-    v20 format:
-    - 3 bytes: "v20" prefix
-    - 12 bytes: AES-GCM nonce
-    - Remaining: ciphertext + 16-byte auth tag
-    
-    Args:
-        encrypted_value: The encrypted cookie value from database
-        abe_key: The decrypted ABE key (32 bytes for AES-256)
-        
-    Returns:
-        Decrypted plaintext value
-    """
-    if not is_abe_encrypted_value(encrypted_value):
-        raise AppBoundDecryptionError("Value does not have v20 prefix")
-    
-    # Extract components
-    nonce = encrypted_value[3:3 + AES_GCM_NONCE_LENGTH]
-    ciphertext = encrypted_value[3 + AES_GCM_NONCE_LENGTH:]
-    
     try:
-        aesgcm = AESGCM(abe_key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-        return plaintext.decode("utf-8", errors="replace")
+        import win32crypt
+        return win32crypt.CryptUnprotectData(encrypted_data, None, None, None, 0)[1]
+    except ImportError:
+        logger.debug("win32crypt not available")
     except Exception as e:
-        raise AppBoundDecryptionError(f"AES-GCM decryption failed: {e}")
+        logger.debug(f"DPAPI decryption failed: {e}")
+    
+    return None
 
 
 class AppBoundDecryptor:
     """
     High-level interface for App-Bound Encryption decryption.
     
-    Usage:
-        decryptor = AppBoundDecryptor(local_state_path)
-        if decryptor.is_available():
-            plaintext = decryptor.decrypt_value(encrypted_value)
+    Provides a unified API for decrypting ABE-protected browser data
+    using native C++ implementation when available.
     """
     
-    def __init__(self, local_state_path: Optional[Path] = None):
+    def __init__(
+        self,
+        local_state_path: Optional[Path] = None,
+        browser_type: str = BrowserType.CHROME
+    ):
+        """
+        Initialize ABE decryptor.
+        
+        Args:
+            local_state_path: Path to Local State file (auto-detected if None)
+            browser_type: Browser type for elevation service selection
+        """
         self._local_state_path = local_state_path
+        self._browser_type = browser_type
         self._abe_key: Optional[bytes] = None
         self._initialized = False
         self._available = False
     
     def _ensure_initialized(self) -> None:
+        """Lazy initialization of ABE key."""
         if self._initialized:
             return
         
         self._initialized = True
-        
-        if not self._local_state_path:
-            return
-        
         self._abe_key = load_abe_key_from_local_state(self._local_state_path)
         self._available = self._abe_key is not None
+        
+        if self._available:
+            logger.info("ABE decryptor initialized successfully")
+        else:
+            logger.warning("ABE decryptor initialization failed - key not available")
     
+    @property
     def is_available(self) -> bool:
         """Check if ABE decryption is available."""
         self._ensure_initialized()
         return self._available
     
-    def can_decrypt_value(self, encrypted_value: bytes) -> bool:
-        """Check if a value can be decrypted with ABE."""
-        return is_abe_encrypted_value(encrypted_value) and self.is_available()
+    @property
+    def abe_key(self) -> Optional[bytes]:
+        """Get the decrypted ABE key."""
+        self._ensure_initialized()
+        return self._abe_key
     
-    def decrypt_value(self, encrypted_value: bytes) -> str:
+    def can_decrypt_value(self, encrypted_value: bytes) -> bool:
+        """Check if a value can be decrypted."""
+        return is_abe_encrypted_value(encrypted_value) and self.is_available
+    
+    def decrypt_value(
+        self,
+        encrypted_value: bytes,
+        strip_header: bool = True
+    ) -> Optional[str]:
         """
-        Decrypt an ABE-encrypted cookie value.
+        Decrypt an ABE-encrypted value.
         
         Args:
-            encrypted_value: Encrypted value from cookies database
+            encrypted_value: v20-prefixed encrypted data
+            strip_header: Remove Chrome's 32-byte cookie header
             
         Returns:
-            Decrypted plaintext
-            
-        Raises:
-            AppBoundDecryptionError: If decryption fails
+            Decrypted string or None
         """
         self._ensure_initialized()
         
         if not self._available or not self._abe_key:
-            raise AppBoundDecryptionError("ABE decryption not available")
+            raise AppBoundDecryptionError("ABE key not available")
         
-        return decrypt_v20_value(encrypted_value, self._abe_key)
+        result = decrypt_abe_value(encrypted_value, self._abe_key, strip_header)
+        if result is None:
+            raise AppBoundDecryptionError("Decryption failed")
+        
+        return result
+    
+    def decrypt_value_safe(
+        self,
+        encrypted_value: bytes,
+        strip_header: bool = True
+    ) -> Optional[str]:
+        """
+        Safely decrypt a value, returning None instead of raising.
+        
+        Args:
+            encrypted_value: v20-prefixed encrypted data
+            strip_header: Remove Chrome's 32-byte cookie header
+            
+        Returns:
+            Decrypted string or None
+        """
+        try:
+            return self.decrypt_value(encrypted_value, strip_header)
+        except AppBoundDecryptionError:
+            return None
 
 
-# CDP-based cookie extraction for Chrome 127+
 class CDPCookieExtractor:
     """
-    Extract cookies using Chrome DevTools Protocol (CDP).
+    Cookie extractor using Chrome DevTools Protocol.
     
-    This is the most reliable method for Chrome 127+ with App-Bound Encryption,
-    as Chrome itself handles the decryption and returns plaintext cookies via CDP.
-    
-    Strategy:
-    1. Try to connect to Chrome started with --remote-debugging-port (if any)
-    2. Copy user profile and start Chrome with temporary copy
-    3. Use headless mode to avoid UI conflicts
-    
-    Usage:
-        extractor = CDPCookieExtractor()
-        cookies = extractor.get_all_cookies()
+    This is the recommended method for Chrome 127+ as CDP provides
+    already-decrypted cookie values.
     """
     
-    DEFAULT_CDP_PORT = 9222
-    CONNECT_TIMEOUT = 15
-    
     def __init__(
-        self, 
-        chrome_path: Optional[Path] = None,
+        self,
+        browser_path: Optional[Path] = None,
         user_data_dir: Optional[Path] = None,
-        cdp_port: int = DEFAULT_CDP_PORT,
+        debug_port: int = 9222
     ):
-        self._chrome_path = chrome_path or _get_chrome_exe_path()
-        self._user_data_dir = user_data_dir
-        self._cdp_port = cdp_port
-        self._chrome_process: Optional[subprocess.Popen] = None
-        self._ws_url: Optional[str] = None
-        self._temp_profile_dir: Optional[Path] = None
-    
-    def _find_free_port(self) -> int:
-        """Find a free port for CDP."""
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('127.0.0.1', 0))
-            return s.getsockname()[1]
-    
-    def _get_user_data_dir(self) -> Optional[Path]:
-        """Get Chrome's default user data directory."""
-        if self._user_data_dir:
-            return self._user_data_dir
-        
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        if local_app_data:
-            chrome_data = Path(local_app_data) / "Google" / "Chrome" / "User Data"
-            if chrome_data.exists():
-                return chrome_data
-        return None
-    
-    def _copy_profile_for_cdp(self, user_data_dir: Path) -> Optional[Path]:
         """
-        Copy essential profile files to a temp directory for CDP access.
-        This allows reading cookies while Chrome is running.
+        Initialize CDP extractor.
+        
+        Args:
+            browser_path: Path to browser executable
+            user_data_dir: User data directory
+            debug_port: Remote debugging port
         """
-        import shutil
-        
-        try:
-            # Create temp directory
-            temp_dir = Path(tempfile.mkdtemp(prefix="chrome_cdp_"))
-            self._temp_profile_dir = temp_dir
-            
-            # Copy Local State (contains encryption key)
-            local_state = user_data_dir / "Local State"
-            if local_state.exists():
-                shutil.copy2(local_state, temp_dir / "Local State")
-            
-            # Copy Default profile (or other profiles)
-            default_profile = user_data_dir / "Default"
-            if default_profile.exists():
-                temp_default = temp_dir / "Default"
-                temp_default.mkdir(exist_ok=True)
-                
-                # Copy essential files
-                essential_files = [
-                    "Cookies",
-                    "Network/Cookies", 
-                    "Login Data",
-                    "Web Data",
-                    "Preferences",
-                    "Secure Preferences",
-                ]
-                
-                for file_rel in essential_files:
-                    src = default_profile / file_rel
-                    if src.exists():
-                        dst = temp_default / file_rel
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        try:
-                            shutil.copy2(src, dst)
-                        except Exception:
-                            pass  # File might be locked
-            
-            logger.debug(f"Created temp profile at {temp_dir}")
-            return temp_dir
-            
-        except Exception as e:
-            logger.debug(f"Failed to copy profile: {e}")
-            return None
-    
-    def _try_common_cdp_ports(self) -> bool:
-        """Try to connect to Chrome on common debugging ports."""
-        common_ports = [9222, 9223, 9224, 9225, 9226]
-        
-        for port in common_ports:
-            self._cdp_port = port
-            if self._get_ws_endpoint():
-                logger.info(f"Found existing Chrome CDP on port {port}")
-                return True
-        return False
-    
-    def _start_chrome_with_cdp(self) -> bool:
-        """Start Chrome with remote debugging enabled."""
-        if not self._chrome_path or not self._chrome_path.exists():
-            logger.error("Chrome executable not found")
-            return False
-        
-        user_data_dir = self._get_user_data_dir()
-        if not user_data_dir:
-            logger.error("Chrome user data directory not found")
-            return False
-        
-        # Find a free port
-        self._cdp_port = self._find_free_port()
-        
-        # Try different approaches
-        approaches = [
-            # Approach 1: Use original profile (works if Chrome is not running)
-            {"user_data_dir": user_data_dir, "headless": "--headless=new"},
-            # Approach 2: Use copied profile (works if Chrome is running)
-            {"user_data_dir": self._copy_profile_for_cdp(user_data_dir), "headless": "--headless=new"},
-            # Approach 3: Old headless mode with copied profile
-            {"user_data_dir": self._temp_profile_dir, "headless": "--headless"},
-        ]
-        
-        for approach in approaches:
-            profile_dir = approach["user_data_dir"]
-            if not profile_dir:
-                continue
-                
-            headless_flag = approach["headless"]
-            
-            args = [
-                str(self._chrome_path),
-                f"--remote-debugging-port={self._cdp_port}",
-                f"--user-data-dir={profile_dir}",
-                headless_flag,
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-sync",
-                "--disable-translate",
-                "--mute-audio",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--disable-site-isolation-trials",
-                "--disable-web-security",
-                "--disable-features=BlockInsecurePrivateNetworkRequests",
-            ]
-            
-            try:
-                startupinfo = None
-                creationflags = 0
-                if os.name == "nt":
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
-                    creationflags = subprocess.CREATE_NO_WINDOW
-                
-                self._chrome_process = subprocess.Popen(
-                    args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    startupinfo=startupinfo,
-                    creationflags=creationflags,
-                )
-                
-                # Wait for Chrome to start
-                import time
-                for _ in range(self.CONNECT_TIMEOUT * 10):
-                    if self._get_ws_endpoint():
-                        logger.info(f"Chrome CDP started on port {self._cdp_port} (headless: {headless_flag})")
-                        return True
-                    time.sleep(0.1)
-                    
-                    # Check if process died
-                    if self._chrome_process.poll() is not None:
-                        break
-                
-                # This approach failed, try next
-                self._cleanup_process_only()
-                
-            except Exception as e:
-                logger.debug(f"Chrome start failed with {headless_flag}: {e}")
-                self._cleanup_process_only()
-                continue
-        
-        logger.error("All CDP approaches failed")
-        return False
-    
-    def _cleanup_process_only(self) -> None:
-        """Clean up Chrome process only (keep temp profile for retry)."""
-        if self._chrome_process:
-            try:
-                self._chrome_process.terminate()
-                self._chrome_process.wait(timeout=3)
-            except Exception:
-                try:
-                    self._chrome_process.kill()
-                except Exception:
-                    pass
-            self._chrome_process = None
-    
-    def _get_ws_endpoint(self) -> Optional[str]:
-        """Get the WebSocket endpoint from CDP."""
-        import urllib.request
-        import urllib.error
-        
-        try:
-            url = f"http://127.0.0.1:{self._cdp_port}/json/version"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=2) as response:
-                data = json.loads(response.read().decode())
-                self._ws_url = data.get("webSocketDebuggerUrl")
-                return self._ws_url
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-            return None
-    
-    def _send_cdp_command(self, ws, method: str, params: dict = None) -> dict:
-        """Send a CDP command and get the response."""
-        import random
-        msg_id = random.randint(1, 1000000)
-        message = {"id": msg_id, "method": method}
-        if params:
-            message["params"] = params
-        
-        ws.send(json.dumps(message))
-        
-        while True:
-            response = json.loads(ws.recv())
-            if response.get("id") == msg_id:
-                return response
-    
-    def get_all_cookies(self) -> list[dict]:
-        """
-        Get all cookies from Chrome using CDP.
-        
-        Returns a list of cookie dictionaries with decrypted values.
-        """
-        cookies = []
-        
-        # Strategy 1: Try common CDP ports (existing Chrome with debugging)
-        if self._try_common_cdp_ports():
-            logger.info("Using existing Chrome CDP instance")
-        else:
-            # Strategy 2: Start our own Chrome instance
-            if not self._start_chrome_with_cdp():
-                logger.error("Failed to start Chrome CDP")
-                return cookies
-        
-        # Try websocket-client first (sync)
-        try:
-            import websocket
-            cookies = self._extract_via_websocket_client()
-            if cookies:
-                return cookies
-        except ImportError:
-            pass
-        
-        # Fallback to websockets (async)
-        try:
-            cookies = self._get_cookies_async()
-            if cookies:
-                return cookies
-        except Exception as e:
-            logger.debug(f"Async extraction failed: {e}")
-        
-        # Fallback: try urllib-based simple HTTP extraction
-        try:
-            cookies = self._extract_via_http()
-        except Exception as e:
-            logger.debug(f"HTTP extraction failed: {e}")
-        
-        return cookies
-    
-    def _extract_via_websocket_client(self) -> list[dict]:
-        """Extract cookies using websocket-client library."""
-        cookies = []
-        
-        try:
-            import websocket
-            
-            if not self._ws_url:
-                return cookies
-            
-            ws = websocket.create_connection(
-                self._ws_url, 
-                timeout=self.CONNECT_TIMEOUT
-            )
-            
-            # Get all cookies via CDP
-            response = self._send_cdp_command(ws, "Network.getAllCookies")
-            
-            if "result" in response and "cookies" in response["result"]:
-                for cookie in response["result"]["cookies"]:
-                    cookies.append({
-                        "domain": cookie.get("domain", ""),
-                        "name": cookie.get("name", ""),
-                        "value": cookie.get("value", ""),
-                        "path": cookie.get("path", "/"),
-                        "expires": int(cookie.get("expires", 0)),
-                        "secure": cookie.get("secure", False),
-                        "httponly": cookie.get("httpOnly", False),
-                        "samesite": cookie.get("sameSite", ""),
-                    })
-                logger.info(f"CDP extracted {len(cookies)} cookies")
-            
-            ws.close()
-            
-        except Exception as e:
-            logger.error(f"websocket-client extraction failed: {e}")
-        
-        return cookies
-    
-    def _extract_via_http(self) -> list[dict]:
-        """Fallback: Extract cookies using HTTP/REST CDP protocol."""
-        import urllib.request
-        import urllib.error
-        
-        cookies = []
-        
-        try:
-            # Some CDP implementations support REST-style access
-            url = f"http://127.0.0.1:{self._cdp_port}/json"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                targets = json.loads(response.read().decode())
-                
-                if targets and len(targets) > 0:
-                    # Get the first page target
-                    page_ws_url = targets[0].get("webSocketDebuggerUrl")
-                    if page_ws_url and not self._ws_url:
-                        self._ws_url = page_ws_url
-                        # Retry with websocket
-                        return self._extract_via_websocket_client()
-                        
-        except Exception as e:
-            logger.debug(f"HTTP CDP fallback failed: {e}")
-        
-        return cookies
-    
-    def _get_cookies_async(self) -> list[dict]:
-        """Async fallback using websockets library."""
-        import asyncio
-        
-        async def _extract():
-            cookies = []
-            try:
-                import websockets
-                
-                if not self._ws_url:
-                    return cookies
-                
-                async with websockets.connect(self._ws_url) as ws:
-                    import random
-                    msg_id = random.randint(1, 1000000)
-                    await ws.send(json.dumps({
-                        "id": msg_id, 
-                        "method": "Network.getAllCookies"
-                    }))
-                    
-                    while True:
-                        response = json.loads(await ws.recv())
-                        if response.get("id") == msg_id:
-                            if "result" in response and "cookies" in response["result"]:
-                                for cookie in response["result"]["cookies"]:
-                                    cookies.append({
-                                        "domain": cookie.get("domain", ""),
-                                        "name": cookie.get("name", ""),
-                                        "value": cookie.get("value", ""),
-                                        "path": cookie.get("path", "/"),
-                                        "expires": int(cookie.get("expires", 0)),
-                                        "secure": cookie.get("secure", False),
-                                        "httponly": cookie.get("httpOnly", False),
-                                        "samesite": cookie.get("sameSite", ""),
-                                    })
-                            break
-                            
-            except Exception as e:
-                logger.error(f"Async CDP extraction failed: {e}")
-            
-            return cookies
-        
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(_extract())
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.error(f"Failed to run async CDP extraction: {e}")
-            return []
-    
-    def _cleanup(self) -> None:
-        """Clean up Chrome process and temp profile."""
-        import shutil
-        
-        # Clean up Chrome process
-        if self._chrome_process:
-            try:
-                self._chrome_process.terminate()
-                self._chrome_process.wait(timeout=5)
-            except Exception:
-                try:
-                    self._chrome_process.kill()
-                except Exception:
-                    pass
-            self._chrome_process = None
-        
-        # Clean up temp profile directory
-        if self._temp_profile_dir and self._temp_profile_dir.exists():
-            try:
-                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
-                logger.debug(f"Cleaned up temp profile: {self._temp_profile_dir}")
-            except Exception:
-                pass
-            self._temp_profile_dir = None
+        self._browser_path = browser_path or _get_chrome_exe_path()
+        self._user_data_dir = user_data_dir or _get_chrome_user_data_dir()
+        self._debug_port = debug_port
+        self._process = None
+        self._temp_profile_dir = None
     
     def __enter__(self):
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cleanup()
-
-
-def get_cookies_via_cdp(
-    chrome_path: Optional[Path] = None,
-    user_data_dir: Optional[Path] = None,
-) -> list[dict]:
-    """
-    Get decrypted cookies using Chrome DevTools Protocol.
     
-    This is the recommended method for Chrome 127+ with ABE.
+    def _cleanup(self):
+        """Cleanup browser process and temp files."""
+        if self._process:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=5)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._process = None
+        
+        if self._temp_profile_dir:
+            try:
+                import shutil
+                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+            self._temp_profile_dir = None
     
-    Args:
-        chrome_path: Path to Chrome executable (auto-detected if None)
-        user_data_dir: Chrome user data directory (auto-detected if None)
+    def get_all_cookies(self) -> List[Dict[str, Any]]:
+        """
+        Get all cookies from the browser.
         
-    Returns:
-        List of cookie dictionaries with decrypted values
-    """
-    with CDPCookieExtractor(chrome_path, user_data_dir) as extractor:
-        return extractor.get_all_cookies()
-
-
-def try_cdp_cookie_extraction(browser_name: str = "chrome") -> tuple[bool, list[dict]]:
-    """
-    Attempt to extract cookies using CDP.
+        Returns:
+            List of cookie dictionaries
+        """
+        if not self._browser_path or not self._browser_path.exists():
+            logger.warning("Browser executable not found")
+            return []
+        
+        try:
+            # Create temp profile directory
+            self._temp_profile_dir = tempfile.mkdtemp(prefix="chrome_cdp_")
+            
+            # Start browser with remote debugging
+            cmd = [
+                str(self._browser_path),
+                f"--remote-debugging-port={self._debug_port}",
+                f"--user-data-dir={self._user_data_dir or self._temp_profile_dir}",
+                "--headless=new",
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ]
+            
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            
+            # Wait for browser to start
+            import time
+            time.sleep(2)
+            
+            # Connect to CDP and get cookies
+            return self._get_cookies_via_cdp()
+            
+        except Exception as e:
+            logger.error(f"CDP cookie extraction failed: {e}")
+            return []
     
-    Returns:
-        Tuple of (success, cookies)
-    """
-    try:
-        chrome_path = _get_chrome_exe_path()
-        if not chrome_path:
-            return False, []
-        
-        extractor = CDPCookieExtractor(chrome_path)
-        cookies = extractor.get_all_cookies()
-        extractor._cleanup()
-        
-        if cookies:
-            logger.info(f"CDP extraction successful: {len(cookies)} cookies")
-            return True, cookies
-        
-        return False, []
-        
-    except Exception as e:
-        logger.debug(f"CDP extraction failed: {e}")
-        return False, []
-
-
-# Alternative approach using Chrome's Remote Debugging Protocol (legacy wrapper)
-def decrypt_via_chrome_devtools(
-    local_state_path: Path,
-    encrypted_values: list[bytes],
-) -> list[Optional[str]]:
-    """
-    Decrypt values using Chrome's DevTools Protocol.
+    def _get_cookies_via_cdp(self) -> List[Dict[str, Any]]:
+        """Connect to CDP and retrieve cookies."""
+        try:
+            import json
+            import urllib.request
+            
+            # Get CDP endpoints
+            url = f"http://127.0.0.1:{self._debug_port}/json"
+            with urllib.request.urlopen(url, timeout=5) as response:
+                targets = json.loads(response.read())
+            
+            if not targets:
+                return []
+            
+            # Get WebSocket URL
+            ws_url = targets[0].get("webSocketDebuggerUrl")
+            if not ws_url:
+                return []
+            
+            # Connect via WebSocket
+            try:
+                import websocket
+                ws = websocket.create_connection(ws_url)
+            except ImportError:
+                try:
+                    import websockets
+                    import asyncio
+                    return asyncio.get_event_loop().run_until_complete(
+                        self._get_cookies_async(ws_url)
+                    )
+                except ImportError:
+                    logger.warning("No WebSocket library available")
+                    return []
+            
+            # Send command to get all cookies
+            request = {
+                "id": 1,
+                "method": "Network.getAllCookies",
+            }
+            ws.send(json.dumps(request))
+            
+            # Receive response
+            response = json.loads(ws.recv())
+            ws.close()
+            
+            if "result" in response and "cookies" in response["result"]:
+                return response["result"]["cookies"]
+            
+            return []
+            
+        except Exception as e:
+            logger.debug(f"CDP connection failed: {e}")
+            return []
     
-    NOTE: This is a legacy wrapper. For Chrome 127+, use CDPCookieExtractor directly
-    to get already-decrypted cookies instead of trying to decrypt raw values.
-    
-    This method:
-    1. Launches Chrome with remote debugging
-    2. Connects to DevTools
-    3. Uses internal Chrome APIs to decrypt
-    4. Returns decrypted values
-    """
-    # CDP returns already-decrypted cookies, so we can't use it to decrypt
-    # raw encrypted values. The correct approach is to use CDPCookieExtractor
-    # to get all cookies directly.
-    logger.warning(
-        "decrypt_via_chrome_devtools is deprecated for ABE. "
-        "Use CDPCookieExtractor.get_all_cookies() instead."
-    )
-    return [None] * len(encrypted_values)
+    async def _get_cookies_async(self, ws_url: str) -> List[Dict[str, Any]]:
+        """Async WebSocket connection using websockets library."""
+        import websockets
+        import json
+        
+        async with websockets.connect(ws_url) as ws:
+            request = {
+                "id": 1,
+                "method": "Network.getAllCookies",
+            }
+            await ws.send(json.dumps(request))
+            response = json.loads(await ws.recv())
+            
+            if "result" in response and "cookies" in response["result"]:
+                return response["result"]["cookies"]
+        
+        return []
 
 
-def check_abe_support() -> dict[str, Any]:
+def check_abe_support() -> Dict[str, Any]:
     """
     Check system support for App-Bound Encryption decryption.
     
-    Returns a dictionary with:
-    - windows: Whether running on Windows
-    - chrome_installed: Whether Chrome is found
-    - chrome_path: Path to Chrome executable
-    - elevation_service: Whether elevation service exists
-    - elevation_service_path: Path to elevation_service.exe if found
-    - elevation_service_running: Whether elevation service is running
-    - ielevator_available: Whether IElevator COM is accessible and working
-    - dpapi_available: Whether DPAPI is available
-    - cdp_available: Whether CDP extraction can be used (recommended for Chrome 127+)
-    - recommended_method: The recommended decryption method
+    Returns:
+        Dictionary with support status information
     """
     result = {
         "windows": os.name == "nt",
+        "native_module": _native_available,
+        "crypto_available": _crypto_available,
         "chrome_installed": False,
         "chrome_path": None,
+        "user_data_dir": None,
         "elevation_service": False,
         "elevation_service_path": None,
         "elevation_service_running": False,
@@ -1232,71 +722,52 @@ def check_abe_support() -> dict[str, Any]:
     if chrome_path:
         result["chrome_path"] = str(chrome_path)
     
-    # Check elevation service file exists
+    user_data_dir = _get_chrome_user_data_dir()
+    if user_data_dir:
+        result["user_data_dir"] = str(user_data_dir)
+    
+    # Check elevation service
     if chrome_path:
         elevation_service = _get_elevation_service_path()
         result["elevation_service"] = elevation_service is not None
         if elevation_service:
             result["elevation_service_path"] = str(elevation_service)
     
-    # Check if elevation service is running
     result["elevation_service_running"] = _is_elevation_service_running()
-    
-    # If service exists but not running, try to start it
-    if result["elevation_service"] and not result["elevation_service_running"]:
-        if _start_elevation_service():
-            result["elevation_service_running"] = True
     
     # Check DPAPI availability
     try:
-        import win32crypt  # type: ignore
+        import win32crypt
         result["dpapi_available"] = True
     except ImportError:
         pass
     
-    # Check IElevator COM - actually test if it works
-    try:
-        import comtypes.client  # type: ignore
-        from comtypes import GUID
-        
-        # Try to create the COM object
-        CLSID_Elevator = GUID("{708860E0-F641-4611-8895-7D867DD3675B}")
+    # Check IElevator availability (native or Python COM)
+    if _native_available:
+        result["ielevator_available"] = True
+    else:
         try:
-            comtypes.client.CoInitialize()
-            obj = comtypes.client.CreateObject(CLSID_Elevator)
-            result["ielevator_available"] = obj is not None
-        except Exception as e:
-            logger.debug(f"IElevator COM test failed: {e}")
-            # comtypes is installed but COM object not accessible
-            result["ielevator_available"] = False
-        finally:
-            try:
-                comtypes.client.CoUninitialize()
-            except:
-                pass
-    except ImportError:
-        pass
+            import comtypes.client
+            result["ielevator_available"] = True
+        except ImportError:
+            pass
     
-    # Check CDP availability (preferred method for Chrome 127+)
+    # Check CDP availability
     if result["chrome_installed"]:
-        # CDP is available if Chrome is installed and we can use websockets
         try:
-            # Check for websocket library
+            import websocket
+            result["cdp_available"] = True
+        except ImportError:
             try:
-                import websocket
+                import websockets
                 result["cdp_available"] = True
             except ImportError:
-                try:
-                    import websockets
-                    result["cdp_available"] = True
-                except ImportError:
-                    result["cdp_available"] = False
-        except Exception:
-            result["cdp_available"] = False
+                pass
     
     # Determine recommended method
-    # Priority: CDP > IElevator > DPAPI
-    if result["cdp_available"]:
+    if _native_available and result["ielevator_available"]:
+        result["recommended_method"] = "native_ielevator"
+    elif result["cdp_available"]:
         result["recommended_method"] = "cdp"
     elif result["ielevator_available"]:
         result["recommended_method"] = "ielevator"
@@ -1309,9 +780,7 @@ def check_abe_support() -> dict[str, Any]:
 
 
 def get_abe_decryption_status_message() -> str:
-    """
-    Get a human-readable status message about ABE decryption capabilities.
-    """
+    """Get a human-readable status message about ABE decryption capabilities."""
     support = check_abe_support()
     
     if not support["windows"]:
@@ -1322,6 +791,11 @@ def get_abe_decryption_status_message() -> str:
     
     messages = []
     
+    if support["native_module"]:
+        messages.append("✓ Native ABE module available (best performance)")
+    else:
+        messages.append("✗ Native ABE module not available (using Python fallback)")
+    
     if support["cdp_available"]:
         messages.append("✓ CDP extraction available (recommended for Chrome 127+)")
     else:
@@ -1330,7 +804,7 @@ def get_abe_decryption_status_message() -> str:
     if support["ielevator_available"]:
         messages.append("✓ IElevator COM interface available")
     else:
-        messages.append("✗ IElevator COM not accessible (requires special registration)")
+        messages.append("✗ IElevator COM not accessible")
     
     if support["dpapi_available"]:
         messages.append("✓ DPAPI available (limited for ABE)")
@@ -1340,3 +814,70 @@ def get_abe_decryption_status_message() -> str:
     messages.append(f"\nRecommended method: {support['recommended_method'].upper()}")
     
     return "\n".join(messages)
+
+
+# Convenience functions for backwards compatibility
+def try_cdp_cookie_extraction(browser_name: str = "chrome") -> Tuple[bool, List[Dict]]:
+    """
+    Attempt to extract cookies using CDP.
+    
+    Returns:
+        Tuple of (success, cookies)
+    """
+    try:
+        browser_path = _get_chrome_exe_path()
+        if not browser_path:
+            return False, []
+        
+        with CDPCookieExtractor(browser_path) as extractor:
+            cookies = extractor.get_all_cookies()
+            if cookies:
+                logger.info(f"CDP extraction successful: {len(cookies)} cookies")
+                return True, cookies
+        
+        return False, []
+        
+    except Exception as e:
+        logger.debug(f"CDP extraction failed: {e}")
+        return False, []
+
+
+def get_cookies_via_cdp(
+    chrome_path: Optional[Path] = None,
+    user_data_dir: Optional[Path] = None,
+) -> List[Dict]:
+    """
+    Get decrypted cookies using Chrome DevTools Protocol.
+    
+    Args:
+        chrome_path: Path to Chrome executable
+        user_data_dir: Chrome user data directory
+        
+    Returns:
+        List of cookie dictionaries
+    """
+    with CDPCookieExtractor(chrome_path, user_data_dir) as extractor:
+        return extractor.get_all_cookies()
+
+
+# Export public API
+__all__ = [
+    # Classes
+    "AppBoundDecryptionError",
+    "AppBoundDecryptor",
+    "CDPCookieExtractor",
+    "BrowserType",
+    # Functions
+    "is_abe_encrypted_key",
+    "is_abe_encrypted_value",
+    "decrypt_abe_key",
+    "decrypt_abe_value",
+    "load_abe_key_from_local_state",
+    "check_abe_support",
+    "get_abe_decryption_status_message",
+    "try_cdp_cookie_extraction",
+    "get_cookies_via_cdp",
+    # Constants
+    "ABE_PREFIX",
+    "V20_PREFIX",
+]
