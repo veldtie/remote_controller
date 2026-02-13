@@ -487,14 +487,18 @@ class CompilerPage(QtWidgets.QWidget):
         self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
         layout.setContentsMargins(0, 0, 0, 0)
 
         toolbar = GlassFrame(radius=18, tone="card_alt", tint_alpha=160, border_alpha=70)
         toolbar.setObjectName("ToolbarCard")
+        toolbar.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
         header = QtWidgets.QVBoxLayout(toolbar)
         header.setContentsMargins(16, 14, 16, 14)
-        header.setSpacing(6)
+        header.setSpacing(4)
         self.title_label = QtWidgets.QLabel()
         self.title_label.setObjectName("PageTitle")
         self.subtitle_label = QtWidgets.QLabel()
@@ -505,9 +509,16 @@ class CompilerPage(QtWidgets.QWidget):
 
         form_card = GlassFrame(radius=20, tone="card", tint_alpha=170, border_alpha=70)
         form_card.setObjectName("Card")
+        form_card.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
         form_layout = QtWidgets.QGridLayout(form_card)
-        form_layout.setHorizontalSpacing(16)
-        form_layout.setVerticalSpacing(12)
+        form_layout.setContentsMargins(14, 12, 14, 12)
+        form_layout.setHorizontalSpacing(14)
+        form_layout.setVerticalSpacing(10)
+        form_layout.setColumnStretch(1, 1)
+        form_layout.setColumnMinimumWidth(2, 94)
 
         self.source_label = QtWidgets.QLabel()
         self.source_input = QtWidgets.QLineEdit()
@@ -581,6 +592,16 @@ class CompilerPage(QtWidgets.QWidget):
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem(self.i18n.t("compiler_mode_onefile"), "onefile")
         self.mode_combo.setEnabled(False)
+        self.mode_combo.setMinimumWidth(190)
+        self.mode_combo.setMaximumWidth(260)
+
+        for button in (
+            self.source_button,
+            self.entry_button,
+            self.output_dir_button,
+            self.icon_button,
+        ):
+            button.setMinimumWidth(90)
 
         form_layout.addWidget(self.source_label, 0, 0)
         form_layout.addWidget(self.source_input, 0, 1)
@@ -598,33 +619,41 @@ class CompilerPage(QtWidgets.QWidget):
         form_layout.addWidget(self.icon_input, 5, 1)
         form_layout.addWidget(self.icon_button, 5, 2)
         form_layout.addWidget(self.mode_label, 6, 0)
-        form_layout.addWidget(self.mode_combo, 6, 1, 1, 2)
+        form_layout.addWidget(self.mode_combo, 6, 1)
 
         layout.addWidget(form_card)
 
         progress_wrap = QtWidgets.QWidget()
+        progress_wrap.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
         progress_layout = QtWidgets.QVBoxLayout(progress_wrap)
         progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setSpacing(0)
+        progress_layout.setSpacing(6)
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setObjectName("InlineStatus")
+        self.status_label.setProperty("state", "warn")
+        progress_layout.addWidget(self.status_label)
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setMinimumHeight(14)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setMinimumHeight(20)
         self.progress_bar.setProperty("status", "idle")
         progress_layout.addWidget(self.progress_bar)
         layout.addWidget(progress_wrap)
 
         actions = QtWidgets.QHBoxLayout()
+        actions.setContentsMargins(0, 2, 0, 0)
+        actions.setSpacing(10)
         self.build_button = make_button("", "primary")
         self.build_button.clicked.connect(self.start_build)
-        self.status_label = QtWidgets.QLabel()
-        self.status_label.setObjectName("Muted")
-        self.status_label.setProperty("state", "warn")
-        self.status_label.setVisible(False)
         actions.addWidget(self.build_button)
         actions.addStretch()
         layout.addLayout(actions)
+        layout.addStretch(1)
 
         self.load_state()
         self.apply_translations()
@@ -671,10 +700,7 @@ class CompilerPage(QtWidgets.QWidget):
         self.output_dir_button.setText(self.i18n.t("compiler_browse"))
         self.icon_button.setText(self.i18n.t("compiler_browse"))
         self.build_button.setText(self.i18n.t("compiler_build"))
-        self.status_label.setText(self.i18n.t("compiler_status_idle"))
-        self.status_label.setProperty("state", "warn")
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
+        self._set_status_ui(self.i18n.t("compiler_status_idle"), "warn")
         self._set_progress_ui(0, "idle")
         self.mode_combo.setItemText(0, self.i18n.t("compiler_mode_onefile"))
         self._build_region_menu()
@@ -686,6 +712,13 @@ class CompilerPage(QtWidgets.QWidget):
         self.progress_bar.setProperty("status", state)
         self.progress_bar.style().unpolish(self.progress_bar)
         self.progress_bar.style().polish(self.progress_bar)
+
+    def _set_status_ui(self, text: str, state: str, tooltip: str = "") -> None:
+        self.status_label.setText(text)
+        self.status_label.setProperty("state", state)
+        self.status_label.setToolTip(tooltip)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _capture_worker_log(self, line: str) -> None:
         if not line:
@@ -766,10 +799,7 @@ class CompilerPage(QtWidgets.QWidget):
         server_url, api_token = self._resolve_server_settings()
 
         if not source_dir.exists() or not entrypoint.exists():
-            self.status_label.setText(self.i18n.t("compiler_status_failed"))
-            self.status_label.setProperty("state", "error")
-            self.status_label.style().unpolish(self.status_label)
-            self.status_label.style().polish(self.status_label)
+            self._set_status_ui(self.i18n.t("compiler_status_failed"), "error")
             self._set_progress_ui(0, "error")
             return
 
@@ -790,10 +820,7 @@ class CompilerPage(QtWidgets.QWidget):
             activity_tracker=activity_tracker,
         )
         self.persist_builder_state(options)
-        self.status_label.setText(self.i18n.t("compiler_status_building"))
-        self.status_label.setProperty("state", "warn")
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
+        self._set_status_ui(self.i18n.t("compiler_status_building"), "warn")
         self._build_logs.clear()
         self._set_progress_ui(5, "active")
         self.build_button.setEnabled(False)
@@ -809,19 +836,14 @@ class CompilerPage(QtWidgets.QWidget):
         self.build_button.setEnabled(True)
         self.worker = None
         if success:
-            self.status_label.setText(self.i18n.t("compiler_status_done"))
-            self.status_label.setProperty("state", "ok")
+            self._set_status_ui(self.i18n.t("compiler_status_done"), "ok")
             self._set_progress_ui(100, "ok")
             self.logger.log("log_build_done", output=output)
         else:
             message = self.i18n.t("log_build_missing") if reason == "missing" else self.i18n.t("log_build_failed")
-            self.status_label.setText(self.i18n.t("compiler_status_failed"))
-            self.status_label.setProperty("state", "error")
-            self.status_label.setToolTip(message)
+            self._set_status_ui(self.i18n.t("compiler_status_failed"), "error", message)
             self._set_progress_ui(max(self.progress_bar.value(), 12), "error")
             self.logger.log("log_build_failed")
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
