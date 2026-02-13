@@ -1,8 +1,8 @@
 PyInstaller
-PyQt6>=6.5
+PyQt6
 PyQt6-WebEngine>=6.5
 aiortc
-asyncpg==0.29.0
+asyncpg
 av
 comtypes; platform_system == "Windows"
 cryptography
