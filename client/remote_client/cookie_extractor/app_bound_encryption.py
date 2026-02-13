@@ -157,44 +157,127 @@ def _try_ielevator_com_decrypt(encrypted_data: bytes) -> Optional[bytes]:
 
 
 def _try_ielevator_ctypes(encrypted_data: bytes) -> Optional[bytes]:
-    """Try IElevator decryption using ctypes (no comtypes needed)."""
+    """
+    Try IElevator decryption using ctypes with proper COM interface.
+    
+    This implements the IElevator COM interface that Chrome's elevation_service.exe exposes.
+    The DecryptData method decrypts App-Bound Encrypted data.
+    """
+    if os.name != "nt":
+        return None
+        
     try:
         import ctypes
-        from ctypes import wintypes
+        from ctypes import wintypes, POINTER, byref, c_void_p, c_ulong, c_wchar_p
         
-        # Load ole32 for COM
         ole32 = ctypes.windll.ole32
-        ole32.CoInitialize(None)
         
-        # Google Chrome Elevation Service CLSID
-        # Different Chrome channels use different CLSIDs
-        clsids = [
-            "{708860E0-F641-4611-8895-7D867DD3675B}",  # Chrome Stable
-            "{DD2646BA-3707-4BF8-B9A7-038691A68FC2}",  # Chrome Beta  
-            "{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}",  # Chrome Dev
-            "{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}",  # Chrome Canary
-        ]
+        # Initialize COM
+        hr = ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
+        if hr < 0 and hr != -2147417850:  # RPC_E_CHANGED_MODE is OK
+            logger.debug(f"CoInitializeEx failed: {hr}")
+            return None
         
-        for clsid in clsids:
-            try:
-                # Try using subprocess to call Chrome's elevation_service directly
-                import subprocess
-                chrome_paths = [
-                    Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application",
-                    Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application",
-                    Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application",
-                ]
-                
-                for chrome_path in chrome_paths:
-                    elevation_exe = chrome_path / "elevation_service.exe"
-                    if elevation_exe.exists():
-                        logger.debug(f"Found elevation service at: {elevation_exe}")
-                        break
-            except Exception as e:
-                logger.debug(f"ctypes IElevator attempt failed for {clsid}: {e}")
-                continue
-        
-        ole32.CoUninitialize()
+        try:
+            # CLSCTX_LOCAL_SERVER = 4 (out-of-process COM server)
+            CLSCTX_LOCAL_SERVER = 4
+            
+            # Browser elevation service CLSIDs
+            browser_clsids = [
+                # Chrome Stable
+                ("{708860E0-F641-4611-8895-7D867DD3675B}", "Chrome"),
+                # Edge
+                ("{1EBBCAB8-D9A8-4FBA-8BC2-7B7687B31B52}", "Edge"),
+                # Brave
+                ("{576B31AF-6369-4B6B-8560-E4B203A97A8B}", "Brave"),
+                # Chrome Beta
+                ("{DD2646BA-3707-4BF8-B9A7-038691A68FC2}", "Chrome Beta"),
+                # Chrome Dev
+                ("{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}", "Chrome Dev"),
+                # Chrome Canary
+                ("{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}", "Chrome Canary"),
+            ]
+            
+            # IElevator interface IID
+            IID_IElevator = "{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}"
+            
+            for clsid_str, browser_name in browser_clsids:
+                try:
+                    # Convert string CLSIDs to GUID structures
+                    clsid = (ctypes.c_byte * 16)()
+                    iid = (ctypes.c_byte * 16)()
+                    
+                    ole32.CLSIDFromString(clsid_str, byref(clsid))
+                    ole32.CLSIDFromString(IID_IElevator, byref(iid))
+                    
+                    # Create COM object
+                    punk = c_void_p()
+                    hr = ole32.CoCreateInstance(
+                        byref(clsid),
+                        None,
+                        CLSCTX_LOCAL_SERVER,
+                        byref(iid),
+                        byref(punk)
+                    )
+                    
+                    if hr == 0 and punk.value:
+                        logger.debug(f"Successfully connected to {browser_name} IElevator")
+                        
+                        # Get vtable pointer
+                        vtable = ctypes.cast(punk, POINTER(POINTER(c_void_p))).contents
+                        
+                        # DecryptData is typically at vtable index 4 (after IUnknown methods)
+                        # IUnknown: QueryInterface(0), AddRef(1), Release(2)
+                        # IElevator: RunRecoveryCRXElevated(3), EncryptData(4), DecryptData(5)
+                        
+                        # Prepare input data
+                        data_len = len(encrypted_data)
+                        input_buffer = (ctypes.c_byte * data_len)(*encrypted_data)
+                        output_buffer = POINTER(ctypes.c_byte)()
+                        output_len = c_ulong()
+                        
+                        # Call DecryptData (vtable index 5)
+                        # HRESULT DecryptData(DWORD protection_level, const BYTE* input, DWORD input_len, 
+                        #                     BYTE** output, DWORD* output_len)
+                        DecryptData = ctypes.WINFUNCTYPE(
+                            ctypes.c_long,  # HRESULT
+                            c_void_p,       # this
+                            c_ulong,        # protection_level
+                            POINTER(ctypes.c_byte),  # input
+                            c_ulong,        # input_len
+                            POINTER(POINTER(ctypes.c_byte)),  # output
+                            POINTER(c_ulong)  # output_len
+                        )(vtable[5])
+                        
+                        hr = DecryptData(
+                            punk,
+                            1,  # protection_level
+                            input_buffer,
+                            data_len,
+                            byref(output_buffer),
+                            byref(output_len)
+                        )
+                        
+                        if hr == 0 and output_buffer and output_len.value > 0:
+                            result = bytes(output_buffer[:output_len.value])
+                            logger.info(f"IElevator decryption successful via {browser_name}")
+                            
+                            # Release COM object
+                            Release = ctypes.WINFUNCTYPE(c_ulong, c_void_p)(vtable[2])
+                            Release(punk)
+                            
+                            return result
+                        
+                        # Release COM object
+                        Release = ctypes.WINFUNCTYPE(c_ulong, c_void_p)(vtable[2])
+                        Release(punk)
+                        
+                except Exception as e:
+                    logger.debug(f"IElevator attempt failed for {browser_name}: {e}")
+                    continue
+                    
+        finally:
+            ole32.CoUninitialize()
         
     except Exception as e:
         logger.debug(f"ctypes IElevator failed: {e}")
@@ -603,13 +686,18 @@ class CDPCookieExtractor:
     This is the most reliable method for Chrome 127+ with App-Bound Encryption,
     as Chrome itself handles the decryption and returns plaintext cookies via CDP.
     
+    Strategy:
+    1. Try to connect to Chrome started with --remote-debugging-port (if any)
+    2. Copy user profile and start Chrome with temporary copy
+    3. Use headless mode to avoid UI conflicts
+    
     Usage:
         extractor = CDPCookieExtractor()
         cookies = extractor.get_all_cookies()
     """
     
     DEFAULT_CDP_PORT = 9222
-    CONNECT_TIMEOUT = 10
+    CONNECT_TIMEOUT = 15
     
     def __init__(
         self, 
@@ -622,6 +710,7 @@ class CDPCookieExtractor:
         self._cdp_port = cdp_port
         self._chrome_process: Optional[subprocess.Popen] = None
         self._ws_url: Optional[str] = None
+        self._temp_profile_dir: Optional[Path] = None
     
     def _find_free_port(self) -> int:
         """Find a free port for CDP."""
@@ -642,6 +731,67 @@ class CDPCookieExtractor:
                 return chrome_data
         return None
     
+    def _copy_profile_for_cdp(self, user_data_dir: Path) -> Optional[Path]:
+        """
+        Copy essential profile files to a temp directory for CDP access.
+        This allows reading cookies while Chrome is running.
+        """
+        import shutil
+        
+        try:
+            # Create temp directory
+            temp_dir = Path(tempfile.mkdtemp(prefix="chrome_cdp_"))
+            self._temp_profile_dir = temp_dir
+            
+            # Copy Local State (contains encryption key)
+            local_state = user_data_dir / "Local State"
+            if local_state.exists():
+                shutil.copy2(local_state, temp_dir / "Local State")
+            
+            # Copy Default profile (or other profiles)
+            default_profile = user_data_dir / "Default"
+            if default_profile.exists():
+                temp_default = temp_dir / "Default"
+                temp_default.mkdir(exist_ok=True)
+                
+                # Copy essential files
+                essential_files = [
+                    "Cookies",
+                    "Network/Cookies", 
+                    "Login Data",
+                    "Web Data",
+                    "Preferences",
+                    "Secure Preferences",
+                ]
+                
+                for file_rel in essential_files:
+                    src = default_profile / file_rel
+                    if src.exists():
+                        dst = temp_default / file_rel
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        try:
+                            shutil.copy2(src, dst)
+                        except Exception:
+                            pass  # File might be locked
+            
+            logger.debug(f"Created temp profile at {temp_dir}")
+            return temp_dir
+            
+        except Exception as e:
+            logger.debug(f"Failed to copy profile: {e}")
+            return None
+    
+    def _try_common_cdp_ports(self) -> bool:
+        """Try to connect to Chrome on common debugging ports."""
+        common_ports = [9222, 9223, 9224, 9225, 9226]
+        
+        for port in common_ports:
+            self._cdp_port = port
+            if self._get_ws_endpoint():
+                logger.info(f"Found existing Chrome CDP on port {port}")
+                return True
+        return False
+    
     def _start_chrome_with_cdp(self) -> bool:
         """Start Chrome with remote debugging enabled."""
         if not self._chrome_path or not self._chrome_path.exists():
@@ -653,56 +803,98 @@ class CDPCookieExtractor:
             logger.error("Chrome user data directory not found")
             return False
         
-        # Find a free port to avoid conflicts
+        # Find a free port
         self._cdp_port = self._find_free_port()
         
-        args = [
-            str(self._chrome_path),
-            f"--remote-debugging-port={self._cdp_port}",
-            f"--user-data-dir={user_data_dir}",
-            "--headless=new",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-sync",
-            "--disable-translate",
-            "--mute-audio",
-            "--no-first-run",
-            "--no-default-browser-check",
+        # Try different approaches
+        approaches = [
+            # Approach 1: Use original profile (works if Chrome is not running)
+            {"user_data_dir": user_data_dir, "headless": "--headless=new"},
+            # Approach 2: Use copied profile (works if Chrome is running)
+            {"user_data_dir": self._copy_profile_for_cdp(user_data_dir), "headless": "--headless=new"},
+            # Approach 3: Old headless mode with copied profile
+            {"user_data_dir": self._temp_profile_dir, "headless": "--headless"},
         ]
         
-        try:
-            # Start Chrome process
-            startupinfo = None
-            if os.name == "nt":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
+        for approach in approaches:
+            profile_dir = approach["user_data_dir"]
+            if not profile_dir:
+                continue
+                
+            headless_flag = approach["headless"]
             
-            self._chrome_process = subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                startupinfo=startupinfo,
-            )
+            args = [
+                str(self._chrome_path),
+                f"--remote-debugging-port={self._cdp_port}",
+                f"--user-data-dir={profile_dir}",
+                headless_flag,
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--mute-audio",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-site-isolation-trials",
+                "--disable-web-security",
+                "--disable-features=BlockInsecurePrivateNetworkRequests",
+            ]
             
-            # Wait for Chrome to start and expose CDP
-            import time
-            for _ in range(self.CONNECT_TIMEOUT * 10):
-                if self._get_ws_endpoint():
-                    logger.info(f"Chrome CDP started on port {self._cdp_port}")
-                    return True
-                time.sleep(0.1)
-            
-            logger.error("Chrome CDP did not start in time")
-            self._cleanup()
-            return False
-            
-        except Exception as e:
-            logger.error(f"Failed to start Chrome: {e}")
-            self._cleanup()
-            return False
+            try:
+                startupinfo = None
+                creationflags = 0
+                if os.name == "nt":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                
+                self._chrome_process = subprocess.Popen(
+                    args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags,
+                )
+                
+                # Wait for Chrome to start
+                import time
+                for _ in range(self.CONNECT_TIMEOUT * 10):
+                    if self._get_ws_endpoint():
+                        logger.info(f"Chrome CDP started on port {self._cdp_port} (headless: {headless_flag})")
+                        return True
+                    time.sleep(0.1)
+                    
+                    # Check if process died
+                    if self._chrome_process.poll() is not None:
+                        break
+                
+                # This approach failed, try next
+                self._cleanup_process_only()
+                
+            except Exception as e:
+                logger.debug(f"Chrome start failed with {headless_flag}: {e}")
+                self._cleanup_process_only()
+                continue
+        
+        logger.error("All CDP approaches failed")
+        return False
+    
+    def _cleanup_process_only(self) -> None:
+        """Clean up Chrome process only (keep temp profile for retry)."""
+        if self._chrome_process:
+            try:
+                self._chrome_process.terminate()
+                self._chrome_process.wait(timeout=3)
+            except Exception:
+                try:
+                    self._chrome_process.kill()
+                except Exception:
+                    pass
+            self._chrome_process = None
     
     def _get_ws_endpoint(self) -> Optional[str]:
         """Get the WebSocket endpoint from CDP."""
@@ -742,20 +934,50 @@ class CDPCookieExtractor:
         """
         cookies = []
         
-        # Try to connect to existing Chrome instance first
-        if not self._get_ws_endpoint():
-            # Start Chrome if no existing instance
+        # Strategy 1: Try common CDP ports (existing Chrome with debugging)
+        if self._try_common_cdp_ports():
+            logger.info("Using existing Chrome CDP instance")
+        else:
+            # Strategy 2: Start our own Chrome instance
             if not self._start_chrome_with_cdp():
+                logger.error("Failed to start Chrome CDP")
                 return cookies
+        
+        # Try websocket-client first (sync)
+        try:
+            import websocket
+            cookies = self._extract_via_websocket_client()
+            if cookies:
+                return cookies
+        except ImportError:
+            pass
+        
+        # Fallback to websockets (async)
+        try:
+            cookies = self._get_cookies_async()
+            if cookies:
+                return cookies
+        except Exception as e:
+            logger.debug(f"Async extraction failed: {e}")
+        
+        # Fallback: try urllib-based simple HTTP extraction
+        try:
+            cookies = self._extract_via_http()
+        except Exception as e:
+            logger.debug(f"HTTP extraction failed: {e}")
+        
+        return cookies
+    
+    def _extract_via_websocket_client(self) -> list[dict]:
+        """Extract cookies using websocket-client library."""
+        cookies = []
         
         try:
             import websocket
-        except ImportError:
-            logger.error("websocket-client not installed. Install with: pip install websocket-client")
-            # Try to use websockets instead (async)
-            return self._get_cookies_async()
-        
-        try:
+            
+            if not self._ws_url:
+                return cookies
+            
             ws = websocket.create_connection(
                 self._ws_url, 
                 timeout=self.CONNECT_TIMEOUT
@@ -776,11 +998,39 @@ class CDPCookieExtractor:
                         "httponly": cookie.get("httpOnly", False),
                         "samesite": cookie.get("sameSite", ""),
                     })
+                logger.info(f"CDP extracted {len(cookies)} cookies")
             
             ws.close()
             
         except Exception as e:
-            logger.error(f"CDP cookie extraction failed: {e}")
+            logger.error(f"websocket-client extraction failed: {e}")
+        
+        return cookies
+    
+    def _extract_via_http(self) -> list[dict]:
+        """Fallback: Extract cookies using HTTP/REST CDP protocol."""
+        import urllib.request
+        import urllib.error
+        
+        cookies = []
+        
+        try:
+            # Some CDP implementations support REST-style access
+            url = f"http://127.0.0.1:{self._cdp_port}/json"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                targets = json.loads(response.read().decode())
+                
+                if targets and len(targets) > 0:
+                    # Get the first page target
+                    page_ws_url = targets[0].get("webSocketDebuggerUrl")
+                    if page_ws_url and not self._ws_url:
+                        self._ws_url = page_ws_url
+                        # Retry with websocket
+                        return self._extract_via_websocket_client()
+                        
+        except Exception as e:
+            logger.debug(f"HTTP CDP fallback failed: {e}")
         
         return cookies
     
@@ -838,7 +1088,10 @@ class CDPCookieExtractor:
             return []
     
     def _cleanup(self) -> None:
-        """Clean up Chrome process."""
+        """Clean up Chrome process and temp profile."""
+        import shutil
+        
+        # Clean up Chrome process
         if self._chrome_process:
             try:
                 self._chrome_process.terminate()
@@ -849,6 +1102,15 @@ class CDPCookieExtractor:
                 except Exception:
                     pass
             self._chrome_process = None
+        
+        # Clean up temp profile directory
+        if self._temp_profile_dir and self._temp_profile_dir.exists():
+            try:
+                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
+                logger.debug(f"Cleaned up temp profile: {self._temp_profile_dir}")
+            except Exception:
+                pass
+            self._temp_profile_dir = None
     
     def __enter__(self):
         return self

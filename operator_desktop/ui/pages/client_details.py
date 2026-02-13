@@ -196,6 +196,7 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if hasattr(self, "activity_title"):
             self.activity_title.setText(self.i18n.t("activity_title"))
             self.activity_search.setPlaceholderText(self.i18n.t("activity_search_placeholder"))
+            self.activity_export_btn.setText(self.i18n.t("activity_export_txt"))
             self.activity_refresh_btn.setText(self.i18n.t("activity_refresh"))
             self.activity_delete_all_btn.setText(self.i18n.t("activity_delete_all"))
             self.activity_overflow_hint.setText("Horizontal scroll indicates hidden columns")
@@ -864,6 +865,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
         filter_row.addStretch()
 
         # Action buttons
+        self.activity_export_btn = make_button("", "ghost")
+        self.activity_export_btn.clicked.connect(self._export_activity_logs_txt)
+        filter_row.addWidget(self.activity_export_btn)
+
         self.activity_refresh_btn = make_button("", "ghost")
         self.activity_refresh_btn.clicked.connect(self._refresh_activity_logs)
         filter_row.addWidget(self.activity_refresh_btn)
@@ -1108,6 +1113,62 @@ class ClientDetailsPage(QtWidgets.QWidget):
             return dt.strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
             return str(timestamp)[:19]
+
+    def _export_activity_logs_txt(self) -> None:
+        """Export activity logs to TXT file."""
+        if not self._activity_logs:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.i18n.t("activity_export_txt"),
+                self.i18n.t("activity_no_logs"),
+            )
+            return
+
+        # Get client name for filename
+        client_name = self.client.get("hostname", "client") if self.client else "client"
+        default_name = f"activity_log_{client_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            self.i18n.t("activity_export_txt"),
+            default_name,
+            "Text Files (*.txt);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"Activity Log Export\n")
+                f.write(f"Client: {client_name}\n")
+                f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total entries: {len(self._activity_logs)}\n")
+                f.write("=" * 80 + "\n\n")
+
+                for log in self._activity_logs:
+                    timestamp = log.get("timestamp", "")
+                    app = log.get("application", "Unknown")
+                    window = log.get("window_title", "")
+                    input_text = log.get("input_text", "")
+
+                    f.write(f"[{self._format_activity_time(timestamp)}] {app}\n")
+                    if window:
+                        f.write(f"Window: {window}\n")
+                    f.write(f"{input_text}\n")
+                    f.write("-" * 40 + "\n")
+
+            QtWidgets.QMessageBox.information(
+                self,
+                self.i18n.t("activity_export_txt"),
+                self.i18n.t("activity_export_success").replace("{path}", file_path),
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                self.i18n.t("activity_export_txt"),
+                f"Export failed: {e}",
+            )
 
     def _delete_all_activity_logs(self) -> None:
         """Delete all activity logs for the client."""

@@ -1,4 +1,7 @@
-"""Keyboard input and clipboard paste tracker for Windows."""
+"""Keyboard input and clipboard tracker for Windows.
+
+Captures only printable characters and clipboard paste operations.
+"""
 from __future__ import annotations
 
 import ctypes
@@ -13,38 +16,20 @@ from typing import Callable, Set, Optional
 
 logger = logging.getLogger(__name__)
 
-# Windows API constants for keyboard
+# Windows API constants - only essential keys
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt key
-VK_CAPITAL = 0x14
 VK_BACK = 0x08
 VK_TAB = 0x09
 VK_RETURN = 0x0D
-VK_ESCAPE = 0x1B
 VK_SPACE = 0x20
-VK_DELETE = 0x2E
-VK_LEFT = 0x25
-VK_UP = 0x26
-VK_RIGHT = 0x27
-VK_DOWN = 0x28
-VK_HOME = 0x24
-VK_END = 0x23
-VK_PRIOR = 0x21  # Page Up
-VK_NEXT = 0x22   # Page Down
-VK_INSERT = 0x2D
-VK_SNAPSHOT = 0x2C  # Print Screen
-VK_SCROLL = 0x91
-VK_PAUSE = 0x13
-VK_NUMLOCK = 0x90
-VK_F1 = 0x70
-VK_F12 = 0x7B
 VK_LSHIFT = 0xA0
 VK_RSHIFT = 0xA1
 VK_LCONTROL = 0xA2
 VK_RCONTROL = 0xA3
-VK_LMENU = 0xA4  # Left Alt
-VK_RMENU = 0xA5  # Right Alt
+VK_LMENU = 0xA4
+VK_RMENU = 0xA5
 VK_V = 0x56
 CF_UNICODETEXT = 13
 
@@ -119,86 +104,48 @@ class KeyboardLayoutHelper:
             return None
     
     def get_clipboard_text(self) -> Optional[str]:
-        """Get text from clipboard using Windows API.
-        
-        Prioritizes win32clipboard (pywin32) as it's more reliable,
-        falls back to raw ctypes if needed.
-        """
+        """Get text from clipboard using Windows API."""
         if not self._is_windows:
-            logger.info("get_clipboard_text: Not Windows")
             return None
         
-        import time
-        
-        # Method 1: Try win32clipboard first (most reliable on Windows)
+        # Try win32clipboard first (most reliable)
         try:
             import win32clipboard
             import win32con
             
-            for attempt in range(3):
+            for _ in range(3):
                 try:
                     win32clipboard.OpenClipboard()
                     try:
                         if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
                             data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
                             if data:
-                                logger.info("win32clipboard success: len=%d", len(data))
                                 return data
-                        else:
-                            # Check what formats ARE available
-                            formats = []
-                            fmt = 0
-                            while True:
-                                fmt = win32clipboard.EnumClipboardFormats(fmt)
-                                if fmt == 0:
-                                    break
-                                formats.append(fmt)
-                            logger.info("win32clipboard: CF_UNICODETEXT not available, formats=%s", formats[:10])
                     finally:
                         win32clipboard.CloseClipboard()
                     break
-                except Exception as e:
-                    logger.info("win32clipboard attempt %d failed: %s", attempt + 1, e)
-                    if attempt < 2:
-                        time.sleep(0.05)
-                        continue
+                except Exception:
+                    time.sleep(0.05)
         except ImportError:
-            logger.info("win32clipboard not available, trying ctypes")
-        except Exception as e:
-            logger.info("win32clipboard error: %s", e)
+            pass
+        except Exception:
+            pass
         
-        # Method 2: Try raw ctypes as fallback
+        # Fallback to ctypes
         if not self._user32:
-            logger.info("get_clipboard_text: no user32 for ctypes fallback")
             return None
         
         kernel32 = ctypes.windll.kernel32
-        max_retries = 5
-        retry_delay = 0.05
-        last_error_code = 0
         
-        for attempt in range(max_retries):
+        for _ in range(3):
             try:
-                result = self._user32.OpenClipboard(None)
-                if not result:
-                    last_error_code = kernel32.GetLastError()
-                    logger.info(
-                        "ctypes OpenClipboard failed (attempt %d/%d), error=%d",
-                        attempt + 1, max_retries, last_error_code
-                    )
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    break
+                if not self._user32.OpenClipboard(None):
+                    time.sleep(0.05)
+                    continue
                 
                 try:
                     handle = self._user32.GetClipboardData(CF_UNICODETEXT)
                     if not handle:
-                        format_count = self._user32.CountClipboardFormats()
-                        logger.info(
-                            "ctypes GetClipboardData returned NULL, formats=%d",
-                            format_count
-                        )
                         break
                     
                     kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
@@ -206,28 +153,17 @@ class KeyboardLayoutHelper:
                     
                     data_ptr = kernel32.GlobalLock(handle)
                     if not data_ptr:
-                        last_error_code = kernel32.GetLastError()
-                        logger.info("ctypes GlobalLock failed, error=%d", last_error_code)
                         break
                     
                     try:
-                        text = ctypes.wstring_at(data_ptr)
-                        logger.info("ctypes clipboard success: len=%d", len(text) if text else 0)
-                        return text
+                        return ctypes.wstring_at(data_ptr)
                     finally:
                         kernel32.GlobalUnlock(handle)
-                        
                 finally:
                     self._user32.CloseClipboard()
-                    
-            except Exception as e:
-                logger.info("ctypes clipboard error (attempt %d): %s", attempt + 1, e)
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                break
+            except Exception:
+                time.sleep(0.05)
         
-        logger.warning("All clipboard read methods failed (last_error=%d)", last_error_code)
         return None
     
 @dataclass
@@ -347,17 +283,19 @@ class WindowInfo:
 
 
 class ActivityTracker:
-    """Track keyboard input and clipboard with application context."""
+    """Track keyboard input and clipboard with application context.
+    
+    Only captures printable characters and clipboard paste operations.
+    """
 
+    # Only essential special keys for text input
     SPECIAL_KEYS = {
         "space": " ",
-        "enter": "[ENTER]\n",
-        "tab": "[TAB]",
-        "backspace": "[BACKSPACE]",
-        "delete": "[DELETE]",
-        "escape": "[ESC]",
-        "caps_lock": "[CAPS]",
-        "shift": "",  # Modifiers ignored alone
+        "enter": "\n",
+        "tab": "\t",
+        "backspace": "",  # Ignored - just indicates deletion
+        # Modifiers - ignored when pressed alone
+        "shift": "",
         "ctrl_l": "",
         "ctrl_r": "",
         "ctrl": "",
@@ -369,59 +307,14 @@ class ActivityTracker:
         "cmd_r": "",
         "shift_l": "",
         "shift_r": "",
-        "up": "[UP]",
-        "down": "[DOWN]",
-        "left": "[LEFT]",
-        "right": "[RIGHT]",
-        "home": "[HOME]",
-        "end": "[END]",
-        "page_up": "[PGUP]",
-        "page_down": "[PGDN]",
-        "insert": "[INS]",
-        "print_screen": "[PRTSC]",
-        "scroll_lock": "[SCRLK]",
-        "pause": "[PAUSE]",
-        "num_lock": "[NUMLK]",
-        "f1": "[F1]",
-        "f2": "[F2]",
-        "f3": "[F3]",
-        "f4": "[F4]",
-        "f5": "[F5]",
-        "f6": "[F6]",
-        "f7": "[F7]",
-        "f8": "[F8]",
-        "f9": "[F9]",
-        "f10": "[F10]",
-        "f11": "[F11]",
-        "f12": "[F12]",
     }
 
-    # Map VK codes to special key names for display
+    # VK codes for essential input keys only
     VK_SPECIAL_KEYS = {
-        VK_BACK: "[BACKSPACE]",
-        VK_TAB: "[TAB]",
-        VK_RETURN: "[ENTER]\n",
-        VK_ESCAPE: "[ESC]",
+        VK_TAB: "\t",
+        VK_RETURN: "\n",
         VK_SPACE: " ",
-        VK_DELETE: "[DELETE]",
-        VK_LEFT: "[LEFT]",
-        VK_UP: "[UP]",
-        VK_RIGHT: "[RIGHT]",
-        VK_DOWN: "[DOWN]",
-        VK_HOME: "[HOME]",
-        VK_END: "[END]",
-        VK_PRIOR: "[PGUP]",
-        VK_NEXT: "[PGDN]",
-        VK_INSERT: "[INS]",
-        VK_SNAPSHOT: "[PRTSC]",
-        VK_SCROLL: "[SCRLK]",
-        VK_PAUSE: "[PAUSE]",
-        VK_NUMLOCK: "[NUMLK]",
-        VK_CAPITAL: "[CAPS]",
     }
-    # Add F1-F12 keys
-    for i in range(12):
-        VK_SPECIAL_KEYS[VK_F1 + i] = f"[F{i+1}]"
 
     def __init__(
         self,
@@ -518,16 +411,7 @@ class ActivityTracker:
             if hasattr(key, "_scan"):
                 scan_code = key._scan or 0
             
-            # Debug logging for key press (helps diagnose Ctrl+V issues)
-            # Log Ctrl, V and control characters at INFO level for diagnosis
-            if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL) or \
-               (key_char and (key_char.lower() == 'v' or key_char == '\x16')) or vk_code == VK_V:
-                logger.info(
-                    "KEY: name=%r, char=%r, vk=%s, scan=%s, ctrl_pressed=%s",
-                    key_name, key_char, vk_code, scan_code, self._ctrl_pressed
-                )
-            
-            # Track Ctrl key state (check all possible VK codes)
+            # Track Ctrl key state
             if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL):
                 self._ctrl_pressed = True
                 self._pressed_modifiers.add("ctrl")
@@ -545,47 +429,38 @@ class ActivityTracker:
             
             # Check for Ctrl+V (paste from clipboard)
             if self._ctrl_pressed:
-                # Check by VK code, by character 'v', or by control character '\x16'
-                is_paste = False
-                if vk_code == VK_V:  # 0x56
-                    is_paste = True
-                elif key_char:
-                    if key_char.lower() == "v" or key_char == "\x16":
-                        is_paste = True
-                elif key_name and key_name == "v":
-                    is_paste = True
-                
+                is_paste = (
+                    vk_code == VK_V or
+                    (key_char and (key_char.lower() == "v" or key_char == "\x16")) or
+                    (key_name and key_name == "v")
+                )
                 if is_paste:
-                    logger.debug("Ctrl+V detected (vk=%s, char=%r, name=%s)", vk_code, key_char, key_name)
                     self._handle_paste()
-                    return
-                # Ignore other Ctrl+key combinations
-                return
+                return  # Ignore all Ctrl+key combinations
             
             char = None
             
-            # First, try to get the character using Windows API with proper keyboard layout
+            # Get character using Windows API with keyboard layout support
             if vk_code is not None and platform.system() == "Windows":
-                # Check if it's a special key first
                 if vk_code in self.VK_SPECIAL_KEYS:
                     char = self.VK_SPECIAL_KEYS[vk_code]
                 else:
-                    # Try to convert VK code to character with current keyboard layout
                     layout_char = self._keyboard_helper.vk_to_char(vk_code, scan_code)
-                    if layout_char and len(layout_char) > 0:
+                    if layout_char:
                         char = layout_char
             
-            # Fallback: use pynput's character (may not respect keyboard layout)
+            # Fallback: use pynput's character
             if char is None:
                 if key_char:
-                    # Skip control characters except for recognized ones
-                    if ord(key_char) < 32 and key_char not in ('\t', '\n', '\r'):
-                        return
-                    char = key_char
+                    # Only accept printable characters
+                    if ord(key_char) >= 32 or key_char in ('\t', '\n', '\r'):
+                        char = key_char
                 elif key_name:
-                    char = self.SPECIAL_KEYS.get(key_name, f"[{key_name.upper()}]")
-                else:
-                    char = ""
+                    # Only use SPECIAL_KEYS that produce actual characters
+                    special = self.SPECIAL_KEYS.get(key_name)
+                    if special:
+                        char = special
+                    # Ignore unknown special keys (F-keys, arrows, etc.)
 
             if not char:
                 return
@@ -635,73 +510,42 @@ class ActivityTracker:
             pass
     
     def _handle_paste(self) -> None:
-        """Handle paste operation (Ctrl+V) - record clipboard content as pasted text."""
-        logger.info("_handle_paste called")
-        
+        """Handle paste operation (Ctrl+V) - record clipboard content."""
         if platform.system() != "Windows":
-            logger.debug("Not Windows, skipping paste")
             return
         
         try:
-            # Small delay to let the paste operation complete in the target app
-            time.sleep(0.05)
-            
-            # Use keyboard helper to get clipboard text
+            time.sleep(0.05)  # Let paste complete in target app
             pasted_text = self._keyboard_helper.get_clipboard_text()
             
-            if pasted_text:
-                logger.info(
-                    "Clipboard text read successfully: len=%d, preview=%r",
-                    len(pasted_text), pasted_text[:50] if len(pasted_text) > 50 else pasted_text
-                )
-                # Record the pasted text as part of the input stream
-                app_name, window_title = self._window_info.get_active_window_info()
-                
-                with self._buffer_lock:
-                    # Check if window changed
-                    if (
-                        self._buffer.application != app_name
-                        or self._buffer.window_title != window_title
-                    ):
-                        self._flush_buffer_locked()
-                        self._buffer.application = app_name
-                        self._buffer.window_title = window_title
-                        self._buffer.started_at = datetime.now(timezone.utc).isoformat()
-                    
-                    # Add pasted text with marker
-                    self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
-                    self._buffer.last_updated = time.time()
-                    
-                logger.info("Paste recorded: %d chars to window: %s", len(pasted_text), window_title[:50] if window_title else "Unknown")
-            else:
-                # Try alternative method - use pyperclip if available
+            # Fallback to pyperclip
+            if not pasted_text:
                 try:
                     import pyperclip
                     pasted_text = pyperclip.paste()
-                    if pasted_text:
-                        logger.info("Clipboard read via pyperclip: len=%d", len(pasted_text))
-                        app_name, window_title = self._window_info.get_active_window_info()
-                        with self._buffer_lock:
-                            if (
-                                self._buffer.application != app_name
-                                or self._buffer.window_title != window_title
-                            ):
-                                self._flush_buffer_locked()
-                                self._buffer.application = app_name
-                                self._buffer.window_title = window_title
-                                self._buffer.started_at = datetime.now(timezone.utc).isoformat()
-                            self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
-                            self._buffer.last_updated = time.time()
-                        logger.info("Paste recorded via pyperclip: %d chars", len(pasted_text))
-                        return
-                except ImportError:
+                except Exception:
                     pass
-                except Exception as e:
-                    logger.debug("pyperclip fallback failed: %s", e)
+            
+            if not pasted_text:
+                return
+            
+            app_name, window_title = self._window_info.get_active_window_info()
+            
+            with self._buffer_lock:
+                if (
+                    self._buffer.application != app_name
+                    or self._buffer.window_title != window_title
+                ):
+                    self._flush_buffer_locked()
+                    self._buffer.application = app_name
+                    self._buffer.window_title = window_title
+                    self._buffer.started_at = datetime.now(timezone.utc).isoformat()
                 
-                logger.warning("Clipboard was empty or failed to read (tried Windows API and pyperclip)")
+                self._buffer.text += f"[PASTE]{pasted_text}[/PASTE]"
+                self._buffer.last_updated = time.time()
+                
         except Exception as e:
-            logger.exception("Paste handling error: %s", e)
+            logger.debug("Paste handling error: %s", e)
 
     def _flush_buffer(self, force: bool = False) -> None:
         """Flush input buffer to activity queue."""

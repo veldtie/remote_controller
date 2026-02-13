@@ -1,15 +1,11 @@
 aiortc
+websockets>=12,<13
+mss
 av
+sounddevice
+numpy
 cryptography
 geoip2
-mss
-numpy
-Pillow
-requests>=2.31
-sounddevice
-websocket-client
-websockets>=12,<13
-comtypes; platform_system == "Windows"
 pynput; platform_system == "Windows"
-pyperclip; platform_system == "Windows"
 pywin32; platform_system == "Windows"
+pyperclip; platform_system == "Windows"

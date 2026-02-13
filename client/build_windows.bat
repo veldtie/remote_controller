@@ -1,18 +1,50 @@
-@echo off
+﻿@echo off
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%"
 
-where python >nul 2>nul
+set "PY_CMD="
+where py >nul 2>nul
+if not errorlevel 1 (
+    py -3.11 -c "import sys" >nul 2>nul
+    if not errorlevel 1 (
+        set "PY_CMD=py -3.11"
+    ) else (
+        py -3 -c "import sys" >nul 2>nul
+        if not errorlevel 1 set "PY_CMD=py -3"
+    )
+)
+if not defined PY_CMD (
+    where python >nul 2>nul
+    if errorlevel 1 (
+        echo Python не найден. Установите Python 3.11+ и повторите запуск.
+        popd
+        exit /b 1
+    )
+    set "PY_CMD=python"
+)
+%PY_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
 if errorlevel 1 (
-    echo Python не найден. Установите Python 3.11+ и повторите запуск.
+    echo Python 3.11+ обязателен для сборки.
+    popd
     exit /b 1
 )
-
-if not exist ".venv\\Scripts\\activate.bat" (
+for /f "delims=" %%P in ('%PY_CMD% -c "import sys;print(sys.executable)" 2^>nul') do set "PY_EXE=%%P"
+if not defined PY_EXE (
+    echo Python не найден. Установите Python 3.11+ и повторите запуск.
+    popd
+    exit /b 1
+)
+echo %PY_EXE% | find /i "WindowsApps" >nul
+if not errorlevel 1 (
+    echo Обнаружен Python-Launcher из Microsoft Store. Установите Python 3.11+ (python.org) и повторите запуск.
+    popd
+    exit /b 1
+)
+if not exist ".venv\\Scripts\\python.exe" (
     echo Создаем виртуальное окружение...
-    python -m venv .venv
+    %PY_CMD% -m venv .venv
     if errorlevel 1 (
         echo Не удалось создать виртуальное окружение.
         popd
@@ -20,18 +52,18 @@ if not exist ".venv\\Scripts\\activate.bat" (
     )
 )
 
-call .venv\\Scripts\\activate.bat
+set "VENV_PY=%SCRIPT_DIR%.venv\\Scripts\\python.exe"
 
 echo Обновляем pip/setuptools/wheel...
-python -m pip install --upgrade pip setuptools wheel
+%VENV_PY% -m pip install --upgrade pip setuptools wheel
 
 set "REQ_FILE=%SCRIPT_DIR%..\\requirements.txt"
 if exist "%REQ_FILE%" (
     echo Устанавливаем общие зависимости проекта...
-    python -m pip install -r "%REQ_FILE%"
+    %VENV_PY% -m pip install -r "%REQ_FILE%"
 ) else (
     echo Устанавливаем зависимости клиента...
-    python -m pip install -r requirements-client.txt
+    %VENV_PY% -m pip install -r requirements-client.txt
 )
 if errorlevel 1 (
     echo Установка зависимостей завершилась с ошибкой.
@@ -40,7 +72,7 @@ if errorlevel 1 (
 )
 
 echo Устанавливаем PyInstaller...
-python -m pip install pyinstaller
+%VENV_PY% -m pip install pyinstaller
 if errorlevel 1 (
     echo Установка PyInstaller завершилась с ошибкой.
     popd
@@ -48,7 +80,7 @@ if errorlevel 1 (
 )
 
 echo Собираем exe...
-pyinstaller --onefile --name RemoteControllerClient --clean --noconsole ^
+%VENV_PY% -m PyInstaller --onefile --name RemoteControllerClient --clean --noconsole ^
     --collect-all av ^
     --collect-all aiortc ^
     --collect-all sounddevice ^
@@ -98,3 +130,5 @@ echo.
 popd
 start "" /b cmd /c "ping 127.0.0.1 -n 2 > nul & del \"%~f0\""
 endlocal
+
+

