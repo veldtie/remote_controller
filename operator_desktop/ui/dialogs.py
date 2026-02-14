@@ -5,7 +5,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
-from ..proxy_check import ProxyCheckWorker
+from .proxy_check import ProxyCheckWorker
 from .common import GlassFrame, make_button
 
 
