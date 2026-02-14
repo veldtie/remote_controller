@@ -61,6 +61,13 @@ if platform.system() == "Windows":
 # - --disable-background-mode: Prevents background processes on main desktop
 # - --disable-features=RendererCodeIntegrity: Required for Win11 24H2
 # - --new-window: Forces new window instead of tab in existing browser
+# Critical flags for HVNC browser isolation on Windows 11 24H2:
+# - --disable-gpu-sandbox: Prevents GPU process from spawning on different desktop
+# - --in-process-gpu: Run GPU in main process to inherit desktop
+# - --single-process: (EXPERIMENTAL) All renderers in one process
+# - --disable-features=RendererCodeIntegrity: Required for Win11 24H2
+# - --disable-site-isolation-trials: Reduces process spawning
+
 BROWSER_PROFILES = {
     "chrome": {
         "paths": [
@@ -80,17 +87,21 @@ BROWSER_PROFILES = {
             "--disable-component-update",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",  # Critical: GPU process inherits desktop
+            "--in-process-gpu",  # GPU runs in main process
             "--disable-software-rasterizer",
-            "--disable-background-mode",  # Don't run in background on main desktop
+            "--disable-background-mode",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
-            "--disable-features=RendererCodeIntegrity,BackgroundFetch,TranslateUI",
+            "--disable-features=RendererCodeIntegrity,BackgroundFetch,TranslateUI,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",  # Reduces process spawning
             "--disable-hang-monitor",
             "--disable-ipc-flooding-protection",
             "--disable-popup-blocking",
             "--disable-prompt-on-repost",
             "--disable-domain-reliability",
-            "--new-window",  # Force new window
+            "--renderer-process-limit=1",  # Limit renderer processes
+            "--new-window",
             "--start-maximized",
             "--window-position=0,0",
             "--force-device-scale-factor=1",
@@ -130,16 +141,20 @@ BROWSER_PROFILES = {
             "--disable-component-update",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",  # Critical: GPU process inherits desktop
+            "--in-process-gpu",  # GPU runs in main process
             "--disable-software-rasterizer",
             "--disable-background-mode",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
-            "--disable-features=msSmartScreenProtection,RendererCodeIntegrity,BackgroundFetch,EdgeCollections,msEdgeCollections",
+            "--disable-features=msSmartScreenProtection,RendererCodeIntegrity,BackgroundFetch,EdgeCollections,msEdgeCollections,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",  # Reduces process spawning
             "--disable-hang-monitor",
             "--disable-ipc-flooding-protection",
             "--disable-popup-blocking",
             "--disable-prompt-on-repost",
             "--disable-domain-reliability",
+            "--renderer-process-limit=1",  # Limit renderer processes
             "--inprivate",  # InPrivate mode - extra isolation
             "--new-window",
             "--start-maximized",
@@ -165,9 +180,13 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",
+            "--in-process-gpu",
             "--disable-software-rasterizer",
             "--disable-background-mode",
-            "--disable-features=RendererCodeIntegrity",
+            "--disable-features=RendererCodeIntegrity,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--renderer-process-limit=1",
             "--new-window",
             "--start-maximized",
         ],
@@ -188,9 +207,13 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",
+            "--in-process-gpu",
             "--disable-software-rasterizer",
             "--disable-background-mode",
-            "--disable-features=RendererCodeIntegrity",
+            "--disable-features=RendererCodeIntegrity,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--renderer-process-limit=1",
             "--new-window",
             "--start-maximized",
         ],
