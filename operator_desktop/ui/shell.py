@@ -12,7 +12,7 @@ from ..core.settings import SettingsStore
 from ..core.translations import LANGUAGE_NAMES
 from .common import GlassFrame, animate_widget, load_icon, make_button
 from .remote_session import RemoteSessionDialog, build_session_url, webengine_available
-from .dialogs import AbeDiagnosticsDialog
+from .dialogs import AbeDiagnosticsDialog, ProxyPortDialog
 from .pages.compiler import CompilerPage
 from .pages.cookies import CookiesPage
 from .pages.proxy import ProxyPage
@@ -473,7 +473,7 @@ class MainShell(QtWidgets.QWidget):
             self.request_proxy_export(client_id)
             return
         if action == "proxy_start":
-            self.request_proxy_start(client_id)
+            self._open_proxy_port_dialog(client_id)
             return
         if action == "proxy_stop":
             self.request_proxy_stop(client_id)
@@ -523,7 +523,51 @@ class MainShell(QtWidgets.QWidget):
         window.request_proxy_export(client_id, filename=filename, download_dir=folder)
         self.logger.log("log_proxy_request", client=client_name, path=folder)
 
-    def request_proxy_start(self, client_id: str) -> None:
+    def _resolve_proxy_host(self, client: dict | None) -> str:
+        if not client:
+            return ""
+        config = client.get("client_config") if isinstance(client.get("client_config"), dict) else {}
+        proxy = config.get("proxy") if isinstance(config.get("proxy"), dict) else {}
+        host = proxy.get("host") or client.get("ip") or ""
+        return str(host or "").strip()
+
+    @staticmethod
+    def _default_proxy_ports() -> list[int]:
+        return [1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088]
+
+    def _open_proxy_port_dialog(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        host = self._resolve_proxy_host(client)
+        if not host:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("proxy_ports_title"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+
+        def _start_proxy(port: int, strict_port: bool, force: bool) -> None:
+            options = {
+                "port": port,
+                "force": bool(force),
+                "strict_port": bool(strict_port),
+            }
+            self.request_proxy_start(client_id, options=options)
+
+        def _stop_proxy() -> None:
+            self.request_proxy_stop(client_id)
+
+        dialog = ProxyPortDialog(
+            self.i18n,
+            host,
+            self._default_proxy_ports(),
+            _start_proxy,
+            _stop_proxy,
+            parent=self,
+        )
+        dialog.exec()
+
+    def request_proxy_start(self, client_id: str, options: dict | None = None) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         client_name = client["name"] if client else client_id
         window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
@@ -532,10 +576,10 @@ class MainShell(QtWidgets.QWidget):
             if window is None:
                 return
             self._schedule_utility_close(client_id)
-        window.request_proxy_start()
+        window.request_proxy_start(options)
         self.logger.log("log_proxy_start", client=client_name)
 
-    def request_proxy_stop(self, client_id: str) -> None:
+    def request_proxy_stop(self, client_id: str, options: dict | None = None) -> None:
         client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
         client_name = client["name"] if client else client_id
         window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
@@ -544,7 +588,7 @@ class MainShell(QtWidgets.QWidget):
             if window is None:
                 return
             self._schedule_utility_close(client_id)
-        window.request_proxy_stop()
+        window.request_proxy_stop(options)
         self.logger.log("log_proxy_stop", client=client_name)
 
     def _abe_payload_from_client(self, client: dict | None) -> dict:

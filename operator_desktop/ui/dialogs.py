@@ -1,9 +1,11 @@
-from typing import Dict
+from typing import Callable, Dict
+import re
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ..core.i18n import I18n
 from ..core.logging import EventLogger
+from ..proxy_check import ProxyCheckWorker
 from .common import GlassFrame, make_button
 
 
@@ -624,3 +626,230 @@ class AbeDiagnosticsDialog(QtWidgets.QDialog):
         lines.append(f"{self.i18n.t('abe_diag_recommendation')}: {self._resolve_recommendation_text()}")
         
         QtWidgets.QApplication.clipboard().setText("\n".join(lines))
+
+
+class ProxyPortDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        i18n: I18n,
+        host: str,
+        ports: list[int] | None,
+        start_proxy: Callable[[int, bool, bool], None],
+        stop_proxy: Callable[[], None],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.i18n = i18n
+        self._host = (host or "").strip()
+        self._start_proxy = start_proxy
+        self._stop_proxy = stop_proxy
+        self._default_ports = ports or [1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088]
+        self._scan_ports: list[int] = []
+        self._scan_index = 0
+        self._scan_active = False
+        self._row_map: dict[int, int] = {}
+        self._port_status: dict[int, bool] = {}
+        self._check_worker: ProxyCheckWorker | None = None
+        self._current_port: int | None = None
+
+        self.setWindowTitle(self.i18n.t("proxy_ports_title"))
+        self.setMinimumWidth(520)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QtWidgets.QLabel(self.i18n.t("proxy_ports_title"))
+        title.setObjectName("CardSectionTitle")
+        subtitle = QtWidgets.QLabel(self.i18n.t("proxy_ports_subtitle"))
+        subtitle.setObjectName("Muted")
+        subtitle.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        host_row = QtWidgets.QHBoxLayout()
+        host_label = QtWidgets.QLabel(self.i18n.t("proxy_host_label"))
+        host_label.setObjectName("DetailLabel")
+        self.host_value = QtWidgets.QLabel(self._host or "--")
+        self.host_value.setObjectName("DetailValue")
+        host_row.addWidget(host_label)
+        host_row.addWidget(self.host_value, 1)
+        layout.addLayout(host_row)
+
+        ports_row = QtWidgets.QHBoxLayout()
+        ports_label = QtWidgets.QLabel(self.i18n.t("proxy_ports_label"))
+        ports_label.setObjectName("DetailLabel")
+        self.ports_input = QtWidgets.QLineEdit()
+        self.ports_input.setText(",".join(str(p) for p in self._default_ports))
+        self.scan_button = make_button(self.i18n.t("proxy_ports_scan"), "ghost")
+        self.scan_button.clicked.connect(self._start_scan)
+        ports_row.addWidget(ports_label)
+        ports_row.addWidget(self.ports_input, 1)
+        ports_row.addWidget(self.scan_button)
+        layout.addLayout(ports_row)
+
+        self.table = QtWidgets.QTableWidget(0, 2)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.table.setHorizontalHeaderLabels(
+            [
+                self.i18n.t("proxy_port_label"),
+                self.i18n.t("proxy_status_label"),
+            ]
+        )
+        self.table.itemSelectionChanged.connect(self._update_controls)
+        layout.addWidget(self.table, 1)
+
+        self.status_label = QtWidgets.QLabel(self.i18n.t("proxy_check_pending"))
+        self.status_label.setObjectName("Muted")
+        layout.addWidget(self.status_label)
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch()
+        self.cancel_button = make_button(self.i18n.t("storage_close"), "ghost")
+        self.confirm_button = make_button(self.i18n.t("proxy_ports_use"), "primary")
+        self.cancel_button.clicked.connect(self.reject)
+        self.confirm_button.clicked.connect(self._confirm_selection)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+
+        self._populate_table(self._default_ports)
+        self._update_controls()
+        QtCore.QTimer.singleShot(0, self._start_scan)
+
+    def _parse_ports(self) -> list[int]:
+        raw = self.ports_input.text()
+        tokens = re.split(r"[\\s,;]+", raw or "")
+        ports: list[int] = []
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                value = int(token)
+            except ValueError:
+                continue
+            if 1 <= value <= 65535 and value not in ports:
+                ports.append(value)
+        return ports or list(self._default_ports)
+
+    def _populate_table(self, ports: list[int]) -> None:
+        self.table.setRowCount(0)
+        self._row_map = {}
+        self._port_status = {}
+        for port in ports:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            port_item = QtWidgets.QTableWidgetItem(str(port))
+            status_item = QtWidgets.QTableWidgetItem(self.i18n.t("proxy_check_pending"))
+            port_item.setFlags(port_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            status_item.setFlags(status_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 0, port_item)
+            self.table.setItem(row, 1, status_item)
+            self._row_map[port] = row
+
+    def _set_port_status(self, port: int, text: str) -> None:
+        row = self._row_map.get(port)
+        if row is None:
+            return
+        item = self.table.item(row, 1)
+        if item:
+            item.setText(text)
+
+    def _start_scan(self) -> None:
+        if not self._host:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.i18n.t("proxy_ports_title"),
+                self.i18n.t("proxy_status_disabled"),
+            )
+            return
+        if self._scan_active:
+            return
+        ports = self._parse_ports()
+        self._populate_table(ports)
+        self._scan_ports = ports
+        self._scan_index = 0
+        self._scan_active = True
+        self._update_controls()
+        self._scan_next()
+
+    def _scan_next(self) -> None:
+        if self._scan_index >= len(self._scan_ports):
+            self._scan_active = False
+            self.status_label.setText(self.i18n.t("proxy_check_ok"))
+            self._update_controls()
+            return
+        port = self._scan_ports[self._scan_index]
+        self._current_port = port
+        self._set_port_status(port, self.i18n.t("proxy_checking"))
+        self.status_label.setText(
+            f"{self.i18n.t('proxy_checking')} {port} ({self._scan_index + 1}/{len(self._scan_ports)})"
+        )
+        self._start_proxy(port, True, True)
+        QtCore.QTimer.singleShot(650, lambda: self._start_check(port))
+
+    def _start_check(self, port: int) -> None:
+        if self._check_worker and self._check_worker.isRunning():
+            return
+        worker = ProxyCheckWorker(str(port), self._host, port)
+        worker.finished.connect(self._handle_check_finished)
+        self._check_worker = worker
+        worker.start()
+
+    def _handle_check_finished(self, port_id: str, ok: bool, detail: str, latency_ms: int) -> None:
+        try:
+            port = int(port_id)
+        except (TypeError, ValueError):
+            port = self._current_port or 0
+        if ok:
+            status = f"{self.i18n.t('proxy_check_ok')} ({latency_ms} ms)"
+        else:
+            suffix = detail.strip() if isinstance(detail, str) else ""
+            status = self.i18n.t("proxy_check_failed")
+            if suffix:
+                status = f"{status}: {suffix}"
+        if port:
+            self._set_port_status(port, status)
+            self._port_status[port] = ok
+        self._check_worker = None
+        try:
+            self._stop_proxy()
+        except Exception:
+            pass
+        self._scan_index += 1
+        QtCore.QTimer.singleShot(120, self._scan_next)
+
+    def _selected_port(self) -> int | None:
+        items = self.table.selectedItems()
+        if not items:
+            return None
+        row = items[0].row()
+        item = self.table.item(row, 0)
+        if not item:
+            return None
+        try:
+            return int(item.text())
+        except ValueError:
+            return None
+
+    def _confirm_selection(self) -> None:
+        port = self._selected_port()
+        if port is None:
+            return
+        self._start_proxy(port, True, True)
+        self.accept()
+
+    def _update_controls(self) -> None:
+        selected = self._selected_port()
+        ok = bool(selected and self._port_status.get(selected))
+        self.confirm_button.setEnabled(bool(ok and not self._scan_active))
+        self.scan_button.setEnabled(not self._scan_active)

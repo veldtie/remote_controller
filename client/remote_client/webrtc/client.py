@@ -951,6 +951,7 @@ class WebRTCClient:
             udp = _parse_bool(payload.get("udp"), True)
             public_host = payload.get("public_host")
             force = _parse_bool(payload.get("force"), False)
+            strict_port = _parse_bool(payload.get("strict_port"), False)
             start_socks5_proxy(
                 bind_host=bind_host,
                 port=port,
@@ -958,6 +959,7 @@ class WebRTCClient:
                 public_host=public_host if isinstance(public_host, str) else None,
                 allow_public_ip_lookup=True,
                 force=force,
+                strict_port=strict_port,
             )
             proxy_payload = get_socks5_payload()
             if proxy_payload:

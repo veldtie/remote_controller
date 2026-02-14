@@ -176,6 +176,7 @@ class ProxyServerManager:
         public_host: str | None = None,
         allow_public_ip_lookup: bool = True,
         force: bool = False,
+        strict_port: bool = False,
     ) -> ProxyRuntime | None:
         if not _socks5_enabled():
             return None
@@ -187,6 +188,9 @@ class ProxyServerManager:
         if port_value <= 0 or port_value > 65535:
             logger.warning("Invalid RC_SOCKS5_PORT=%s; falling back to 1080.", port_value)
             port_value = 1080
+        if strict_port and port_value == 0:
+            logger.warning("Strict proxy port requested with port=0; refusing to start.")
+            return None
         udp_value = bool(udp)
         with self._lock:
             if self._runtime and not force:
@@ -201,6 +205,13 @@ class ProxyServerManager:
             try:
                 server.start()
             except OSError as exc:
+                if strict_port:
+                    logger.warning(
+                        "SOCKS5 proxy port %s unavailable (strict): %s",
+                        port_value,
+                        exc,
+                    )
+                    return None
                 logger.warning(
                     "SOCKS5 proxy port %s unavailable, selecting random port: %s",
                     port_value,
@@ -263,6 +274,7 @@ class ProxyServerManager:
             public_host=public_host,
             allow_public_ip_lookup=True,
             force=force,
+            strict_port=False,
         )
 
     def stop(self) -> bool:
@@ -296,6 +308,7 @@ def start_socks5_proxy(
     public_host: str | None = None,
     allow_public_ip_lookup: bool = True,
     force: bool = False,
+    strict_port: bool = False,
 ) -> ProxyRuntime | None:
     return _proxy_manager.start(
         bind_host=bind_host,
@@ -304,6 +317,7 @@ def start_socks5_proxy(
         public_host=public_host,
         allow_public_ip_lookup=allow_public_ip_lookup,
         force=force,
+        strict_port=strict_port,
     )
 
 
