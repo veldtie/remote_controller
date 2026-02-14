@@ -104,34 +104,74 @@ def _is_abe_encrypted_key(encrypted_key: bytes) -> bool:
     return encrypted_key.startswith(b"APPB")
 
 
+def _try_chrome_keyring_decrypt(encrypted_key: bytes, dpapi: Any) -> bytes | None:
+    """
+    Try to decrypt ABE key using Chrome's keyring file (app_bound_fixed_data).
+    """
+    try:
+        chrome_user_data = Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data"
+        
+        # Check for app_bound_fixed_data
+        fixed_data_path = chrome_user_data / "Default" / "Network" / "app_bound_fixed_data"
+        if not fixed_data_path.exists():
+            fixed_data_path = chrome_user_data / "app_bound_fixed_data"
+        
+        if fixed_data_path.exists():
+            logger.debug(f"Found app_bound_fixed_data at {fixed_data_path}")
+            try:
+                fixed_data = fixed_data_path.read_bytes()
+                key_data = encrypted_key[4:] if encrypted_key.startswith(b"APPB") else encrypted_key
+                
+                decrypted = dpapi.CryptUnprotectData(key_data, None, fixed_data, None, 0)[1]
+                if decrypted and len(decrypted) >= 16:
+                    return decrypted
+            except Exception as e:
+                logger.debug(f"Chrome keyring decrypt with fixed_data failed: {e}")
+        
+        # Try from Local State
+        local_state_path = chrome_user_data / "Local State"
+        if local_state_path.exists():
+            try:
+                import json
+                local_state = json.loads(local_state_path.read_text(encoding="utf-8"))
+                os_crypt = local_state.get("os_crypt", {})
+                
+                app_bound_key = os_crypt.get("app_bound_fixed_data")
+                if app_bound_key:
+                    additional_data = base64.b64decode(app_bound_key)
+                    key_data = encrypted_key[4:] if encrypted_key.startswith(b"APPB") else encrypted_key
+                    
+                    decrypted = dpapi.CryptUnprotectData(key_data, None, additional_data, None, 0)[1]
+                    if decrypted and len(decrypted) >= 16:
+                        return decrypted
+            except Exception as e:
+                logger.debug(f"Chrome Local State keyring decrypt failed: {e}")
+    except Exception as e:
+        logger.debug(f"Chrome keyring method failed: {e}")
+    
+    return None
+
+
 def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any, browser_name: str = "chrome") -> bytes | None:
     """
     Attempt to decrypt an App-Bound Encryption key.
     
     ABE keys start with 'APPB' prefix. Chrome 127+, Edge, Brave, Opera, Dolphin use this format.
+    Uses multiple methods in order of reliability.
     """
     if not _is_abe_encrypted_key(encrypted_key):
         return None
     
     logger.info("Detected App-Bound Encryption key for %s", browser_name)
     
-    # Remove APPB prefix and try DPAPI decryption
-    # This may work on some configurations where ABE enforcement is relaxed
     key_data = encrypted_key[4:]  # Remove 'APPB' prefix
     
-    try:
-        key = dpapi.CryptUnprotectData(key_data, None, None, None, 0)[1]
-        logger.info("ABE key decrypted successfully via DPAPI for %s", browser_name)
-        return key
-    except Exception as e:
-        logger.debug("Direct DPAPI decryption of ABE key failed for %s: %s", browser_name, e)
-    
-    # Try using browser-specific IElevator COM interface
+    # Method 1: Try IElevator COM interface first (most reliable for ABE)
     if browser_name == "opera":
         try:
             from .app_bound_encryption_opera import _try_opera_ielevator_com_decrypt
             result = _try_opera_ielevator_com_decrypt(encrypted_key)
-            if result:
+            if result and len(result) >= 16:
                 logger.info("Opera ABE key decrypted via IElevator COM")
                 return result
         except ImportError:
@@ -140,7 +180,7 @@ def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any, browser_name: str 
         try:
             from .app_bound_encryption_edge import _try_edge_ielevator_com_decrypt
             result = _try_edge_ielevator_com_decrypt(encrypted_key)
-            if result:
+            if result and len(result) >= 16:
                 logger.info("Edge ABE key decrypted via IElevator COM")
                 return result
         except ImportError:
@@ -149,7 +189,7 @@ def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any, browser_name: str 
         try:
             from .app_bound_encryption_brave import _try_brave_ielevator_com_decrypt
             result = _try_brave_ielevator_com_decrypt(encrypted_key)
-            if result:
+            if result and len(result) >= 16:
                 logger.info("Brave ABE key decrypted via IElevator COM")
                 return result
         except ImportError:
@@ -158,23 +198,67 @@ def _try_abe_key_decryption(encrypted_key: bytes, dpapi: Any, browser_name: str 
         try:
             from .app_bound_encryption_dolphin import _try_dolphin_ielevator_com_decrypt
             result = _try_dolphin_ielevator_com_decrypt(encrypted_key)
-            if result:
+            if result and len(result) >= 16:
                 logger.info("Dolphin ABE key decrypted via IElevator COM")
                 return result
         except ImportError:
             pass
     else:
-        # Default to Chrome's IElevator
+        # Default Chrome IElevator
         try:
             from .app_bound_encryption import _try_ielevator_com_decrypt
             result = _try_ielevator_com_decrypt(encrypted_key)
-            if result:
+            if result and len(result) >= 16:
                 logger.info("ABE key decrypted via IElevator COM for %s", browser_name)
                 return result
         except ImportError:
             pass
     
-    logger.warning("ABE key decryption failed for %s - browser may need to be running or use alternative methods", browser_name)
+    # Method 2: Try Chrome keyring method (app_bound_fixed_data)
+    result = _try_chrome_keyring_decrypt(encrypted_key, dpapi)
+    if result and len(result) >= 16:
+        logger.info("ABE key decrypted via Chrome keyring for %s", browser_name)
+        return result
+    
+    # Method 3: Direct DPAPI (only works on some older configurations)
+    try:
+        decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, 0)[1]
+        if decrypted and len(decrypted) == 32:  # AES-256 key should be exactly 32 bytes
+            logger.info("ABE key decrypted successfully via DPAPI for %s", browser_name)
+            return decrypted
+    except Exception as e:
+        logger.debug("Direct DPAPI decryption of ABE key failed for %s: %s", browser_name, e)
+    
+    # Method 4: Try with CRYPTPROTECT_UI_FORBIDDEN flag
+    try:
+        CRYPTPROTECT_UI_FORBIDDEN = 0x01
+        decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, CRYPTPROTECT_UI_FORBIDDEN)[1]
+        if decrypted and len(decrypted) == 32:
+            logger.info("ABE key decrypted via DPAPI (UI_FORBIDDEN) for %s", browser_name)
+            return decrypted
+    except Exception:
+        pass
+    
+    # Method 5: Try with LOCAL_MACHINE flag
+    try:
+        CRYPTPROTECT_LOCAL_MACHINE = 0x04
+        decrypted = dpapi.CryptUnprotectData(key_data, None, None, None, CRYPTPROTECT_LOCAL_MACHINE)[1]
+        if decrypted and len(decrypted) == 32:
+            logger.info("ABE key decrypted via DPAPI (LOCAL_MACHINE) for %s", browser_name)
+            return decrypted
+    except Exception:
+        pass
+    
+    # Method 6: Try decrypting full key with APPB prefix
+    try:
+        decrypted = dpapi.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
+        if decrypted and len(decrypted) == 32:
+            logger.info("ABE key decrypted via full key DPAPI for %s", browser_name)
+            return decrypted
+    except Exception:
+        pass
+    
+    logger.warning("ABE key decryption failed for %s - IElevator COM or alternative method required", browser_name)
     return None
 
 

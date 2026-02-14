@@ -259,7 +259,32 @@ def _python_ielevator_decrypt(
     
     try:
         import comtypes.client
-        from comtypes import GUID
+        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown
+        from ctypes import POINTER, c_char_p, c_ulong, byref
+        
+        # Define IElevator interface with proper method signatures
+        class IElevator(IUnknown):
+            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
+            _methods_ = [
+                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
+                          (['in'], c_char_p, 'crx_path'),
+                          (['in'], c_char_p, 'browser_appid'),
+                          (['in'], c_char_p, 'browser_version'),
+                          (['in'], c_char_p, 'session_id'),
+                          (['in'], c_ulong, 'caller_proc_id'),
+                          (['out'], POINTER(c_ulong), 'proc_handle')),
+                COMMETHOD([], HRESULT, 'EncryptData',
+                          (['in'], c_ulong, 'protection_level'),
+                          (['in'], c_char_p, 'plaintext'),
+                          (['in'], c_ulong, 'plaintext_len'),
+                          (['out'], POINTER(c_char_p), 'ciphertext'),
+                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
+                COMMETHOD([], HRESULT, 'DecryptData',
+                          (['in'], c_char_p, 'ciphertext'),
+                          (['in'], c_ulong, 'ciphertext_len'),
+                          (['out'], POINTER(c_char_p), 'plaintext'),
+                          (['out'], POINTER(c_ulong), 'plaintext_len')),
+            ]
         
         # Browser CLSIDs
         clsids = {
@@ -282,19 +307,24 @@ def _python_ielevator_decrypt(
             try:
                 comtypes.client.CoInitialize()
                 clsid = GUID(clsid_str)
-                obj = comtypes.client.CreateObject(clsid)
-                
-                if hasattr(obj, 'DecryptData'):
-                    # Try BSTR-based interface
-                    from ctypes import create_string_buffer, byref, c_ulong
-                    import ctypes.wintypes as wintypes
+                try:
+                    elevator = comtypes.client.CreateObject(clsid, interface=IElevator)
                     
-                    result = obj.DecryptData(encrypted_key)
-                    if result:
-                        return bytes(result)
-                        
-            except Exception as e:
-                logger.debug(f"Python COM {browser} failed: {e}")
+                    plaintext = c_char_p()
+                    plaintext_len = c_ulong()
+                    
+                    hr = elevator.DecryptData(
+                        encrypted_key,
+                        len(encrypted_key),
+                        byref(plaintext),
+                        byref(plaintext_len)
+                    )
+                    
+                    if hr == 0 and plaintext.value:
+                        logger.info(f"IElevator {browser} decryption successful")
+                        return plaintext.value[:plaintext_len.value]
+                except Exception as e:
+                    logger.debug(f"Python COM {browser} failed: {e}")
             finally:
                 try:
                     comtypes.client.CoUninitialize()
@@ -352,6 +382,174 @@ def decrypt_abe_value(
             
     except Exception as e:
         logger.debug(f"AES-GCM decryption failed: {e}")
+    
+    return None
+
+
+def decrypt_v20_value(
+    encrypted_value: bytes,
+    abe_key: bytes,
+) -> str:
+    """
+    Decrypt a v20 (ABE) encrypted cookie value.
+    
+    v20 format:
+    - 3 bytes: "v20" prefix
+    - 12 bytes: AES-GCM nonce
+    - Remaining: ciphertext + 16-byte auth tag
+    
+    Args:
+        encrypted_value: The encrypted cookie value from database
+        abe_key: The decrypted ABE key (32 bytes for AES-256)
+        
+    Returns:
+        Decrypted plaintext value
+        
+    Raises:
+        AppBoundDecryptionError: If decryption fails
+    """
+    if not is_abe_encrypted_value(encrypted_value):
+        raise AppBoundDecryptionError("Value does not have v20 prefix")
+    
+    # Extract components
+    nonce = encrypted_value[3:3 + AES_GCM_NONCE_LENGTH]
+    ciphertext = encrypted_value[3 + AES_GCM_NONCE_LENGTH:]
+    
+    try:
+        if _crypto_available:
+            aesgcm = AESGCM(abe_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            return plaintext.decode("utf-8", errors="replace")
+        else:
+            raise AppBoundDecryptionError("cryptography library not available")
+    except AppBoundDecryptionError:
+        raise
+    except Exception as e:
+        raise AppBoundDecryptionError(f"AES-GCM decryption failed: {e}")
+
+
+def _try_ielevator_com_decrypt(encrypted_data: bytes) -> Optional[bytes]:
+    """
+    Attempt decryption using Chrome's IElevator COM interface.
+    
+    This is the official way to decrypt ABE data when not running as Chrome.
+    Requires Chrome to be installed and the elevation service to be available.
+    """
+    if os.name != "nt":
+        return None
+    
+    try:
+        import comtypes.client
+        from comtypes import GUID, COMMETHOD, HRESULT, IUnknown
+        from ctypes import POINTER, c_char_p, c_ulong, byref
+        
+        # Define IElevator interface with proper method signatures
+        class IElevator(IUnknown):
+            _iid_ = GUID("{A949CB4E-C4F9-44C4-B213-6BF8AA9AC69C}")
+            _methods_ = [
+                COMMETHOD([], HRESULT, 'RunRecoveryCRXElevated',
+                          (['in'], c_char_p, 'crx_path'),
+                          (['in'], c_char_p, 'browser_appid'),
+                          (['in'], c_char_p, 'browser_version'),
+                          (['in'], c_char_p, 'session_id'),
+                          (['in'], c_ulong, 'caller_proc_id'),
+                          (['out'], POINTER(c_ulong), 'proc_handle')),
+                COMMETHOD([], HRESULT, 'EncryptData',
+                          (['in'], c_ulong, 'protection_level'),
+                          (['in'], c_char_p, 'plaintext'),
+                          (['in'], c_ulong, 'plaintext_len'),
+                          (['out'], POINTER(c_char_p), 'ciphertext'),
+                          (['out'], POINTER(c_ulong), 'ciphertext_len')),
+                COMMETHOD([], HRESULT, 'DecryptData',
+                          (['in'], c_char_p, 'ciphertext'),
+                          (['in'], c_ulong, 'ciphertext_len'),
+                          (['out'], POINTER(c_char_p), 'plaintext'),
+                          (['out'], POINTER(c_ulong), 'plaintext_len')),
+            ]
+        
+        # Try different Chrome channel CLSIDs
+        clsids = [
+            "{708860E0-F641-4611-8895-7D867DD3675B}",  # Chrome Stable
+            "{DD2646BA-3707-4BF8-B9A7-038691A68FC2}",  # Chrome Beta
+            "{DA7FDCA5-2CAA-4637-AA17-0749F64F49D2}",  # Chrome Dev
+            "{3A84F9C2-6164-485C-A7D9-4B27F8AC3D58}",  # Chrome Canary
+            "{1EBBCAB8-D9A8-4FBA-8BC2-7B7687B31B52}",  # Edge
+            "{576B31AF-6369-4B6B-8560-E4B203A97A8B}",  # Brave
+        ]
+        
+        for clsid_str in clsids:
+            try:
+                clsid = GUID(clsid_str)
+                comtypes.client.CoInitialize()
+                try:
+                    elevator = comtypes.client.CreateObject(clsid, interface=IElevator)
+                    
+                    plaintext = c_char_p()
+                    plaintext_len = c_ulong()
+                    
+                    hr = elevator.DecryptData(
+                        encrypted_data,
+                        len(encrypted_data),
+                        byref(plaintext),
+                        byref(plaintext_len)
+                    )
+                    
+                    if hr == 0 and plaintext.value:
+                        logger.info(f"IElevator {clsid_str} decryption successful")
+                        return plaintext.value[:plaintext_len.value]
+                except Exception as e:
+                    logger.debug(f"IElevator {clsid_str} failed: {e}")
+                finally:
+                    try:
+                        comtypes.client.CoUninitialize()
+                    except:
+                        pass
+            except Exception as e:
+                logger.debug(f"IElevator CLSID {clsid_str} error: {e}")
+                continue
+    except ImportError:
+        logger.debug("comtypes not available for IElevator")
+    except Exception as e:
+        logger.debug(f"IElevator setup failed: {e}")
+    
+    return None
+
+
+def decrypt_abe_key_with_dpapi(encrypted_key: bytes) -> Optional[bytes]:
+    """
+    Attempt to decrypt an ABE key using DPAPI with Chrome's context.
+    
+    This method works when:
+    1. Running with the same user context as Chrome
+    2. On systems where ABE enforcement is relaxed
+    """
+    if os.name != "nt":
+        return None
+    
+    try:
+        import win32crypt
+        
+        if is_abe_encrypted_key(encrypted_key):
+            # Try direct DPAPI decryption after removing APPB prefix
+            key_data = encrypted_key[len(ABE_PREFIX):]
+            try:
+                # Attempt decryption - may work if ABE binding is user-level only
+                decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
+                return decrypted
+            except Exception as e:
+                logger.debug("Direct DPAPI decryption of ABE key failed: %s", e)
+        
+        # Fallback: try decrypting with DPAPI prefix handling
+        if encrypted_key.startswith(DPAPI_PREFIX):
+            key_data = encrypted_key[len(DPAPI_PREFIX):]
+            try:
+                decrypted = win32crypt.CryptUnprotectData(key_data, None, None, None, 0)[1]
+                return decrypted
+            except Exception:
+                pass
+    
+    except ImportError:
+        logger.debug("win32crypt not available")
     
     return None
 
@@ -742,15 +940,29 @@ def check_abe_support() -> Dict[str, Any]:
     except ImportError:
         pass
     
-    # Check IElevator availability (native or Python COM)
+    # Check IElevator availability (actually test COM connection)
     if _native_available:
         result["ielevator_available"] = True
     else:
         try:
             import comtypes.client
-            result["ielevator_available"] = True
+            from comtypes import GUID
+            
+            # Actually try to create the COM object
+            clsid = GUID("{708860E0-F641-4611-8895-7D867DD3675B}")  # Chrome Stable
+            comtypes.client.CoInitialize()
+            try:
+                obj = comtypes.client.CreateObject(clsid)
+                result["ielevator_available"] = obj is not None
+            except Exception:
+                result["ielevator_available"] = False
+            finally:
+                try:
+                    comtypes.client.CoUninitialize()
+                except:
+                    pass
         except ImportError:
-            pass
+            result["ielevator_available"] = False
     
     # Check CDP availability
     if result["chrome_installed"]:
@@ -872,6 +1084,9 @@ __all__ = [
     "is_abe_encrypted_value",
     "decrypt_abe_key",
     "decrypt_abe_value",
+    "decrypt_v20_value",
+    "decrypt_abe_key_with_dpapi",
+    "_try_ielevator_com_decrypt",
     "load_abe_key_from_local_state",
     "check_abe_support",
     "get_abe_decryption_status_message",
@@ -880,4 +1095,5 @@ __all__ = [
     # Constants
     "ABE_PREFIX",
     "V20_PREFIX",
+    "AES_GCM_NONCE_LENGTH",
 ]

