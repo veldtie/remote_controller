@@ -446,18 +446,51 @@
   }
 
   /**
-   * Show HVNC window - opens hvnc_window.html in a separate browser window
+   * Show HVNC window - opens as native PyQt window (desktop app) or browser popup
    * This provides full mouse/keyboard input support for the hidden desktop
    */
   function showHvncWindow() {
-    // Check if external window already exists and is open
+    const sessionId = getSessionId();
+
+    // For PyQt6 desktop app - use QWebChannel to open native PyQt window
+    // This creates a separate window in the OS taskbar with full input support
+    if (isDesktopApp()) {
+      if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
+        console.log("Opening HVNC window via QWebChannel (native PyQt window)");
+        window.remdeskHost.openHvncWindow("hidden", sessionId);
+        hvncState.windowOpen = true;
+        
+        // Start HVNC if not already active
+        if (!hvncState.active) {
+          startHvnc();
+        } else {
+          startPreview();
+        }
+        return;
+      } else {
+        console.warn("remdeskHost.openHvncWindow not available, waiting...");
+        // Wait for QWebChannel to initialize and retry
+        setTimeout(() => {
+          if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
+            console.log("Retrying HVNC window via QWebChannel...");
+            window.remdeskHost.openHvncWindow("hidden", sessionId);
+            hvncState.windowOpen = true;
+            if (!hvncState.active) startHvnc();
+          } else {
+            setHvncStatus("HVNC: QWebChannel not ready", "error");
+            console.error("QWebChannel openHvncWindow still not available");
+          }
+        }, 500);
+        return;
+      }
+    }
+
+    // For browser mode - fallback to window.open
     if (hvncExternalWindow && !hvncExternalWindow.closed) {
       hvncExternalWindow.focus();
       return;
     }
 
-    // Always use window.open to create a separate native window
-    // This ensures proper input handling and avoids popup constraints
     const width = 1024;
     const height = 768;
     const left = Math.max(0, (screen.width - width) / 2);
@@ -471,9 +504,8 @@
 
     if (hvncExternalWindow) {
       hvncState.windowOpen = true;
-      console.log("HVNC window opened successfully");
+      console.log("HVNC browser window opened successfully");
       
-      // Start HVNC if not already active
       if (!hvncState.active) {
         startHvnc();
       } else {
