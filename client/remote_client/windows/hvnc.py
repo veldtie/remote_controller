@@ -713,23 +713,24 @@ class HiddenDesktop:
         command_line: str,
         working_dir: str | None,
         show_window: bool,
-        use_job_object: bool = True,
+        use_job_object: bool = False,  # Disabled by default - can cause stability issues
     ) -> subprocess.Popen | None:
-        """Launch using CreateProcessW directly via ctypes with Job Object.
+        """Launch using CreateProcessW directly via ctypes.
         
-        This method provides better control over the desktop assignment
-        and uses Job Object to help manage child processes.
+        This method provides better control over the desktop assignment.
         
-        For browsers on Windows 11 24H2, child processes (renderers, GPU) are still
-        created by the browser itself and may not inherit desktop assignment.
-        Use browser flags (--disable-gpu-sandbox, --in-process-gpu) to mitigate this.
+        For browsers on Windows 11 24H2, child processes (renderers, GPU) may not
+        inherit desktop assignment. Use browser flags to mitigate:
+        - --disable-gpu-sandbox
+        - --in-process-gpu
+        - --disable-site-isolation-trials
         
         Args:
             executable: Path to executable
             command_line: Full command line
             working_dir: Working directory
             show_window: Whether to show the window
-            use_job_object: Use Job Object for process management
+            use_job_object: Use Job Object for process management (disabled by default)
         """
         # Setup STARTUPINFOW
         si = STARTUPINFOW()
