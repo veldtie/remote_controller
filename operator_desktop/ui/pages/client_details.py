@@ -186,6 +186,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.proxy_copy_button.setText(self.i18n.t("proxy_copy_button"))
         if hasattr(self, "proxy_check_button"):
             self.proxy_check_button.setText(self.i18n.t("proxy_check_button"))
+        if hasattr(self, "proxy_start_button"):
+            self.proxy_start_button.setText(self.i18n.t("proxy_start_button"))
+        if hasattr(self, "proxy_stop_button"):
+            self.proxy_stop_button.setText(self.i18n.t("proxy_stop_button"))
         self.storage_title.setText(self.i18n.t("client_storage_title"))
         self.storage_body.setText(self.i18n.t("client_storage_body"))
         self.storage_action.setText(self.i18n.t("button_storage"))
@@ -512,11 +516,19 @@ class ClientDetailsPage(QtWidgets.QWidget):
         self.proxy_check_button = make_button("", "ghost")
         self.proxy_check_button.setMinimumHeight(36)
         self.proxy_check_button.clicked.connect(self._check_proxy)
+        self.proxy_start_button = make_button("", "ghost")
+        self.proxy_start_button.setMinimumHeight(36)
+        self.proxy_start_button.clicked.connect(self._start_proxy)
+        self.proxy_stop_button = make_button("", "ghost")
+        self.proxy_stop_button.setMinimumHeight(36)
+        self.proxy_stop_button.clicked.connect(self._stop_proxy)
         actions_row = QtWidgets.QHBoxLayout()
         actions_row.setSpacing(8)
         actions_row.addWidget(self.proxy_action)
         actions_row.addWidget(self.proxy_copy_button)
         actions_row.addWidget(self.proxy_check_button)
+        actions_row.addWidget(self.proxy_start_button)
+        actions_row.addWidget(self.proxy_stop_button)
         actions_row.addStretch()
         card_layout.addLayout(actions_row)
         layout.addWidget(self.proxy_card)
@@ -550,6 +562,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
                 self.proxy_copy_button.setEnabled(False)
             if hasattr(self, "proxy_check_button"):
                 self.proxy_check_button.setEnabled(False)
+            if hasattr(self, "proxy_start_button"):
+                self.proxy_start_button.setEnabled(True)
+            if hasattr(self, "proxy_stop_button"):
+                self.proxy_stop_button.setEnabled(False)
             return
         payload = self._proxy_payload()
         if not payload:
@@ -558,6 +574,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
                 self.proxy_copy_button.setEnabled(False)
             if hasattr(self, "proxy_check_button"):
                 self.proxy_check_button.setEnabled(False)
+            if hasattr(self, "proxy_start_button"):
+                self.proxy_start_button.setEnabled(True)
+            if hasattr(self, "proxy_stop_button"):
+                self.proxy_stop_button.setEnabled(False)
             return
         enabled = payload.get("enabled")
         port = payload.get("port")
@@ -567,10 +587,15 @@ class ClientDetailsPage(QtWidgets.QWidget):
                 self.proxy_copy_button.setEnabled(False)
             if hasattr(self, "proxy_check_button"):
                 self.proxy_check_button.setEnabled(False)
+            if hasattr(self, "proxy_start_button"):
+                self.proxy_start_button.setEnabled(True)
+            if hasattr(self, "proxy_stop_button"):
+                self.proxy_stop_button.setEnabled(False)
             return
         host = payload.get("host") or "--"
         proxy_type = payload.get("type") or "socks5"
         udp_enabled = payload.get("udp")
+        proxy_ready = bool(host and port)
         lines = [
             f"{self.i18n.t('proxy_status_label')}: {self.i18n.t('proxy_status_ready')}",
             f"{self.i18n.t('proxy_host_label')}: {host}",
@@ -586,6 +611,10 @@ class ClientDetailsPage(QtWidgets.QWidget):
             self.proxy_copy_button.setEnabled(bool(host and port))
         if hasattr(self, "proxy_check_button"):
             self.proxy_check_button.setEnabled(bool(host and port))
+        if hasattr(self, "proxy_start_button"):
+            self.proxy_start_button.setEnabled(not proxy_ready)
+        if hasattr(self, "proxy_stop_button"):
+            self.proxy_stop_button.setEnabled(proxy_ready)
 
     def _abe_payload(self) -> dict | None:
         if not self.client:
@@ -1567,6 +1596,20 @@ class ClientDetailsPage(QtWidgets.QWidget):
         if client_id:
             self.extra_action_requested.emit(client_id, "proxy")
 
+    def _start_proxy(self) -> None:
+        if not self.client:
+            return
+        client_id = self.client.get("id")
+        if client_id:
+            self.extra_action_requested.emit(client_id, "proxy_start")
+
+    def _stop_proxy(self) -> None:
+        if not self.client:
+            return
+        client_id = self.client.get("id")
+        if client_id:
+            self.extra_action_requested.emit(client_id, "proxy_stop")
+
     def _open_storage(self) -> None:
         if not self.client:
             return
@@ -1809,4 +1852,3 @@ class ClientDetailsPage(QtWidgets.QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
-

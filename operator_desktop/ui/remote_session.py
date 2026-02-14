@@ -135,6 +135,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._flags_chip: QtWidgets.QLabel | None = None
         self._pending_cookie_requests: list[dict[str, object]] = []
         self._pending_proxy_requests: list[dict[str, object]] = []
+        self._pending_proxy_controls: list[dict[str, object]] = []
         self._download_override_dir: str | None = None
         self._download_override_name: str | None = None
         self._web_channel: QWebChannel | None = None
@@ -234,6 +235,18 @@ class RemoteSessionDialog(QtWidgets.QDialog):
             {"clientId": client_id or self.session_id, "filename": filename}
         )
         self._flush_proxy_requests()
+
+    def request_proxy_start(self, options: dict | None = None) -> None:
+        self._pending_proxy_controls.append(
+            {"action": "proxy_start", "options": options or {}}
+        )
+        self._flush_proxy_controls()
+
+    def request_proxy_stop(self, options: dict | None = None) -> None:
+        self._pending_proxy_controls.append(
+            {"action": "proxy_stop", "options": options or {}}
+        )
+        self._flush_proxy_controls()
 
     def apply_context(
         self,
@@ -379,6 +392,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._open_storage_on_load = False
         self._flush_cookie_requests()
         self._flush_proxy_requests()
+        self._flush_proxy_controls()
 
     def _prepare_urls(self, remote_url: QtCore.QUrl) -> None:
         self._primary_url = remote_url
@@ -465,6 +479,7 @@ class RemoteSessionDialog(QtWidgets.QDialog):
         self._open_storage_on_load = False
         self._flush_cookie_requests()
         self._flush_proxy_requests()
+        self._flush_proxy_controls()
 
     def _build_window_controls(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame(self)
@@ -595,6 +610,33 @@ class RemoteSessionDialog(QtWidgets.QDialog):
   }}
   window.__remdeskProxyQueue = window.__remdeskProxyQueue || [];
   window.__remdeskProxyQueue.push(req);
+}})();
+"""
+            self.view.page().runJavaScript(script)
+
+    def _flush_proxy_controls(self) -> None:
+        if not self.view or not self._page_ready or not self._pending_proxy_controls:
+            return
+        pending = self._pending_proxy_controls[:]
+        self._pending_proxy_controls.clear()
+        for entry in pending:
+            payload = json.dumps(entry)
+            script = f"""
+(() => {{
+  const req = {payload};
+  if (req.action === "proxy_stop") {{
+    if (window.remdeskProxyStop) {{
+      window.remdeskProxyStop(req.options || null);
+      return;
+    }}
+  }} else {{
+    if (window.remdeskProxyStart) {{
+      window.remdeskProxyStart(req.options || null);
+      return;
+    }}
+  }}
+  window.__remdeskProxyControlQueue = window.__remdeskProxyControlQueue || [];
+  window.__remdeskProxyControlQueue.push(req);
 }})();
 """
             self.view.page().runJavaScript(script)

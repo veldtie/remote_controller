@@ -981,6 +981,7 @@
         remdesk.startStatsMonitor();
         remdesk.drainCookieQueue();
         remdesk.drainProxyQueue();
+        remdesk.drainProxyControlQueue();
         void remdesk.retryPendingExport();
         remdesk.setRemoteCursorVisibility(state.remoteCursorVisible, true);
         if (state.storageAutostart && !dom.storageDrawer.classList.contains("open")) {
@@ -1075,6 +1076,12 @@
       if (parsed.action === "toggle_input_blocking" || parsed.action === "get_input_blocking_status") {
         if (remdesk.handleInputBlockingResponse) {
           remdesk.handleInputBlockingResponse(parsed);
+        }
+        return;
+      }
+      if (parsed.action === "proxy_start" || parsed.action === "proxy_stop") {
+        if (remdesk.handleProxyControlResponse) {
+          remdesk.handleProxyControlResponse(parsed);
         }
         return;
       }

@@ -2066,6 +2066,10 @@ body.dual-stream-pip #hvncScreen {
   object-fit: contain;
   position: relative;
   z-index: 2;
+  /* Prevent clicking/selecting the image - input handled by screenFrame */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .hvnc-popup-screen-frame video.active,

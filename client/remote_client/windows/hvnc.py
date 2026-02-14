@@ -134,6 +134,139 @@ class SECURITY_ATTRIBUTES(ctypes.Structure):
     ]
 
 
+# CreateProcess structures for direct process creation on hidden desktop
+class STARTUPINFOW(ctypes.Structure):
+    """Windows STARTUPINFOW structure for CreateProcessW."""
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("lpReserved", wintypes.LPWSTR),
+        ("lpDesktop", wintypes.LPWSTR),
+        ("lpTitle", wintypes.LPWSTR),
+        ("dwX", wintypes.DWORD),
+        ("dwY", wintypes.DWORD),
+        ("dwXSize", wintypes.DWORD),
+        ("dwYSize", wintypes.DWORD),
+        ("dwXCountChars", wintypes.DWORD),
+        ("dwYCountChars", wintypes.DWORD),
+        ("dwFillAttribute", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("wShowWindow", wintypes.WORD),
+        ("cbReserved2", wintypes.WORD),
+        ("lpReserved2", ctypes.POINTER(wintypes.BYTE)),
+        ("hStdInput", wintypes.HANDLE),
+        ("hStdOutput", wintypes.HANDLE),
+        ("hStdError", wintypes.HANDLE),
+    ]
+
+
+class PROCESS_INFORMATION(ctypes.Structure):
+    """Windows PROCESS_INFORMATION structure."""
+    _fields_ = [
+        ("hProcess", wintypes.HANDLE),
+        ("hThread", wintypes.HANDLE),
+        ("dwProcessId", wintypes.DWORD),
+        ("dwThreadId", wintypes.DWORD),
+    ]
+
+
+# CreateProcess flags
+CREATE_NEW_CONSOLE = 0x00000010
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+DETACHED_PROCESS = 0x00000008
+CREATE_NO_WINDOW = 0x08000000
+CREATE_UNICODE_ENVIRONMENT = 0x00000400
+CREATE_SUSPENDED = 0x00000004
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+STARTF_USESHOWWINDOW = 0x00000001
+STARTF_USEPOSITION = 0x00000004
+STARTF_USESIZE = 0x00000002
+
+# Job Object structures and constants for child process desktop inheritance
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
+JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    """Job object basic limit information."""
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class IO_COUNTERS(ctypes.Structure):
+    """IO counters structure."""
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    """Job object extended limit information."""
+    _fields_ = [
+        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+# Setup Job Object API
+kernel32.CreateJobObjectW.argtypes = [
+    ctypes.POINTER(SECURITY_ATTRIBUTES),  # lpJobAttributes
+    wintypes.LPCWSTR,                      # lpName
+]
+kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+
+kernel32.AssignProcessToJobObject.argtypes = [
+    wintypes.HANDLE,  # hJob
+    wintypes.HANDLE,  # hProcess
+]
+kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+
+kernel32.SetInformationJobObject.argtypes = [
+    wintypes.HANDLE,   # hJob
+    wintypes.DWORD,    # JobObjectInformationClass
+    wintypes.LPVOID,   # lpJobObjectInformation
+    wintypes.DWORD,    # cbJobObjectInformationLength
+]
+kernel32.SetInformationJobObject.restype = wintypes.BOOL
+
+kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+kernel32.ResumeThread.restype = wintypes.DWORD
+
+# Setup CreateProcessW
+kernel32.CreateProcessW.argtypes = [
+    wintypes.LPCWSTR,      # lpApplicationName
+    wintypes.LPWSTR,       # lpCommandLine
+    ctypes.POINTER(SECURITY_ATTRIBUTES),  # lpProcessAttributes
+    ctypes.POINTER(SECURITY_ATTRIBUTES),  # lpThreadAttributes
+    wintypes.BOOL,         # bInheritHandles
+    wintypes.DWORD,        # dwCreationFlags
+    wintypes.LPVOID,       # lpEnvironment
+    wintypes.LPCWSTR,      # lpCurrentDirectory
+    ctypes.POINTER(STARTUPINFOW),         # lpStartupInfo
+    ctypes.POINTER(PROCESS_INFORMATION),  # lpProcessInformation
+]
+kernel32.CreateProcessW.restype = wintypes.BOOL
+
+
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [
         ("biSize", wintypes.DWORD),
@@ -526,23 +659,207 @@ class HiddenDesktop:
         args: list[str] | None = None,
         working_dir: str | None = None,
         show_window: bool = True,
+        use_createprocess: bool = True,
     ) -> subprocess.Popen | None:
         """Launch an application on the hidden desktop.
+        
+        Uses CreateProcessW directly via ctypes for better control over desktop assignment.
+        This is more reliable than subprocess.Popen for hidden desktop scenarios.
         
         Args:
             executable: Path to executable or application name
             args: Command line arguments
             working_dir: Working directory
             show_window: Whether to show the window (on hidden desktop)
+            use_createprocess: Use CreateProcessW directly (recommended for hidden desktop)
         
         Returns:
-            Popen object or None if failed
+            Popen-like object or None if failed
         """
         if not self._handle:
             logger.error("Cannot launch application: desktop not initialized")
             return None
         
-        # Build command
+        # Build command line
+        if args:
+            # Properly quote arguments with spaces
+            cmd_parts = [executable]
+            for arg in args:
+                if ' ' in arg and not (arg.startswith('"') and arg.endswith('"')):
+                    cmd_parts.append(f'"{arg}"')
+                else:
+                    cmd_parts.append(arg)
+            command_line = ' '.join(cmd_parts)
+        else:
+            command_line = executable
+        
+        logger.debug("Launching on hidden desktop: %s", command_line)
+        logger.debug("Desktop path: %s", self._desktop_path)
+        
+        if use_createprocess:
+            # Use CreateProcessW directly for better hidden desktop support
+            return self._launch_with_createprocess(
+                executable, command_line, working_dir, show_window
+            )
+        else:
+            # Fallback to subprocess.Popen
+            return self._launch_with_popen(
+                executable, args, working_dir, show_window
+            )
+    
+    def _launch_with_createprocess(
+        self,
+        executable: str,
+        command_line: str,
+        working_dir: str | None,
+        show_window: bool,
+        use_job_object: bool = False,  # Disabled by default - can cause stability issues
+    ) -> subprocess.Popen | None:
+        """Launch using CreateProcessW directly via ctypes.
+        
+        This method provides better control over the desktop assignment.
+        
+        For browsers on Windows 11 24H2, child processes (renderers, GPU) may not
+        inherit desktop assignment. Use browser flags to mitigate:
+        - --disable-gpu-sandbox
+        - --in-process-gpu
+        - --disable-site-isolation-trials
+        
+        Args:
+            executable: Path to executable
+            command_line: Full command line
+            working_dir: Working directory
+            show_window: Whether to show the window
+            use_job_object: Use Job Object for process management (disabled by default)
+        """
+        # Setup STARTUPINFOW
+        si = STARTUPINFOW()
+        si.cb = ctypes.sizeof(STARTUPINFOW)
+        si.lpDesktop = self._desktop_path  # Critical: specify hidden desktop
+        si.dwFlags = STARTF_USESHOWWINDOW
+        si.wShowWindow = SW_SHOW if show_window else SW_HIDE
+        
+        # Setup PROCESS_INFORMATION
+        pi = PROCESS_INFORMATION()
+        
+        # Creation flags
+        # CREATE_SUSPENDED: Start suspended so we can assign to Job Object first
+        # CREATE_NEW_CONSOLE: Needed for GUI applications
+        # CREATE_NEW_PROCESS_GROUP: New process group for signal handling
+        creation_flags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
+        if use_job_object:
+            creation_flags |= CREATE_SUSPENDED
+        
+        # Create mutable command line buffer (required by CreateProcessW)
+        cmd_buffer = ctypes.create_unicode_buffer(command_line, len(command_line) + 1)
+        
+        job_handle = None
+        
+        try:
+            # Create Job Object if requested
+            if use_job_object:
+                job_name = f"HVNCJob_{uuid.uuid4().hex[:8]}"
+                job_handle = kernel32.CreateJobObjectW(None, job_name)
+                if job_handle:
+                    # Configure Job Object - KILL_ON_JOB_CLOSE ensures all processes
+                    # in the job are terminated when we close the handle
+                    job_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+                    job_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    kernel32.SetInformationJobObject(
+                        job_handle,
+                        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                        ctypes.byref(job_info),
+                        ctypes.sizeof(job_info)
+                    )
+                    logger.debug("Created Job Object: %s", job_name)
+            
+            result = kernel32.CreateProcessW(
+                None,                    # lpApplicationName (None = use command line)
+                cmd_buffer,              # lpCommandLine
+                None,                    # lpProcessAttributes
+                None,                    # lpThreadAttributes
+                False,                   # bInheritHandles
+                creation_flags,          # dwCreationFlags
+                None,                    # lpEnvironment (inherit)
+                working_dir,             # lpCurrentDirectory
+                ctypes.byref(si),        # lpStartupInfo
+                ctypes.byref(pi),        # lpProcessInformation
+            )
+            
+            if not result:
+                error_code = ctypes.get_last_error()
+                logger.error(
+                    "CreateProcessW failed for %s: error=%d", 
+                    executable, error_code
+                )
+                if job_handle:
+                    kernel32.CloseHandle(job_handle)
+                return None
+            
+            # Assign process to Job Object before resuming
+            if use_job_object and job_handle:
+                assign_result = kernel32.AssignProcessToJobObject(job_handle, pi.hProcess)
+                if assign_result:
+                    logger.debug("Assigned process %d to Job Object", pi.dwProcessId)
+                else:
+                    logger.warning("Failed to assign process to Job Object: %d", ctypes.get_last_error())
+                
+                # Resume the suspended process
+                resume_result = kernel32.ResumeThread(pi.hThread)
+                if resume_result == 0xFFFFFFFF:  # -1 = error
+                    logger.warning("Failed to resume thread: %d", ctypes.get_last_error())
+            
+            # Close thread handle (we don't need it)
+            kernel32.CloseHandle(pi.hThread)
+            
+            # Create a pseudo-Popen object for compatibility
+            class ProcessHandle:
+                def __init__(self, pid, handle, job=None):
+                    self.pid = pid
+                    self._handle = handle
+                    self._job = job
+                
+                def poll(self):
+                    exit_code = wintypes.DWORD()
+                    if kernel32.GetExitCodeProcess(self._handle, ctypes.byref(exit_code)):
+                        if exit_code.value == 259:  # STILL_ACTIVE
+                            return None
+                        return exit_code.value
+                    return None
+                
+                def terminate(self):
+                    kernel32.TerminateProcess(self._handle, 1)
+                
+                def __del__(self):
+                    if self._handle:
+                        kernel32.CloseHandle(self._handle)
+                    if self._job:
+                        kernel32.CloseHandle(self._job)
+            
+            proc = ProcessHandle(pi.dwProcessId, pi.hProcess, job_handle)
+            self._processes.append(proc)
+            
+            logger.info(
+                "Launched %s on hidden desktop via CreateProcessW (PID=%d, desktop=%s, job=%s)", 
+                executable, pi.dwProcessId, self._desktop_path, 
+                "yes" if job_handle else "no"
+            )
+            return proc
+            
+        except Exception as exc:
+            logger.error("CreateProcessW exception for %s: %s", executable, exc)
+            if job_handle:
+                kernel32.CloseHandle(job_handle)
+            return None
+    
+    def _launch_with_popen(
+        self,
+        executable: str,
+        args: list[str] | None,
+        working_dir: str | None,
+        show_window: bool,
+    ) -> subprocess.Popen | None:
+        """Launch using subprocess.Popen (fallback method)."""
         cmd = [executable]
         if args:
             cmd.extend(args)
@@ -560,10 +877,10 @@ class HiddenDesktop:
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             self._processes.append(proc)
-            logger.info("Launched %s on hidden desktop (PID=%d)", executable, proc.pid)
+            logger.info("Launched %s on hidden desktop via Popen (PID=%d)", executable, proc.pid)
             return proc
         except Exception as exc:
-            logger.error("Failed to launch %s: %s", executable, exc)
+            logger.error("Popen failed for %s: %s", executable, exc)
             return None
     
     def switch_to(self) -> bool:
@@ -840,7 +1157,31 @@ class HiddenDesktopCapture:
         if getattr(self, '_use_printwindow_mode', False):
             frame = self._capture_frame_printwindow(screen_width, screen_height)
             if frame:
+                # Check if PrintWindow frame has content
+                if self._frame_has_content(frame):
+                    return frame
+                else:
+                    # PrintWindow returned empty frame - track and try alternative
+                    if not hasattr(self, '_printwindow_empty_count'):
+                        self._printwindow_empty_count = 0
+                    self._printwindow_empty_count += 1
+                    
+                    if self._printwindow_empty_count >= 10:
+                        if not hasattr(self, '_trying_alternative'):
+                            logger.warning(
+                                "PrintWindow returns empty frames, trying alternative WM_PRINT method"
+                            )
+                            self._trying_alternative = True
+        
+        # Try alternative capture method (WM_PRINT) if others failed
+        if getattr(self, '_trying_alternative', False):
+            frame = self._capture_frame_alternative(screen_width, screen_height)
+            if frame and self._frame_has_content(frame):
                 return frame
+        
+        # Return whatever we have (may be black frame)
+        if getattr(self, '_use_printwindow_mode', False):
+            return self._capture_frame_printwindow(screen_width, screen_height)
         
         return None
     
@@ -927,6 +1268,7 @@ class HiddenDesktopCapture:
         if not hdc_ref:
             hdc_ref = user32.GetDC(None)
             if not hdc_ref:
+                logger.warning("PrintWindow: Failed to get reference DC")
                 return None
             use_release = True
         else:
@@ -936,11 +1278,13 @@ class HiddenDesktopCapture:
             # Create memory DC and final bitmap for compositing
             hdc_mem = gdi32.CreateCompatibleDC(hdc_ref)
             if not hdc_mem:
+                logger.warning("PrintWindow: Failed to create memory DC")
                 return None
             
             try:
                 hbitmap = gdi32.CreateCompatibleBitmap(hdc_ref, screen_width, screen_height)
                 if not hbitmap:
+                    logger.warning("PrintWindow: Failed to create bitmap")
                     return None
                 
                 try:
@@ -952,16 +1296,46 @@ class HiddenDesktopCapture:
                     # Enumerate and capture windows on the hidden desktop
                     windows = self._enumerate_desktop_windows()
                     
+                    # Diagnostic log for window enumeration
+                    if not hasattr(self, '_enum_logged') or self._enum_log_counter >= 100:
+                        desktop_name = getattr(self._desktop, '_name', 'unknown') if self._desktop else 'none'
+                        logger.info(
+                            "PrintWindow DIAGNOSTIC: Found %d windows on desktop '%s'",
+                            len(windows), desktop_name
+                        )
+                        if windows:
+                            for i, (hwnd, rect) in enumerate(windows[:5]):  # Log first 5
+                                title = self._get_window_title(hwnd)
+                                logger.info(
+                                    "  Window %d: hwnd=0x%X, title='%s', rect=%s",
+                                    i, hwnd, title[:50] if title else '<no title>', rect
+                                )
+                        self._enum_logged = True
+                        self._enum_log_counter = 0
+                    else:
+                        self._enum_log_counter = getattr(self, '_enum_log_counter', 0) + 1
+                    
                     if not windows:
                         # No windows found - return black frame
+                        if not hasattr(self, '_no_windows_warned'):
+                            logger.warning(
+                                "PrintWindow: No windows found on hidden desktop! "
+                                "Apps may not be launching on correct desktop."
+                            )
+                            self._no_windows_warned = True
                         gdi32.SelectObject(hdc_mem, old_bitmap)
                         return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
+                    
+                    # Reset warning flag if we found windows
+                    if hasattr(self, '_no_windows_warned'):
+                        del self._no_windows_warned
                     
                     # Sort windows by Z-order (bottom to top for proper compositing)
                     # Reverse because we captured top-to-bottom
                     windows.reverse()
                     
                     captured_count = 0
+                    failed_count = 0
                     for hwnd, rect in windows:
                         win_left, win_top, win_right, win_bottom = rect
                         win_width = win_right - win_left
@@ -994,10 +1368,15 @@ class HiddenDesktopCapture:
                                 finally:
                                     gdi32.DeleteDC(hdc_win)
                             gdi32.DeleteObject(win_bitmap)
+                        else:
+                            failed_count += 1
                     
-                    # Log first successful PrintWindow capture
+                    # Log capture results
                     if not hasattr(self, '_printwindow_logged'):
-                        logger.info("PrintWindow mode: captured %d windows", captured_count)
+                        logger.info(
+                            "PrintWindow mode: captured %d windows, failed %d",
+                            captured_count, failed_count
+                        )
                         self._printwindow_logged = True
                     
                     gdi32.SelectObject(hdc_mem, old_bitmap)
@@ -1012,6 +1391,18 @@ class HiddenDesktopCapture:
                 user32.ReleaseDC(None, hdc_ref)
             else:
                 gdi32.DeleteDC(hdc_ref)
+    
+    def _get_window_title(self, hwnd: int) -> str:
+        """Get window title for diagnostic purposes."""
+        try:
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buffer, length + 1)
+                return buffer.value
+        except Exception:
+            pass
+        return ""
     
     def _enumerate_desktop_windows(self) -> list[tuple[int, tuple[int, int, int, int]]]:
         """Enumerate visible windows on the current desktop.
@@ -1142,6 +1533,141 @@ class HiddenDesktopCapture:
             self._first_frame_logged = True
         
         return buffer.raw
+    
+    def _capture_window_wm_print(self, hwnd: int, width: int, height: int) -> int | None:
+        """Capture window using WM_PRINT message - alternative to PrintWindow.
+        
+        This method sends WM_PRINT directly to the window, which can work
+        better than PrintWindow for some applications on Windows 11 24H2.
+        
+        Returns:
+            HBITMAP handle or None on failure
+        """
+        WM_PRINT = 0x0317
+        PRF_CLIENT = 0x0004
+        PRF_NONCLIENT = 0x0002
+        PRF_CHILDREN = 0x0010
+        PRF_OWNED = 0x0020
+        PRF_ERASEBKGND = 0x0008
+        
+        # Get DC for creating compatible objects
+        screen_dc = user32.GetDC(None)
+        if not screen_dc:
+            return None
+        
+        try:
+            # Create memory DC and bitmap
+            mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+            if not mem_dc:
+                return None
+            
+            try:
+                bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
+                if not bitmap:
+                    gdi32.DeleteDC(mem_dc)
+                    return None
+                
+                old_bitmap = gdi32.SelectObject(mem_dc, bitmap)
+                
+                # Fill with white first
+                gdi32.PatBlt(mem_dc, 0, 0, width, height, WHITENESS)
+                
+                # Send WM_PRINT message to the window
+                flags = PRF_CLIENT | PRF_NONCLIENT | PRF_CHILDREN | PRF_ERASEBKGND
+                user32.SendMessageW(hwnd, WM_PRINT, mem_dc, flags)
+                
+                gdi32.SelectObject(mem_dc, old_bitmap)
+                return bitmap
+                
+            finally:
+                gdi32.DeleteDC(mem_dc)
+        finally:
+            user32.ReleaseDC(None, screen_dc)
+    
+    def _capture_frame_alternative(self, screen_width: int, screen_height: int) -> bytes | None:
+        """Alternative capture method using WM_PRINT messages.
+        
+        This is a fallback for when both BitBlt and PrintWindow fail on Win11 24H2.
+        It sends WM_PRINT directly to windows which may have better compatibility.
+        """
+        # Get a reference DC
+        hdc_ref = user32.GetDC(None)
+        if not hdc_ref:
+            return None
+        
+        try:
+            # Create memory DC and final bitmap
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_ref)
+            if not hdc_mem:
+                return None
+            
+            try:
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc_ref, screen_width, screen_height)
+                if not hbitmap:
+                    return None
+                
+                try:
+                    old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
+                    
+                    # Fill with dark background
+                    gdi32.PatBlt(hdc_mem, 0, 0, screen_width, screen_height, BLACKNESS)
+                    
+                    # Enumerate windows
+                    windows = self._enumerate_desktop_windows()
+                    
+                    if not windows:
+                        gdi32.SelectObject(hdc_mem, old_bitmap)
+                        return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
+                    
+                    windows.reverse()  # Bottom to top
+                    
+                    captured = 0
+                    for hwnd, rect in windows:
+                        win_left, win_top, win_right, win_bottom = rect
+                        win_width = win_right - win_left
+                        win_height = win_bottom - win_top
+                        
+                        if win_width <= 0 or win_height <= 0:
+                            continue
+                        
+                        # Try WM_PRINT method
+                        win_bitmap = self._capture_window_wm_print(hwnd, win_width, win_height)
+                        if not win_bitmap:
+                            # Fallback to PrintWindow
+                            win_bitmap = self._capture_window_printwindow(hwnd, win_width, win_height)
+                        
+                        if win_bitmap:
+                            hdc_win = gdi32.CreateCompatibleDC(hdc_ref)
+                            if hdc_win:
+                                try:
+                                    old_win = gdi32.SelectObject(hdc_win, win_bitmap)
+                                    gdi32.BitBlt(
+                                        hdc_mem,
+                                        max(0, win_left),
+                                        max(0, win_top),
+                                        min(win_width, screen_width - win_left),
+                                        min(win_height, screen_height - win_top),
+                                        hdc_win, 0, 0, SRCCOPY
+                                    )
+                                    captured += 1
+                                    gdi32.SelectObject(hdc_win, old_win)
+                                finally:
+                                    gdi32.DeleteDC(hdc_win)
+                            gdi32.DeleteObject(win_bitmap)
+                    
+                    if not hasattr(self, '_alt_capture_logged'):
+                        logger.info("Alternative capture (WM_PRINT): captured %d windows", captured)
+                        self._alt_capture_logged = True
+                    
+                    gdi32.SelectObject(hdc_mem, old_bitmap)
+                    return self._get_bitmap_data(hdc_mem, hbitmap, screen_width, screen_height)
+                    
+                finally:
+                    gdi32.DeleteObject(hbitmap)
+            finally:
+                gdi32.DeleteDC(hdc_mem)
+        finally:
+            user32.ReleaseDC(None, hdc_ref)
     
     def _capture_loop(self) -> None:
         """Main capture loop - runs entirely on hidden desktop."""
