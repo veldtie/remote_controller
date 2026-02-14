@@ -446,44 +446,40 @@
   }
 
   /**
-   * Show HVNC window - opens as native PyQt window (desktop app) or browser popup
-   * This provides full mouse/keyboard input support for the hidden desktop
+   * Show HVNC window - opens as native PyQt window via QWebChannel
    */
   function showHvncWindow() {
     const sessionId = getSessionId();
-
-    // For PyQt6 desktop app - use QWebChannel to open native PyQt window
-    // This creates a separate window in the OS taskbar with full input support
-    if (isDesktopApp()) {
+    
+    // Call PyQt to open native HVNC window
+    if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
+      window.remdeskHost.openHvncWindow("hidden", sessionId);
+      hvncState.windowOpen = true;
+      
+      // Start HVNC if not already active
+      if (!hvncState.active) {
+        startHvnc();
+      }
+      return;
+    }
+    
+    // If remdeskHost not ready yet, wait and retry
+    setTimeout(() => {
       if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
-        console.log("Opening HVNC window via QWebChannel (native PyQt window)");
         window.remdeskHost.openHvncWindow("hidden", sessionId);
         hvncState.windowOpen = true;
-        
-        // Start HVNC if not already active
         if (!hvncState.active) {
           startHvnc();
-        } else {
-          startPreview();
         }
-        return;
-      } else {
-        console.warn("remdeskHost.openHvncWindow not available, waiting...");
-        // Wait for QWebChannel to initialize and retry
-        setTimeout(() => {
-          if (window.remdeskHost && window.remdeskHost.openHvncWindow) {
-            console.log("Retrying HVNC window via QWebChannel...");
-            window.remdeskHost.openHvncWindow("hidden", sessionId);
-            hvncState.windowOpen = true;
-            if (!hvncState.active) startHvnc();
-          } else {
-            setHvncStatus("HVNC: QWebChannel not ready", "error");
-            console.error("QWebChannel openHvncWindow still not available");
-          }
-        }, 500);
-        return;
       }
-    }
+    }, 300);
+  }
+  
+  /**
+   * Show HVNC window (browser fallback) - NOT USED in desktop app
+   */
+  function showHvncWindowBrowser() {
+    const sessionId = getSessionId();
 
     // For browser mode - fallback to window.open
     if (hvncExternalWindow && !hvncExternalWindow.closed) {
@@ -813,6 +809,15 @@
    * Initialize HVNC module
    */
   function initHvnc() {
+    // Bind to HVNC mode button - open HVNC window when clicked
+    const hvncModeBtn = document.querySelector('[data-mode="hvnc"]');
+    if (hvncModeBtn) {
+      hvncModeBtn.addEventListener("click", () => {
+        // Open HVNC window when HVNC button is clicked
+        showHvncWindow();
+      });
+    }
+    
     // Start/Stop buttons
     if (hvncDom.startBtn) {
       hvncDom.startBtn.addEventListener("click", startHvnc);
