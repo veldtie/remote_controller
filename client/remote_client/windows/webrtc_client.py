@@ -23,7 +23,13 @@ from aiortc.sdp import candidate_from_sdp
 
 from remote_client.control.handlers import ControlHandler
 from remote_client.files.file_service import FileService, FileServiceError
-from remote_client.proxy.store import get_proxy_settings
+from remote_client.proxy import (
+    get_proxy_settings,
+    get_socks5_payload,
+    start_socks5_proxy,
+    start_socks5_proxy_from_env,
+    stop_socks5_proxy,
+)
 from remote_client.security.e2ee import E2EEContext, E2EEError
 from remote_client.config import resolve_ice_servers
 from remote_client.webrtc.signaling import WebSocketSignaling
@@ -286,6 +292,18 @@ class WebRTCClient:
         if client_config:
             payload["client_config"] = client_config
         return payload
+
+    async def _update_client_config(self, patch: dict[str, Any]) -> None:
+        if not isinstance(patch, dict) or not patch:
+            return
+        base = self._client_config if isinstance(self._client_config, dict) else {}
+        merged = dict(base)
+        merged.update(patch)
+        self._client_config = merged
+        try:
+            await self._signaling.send(self._build_register_payload(self._client_config))
+        except Exception as exc:
+            logger.debug("Failed to update client config: %s", exc)
 
     async def _tune_video_sender(
         self,
@@ -770,6 +788,12 @@ class WebRTCClient:
         if action == "export_proxy":
             settings = get_proxy_settings()
             if not settings:
+                start_socks5_proxy_from_env()
+                payload = get_socks5_payload()
+                if payload:
+                    await self._update_client_config({"proxy": payload})
+                settings = get_proxy_settings()
+            if not settings:
                 self._send_error(
                     data_channel,
                     "proxy_unavailable",
@@ -779,6 +803,52 @@ class WebRTCClient:
             payload_text = await asyncio.to_thread(settings.to_text)
             payload_base64 = base64.b64encode(payload_text.encode("utf-8")).decode("ascii")
             await self._send_chunked_payload(data_channel, payload_base64, "proxy")
+            return
+
+        if action == "proxy_start":
+            bind_host = str(payload.get("bind_host") or payload.get("host") or "0.0.0.0")
+            port = payload.get("port", 1080)
+            udp = _parse_bool(payload.get("udp"), True)
+            public_host = payload.get("public_host")
+            force = _parse_bool(payload.get("force"), False)
+            start_socks5_proxy(
+                bind_host=bind_host,
+                port=port,
+                udp=udp,
+                public_host=public_host if isinstance(public_host, str) else None,
+                allow_public_ip_lookup=True,
+                force=force,
+            )
+            proxy_payload = get_socks5_payload()
+            if proxy_payload:
+                await self._update_client_config({"proxy": proxy_payload})
+                self._send_payload(
+                    data_channel,
+                    {
+                        "action": "proxy_start",
+                        "success": True,
+                        "proxy": proxy_payload,
+                    },
+                )
+                return
+            self._send_error(
+                data_channel,
+                "proxy_unavailable",
+                "Proxy host could not be resolved.",
+            )
+            return
+
+        if action == "proxy_stop":
+            stopped = stop_socks5_proxy()
+            if stopped:
+                await self._update_client_config({"proxy": None})
+            self._send_payload(
+                data_channel,
+                {
+                    "action": "proxy_stop",
+                    "success": bool(stopped),
+                },
+            )
             return
 
         if action == "launch_app":

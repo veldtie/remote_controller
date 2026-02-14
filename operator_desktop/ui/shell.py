@@ -472,6 +472,12 @@ class MainShell(QtWidgets.QWidget):
         if action == "proxy":
             self.request_proxy_export(client_id)
             return
+        if action == "proxy_start":
+            self.request_proxy_start(client_id)
+            return
+        if action == "proxy_stop":
+            self.request_proxy_stop(client_id)
+            return
         if action == "abe_diagnostics":
             self.show_abe_diagnostics(client_id)
             return
@@ -516,6 +522,30 @@ class MainShell(QtWidgets.QWidget):
             self._schedule_utility_close(client_id)
         window.request_proxy_export(client_id, filename=filename, download_dir=folder)
         self.logger.log("log_proxy_request", client=client_name, path=folder)
+
+    def request_proxy_start(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        client_name = client["name"] if client else client_id
+        window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
+        if window is None:
+            window = self._open_utility_session(client_id)
+            if window is None:
+                return
+            self._schedule_utility_close(client_id)
+        window.request_proxy_start()
+        self.logger.log("log_proxy_start", client=client_name)
+
+    def request_proxy_stop(self, client_id: str) -> None:
+        client = next((c for c in self.dashboard.clients if c["id"] == client_id), None)
+        client_name = client["name"] if client else client_id
+        window = self._session_windows.get(client_id) or self._storage_windows.get(client_id)
+        if window is None:
+            window = self._open_utility_session(client_id)
+            if window is None:
+                return
+            self._schedule_utility_close(client_id)
+        window.request_proxy_stop()
+        self.logger.log("log_proxy_stop", client=client_name)
 
     def _abe_payload_from_client(self, client: dict | None) -> dict:
         if not client:

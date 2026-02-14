@@ -152,6 +152,7 @@
     pendingDownload: null,
     pendingAppLaunch: null,
     pendingExport: null,
+    pendingProxyControl: null,
     pendingExportRetries: 0,
     availableBrowsers: null,
     isConnected: false,
