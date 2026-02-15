@@ -82,13 +82,13 @@ class TestAppBoundDecryptor:
         """Decryptor without local_state_path should not be available."""
         decryptor = AppBoundDecryptor(None)
         
-        assert not decryptor.is_available()
+        assert not decryptor.is_available
     
     def test_decryptor_with_nonexistent_path(self):
         """Decryptor with nonexistent path should not be available."""
         decryptor = AppBoundDecryptor(Path("/nonexistent/path"))
         
-        assert not decryptor.is_available()
+        assert not decryptor.is_available
     
     def test_can_decrypt_value_when_not_available(self):
         """can_decrypt_value should return False when decryptor is not available."""

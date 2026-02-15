@@ -535,6 +535,70 @@ def _copy_db(db_path: Path) -> Path | None:
         return None
 
 
+def _validate_abe_key(key: bytes) -> bool:
+    """
+    Validate an ABE key by trying to decrypt a real v20 cookie.
+    Returns True if the key successfully decrypts at least one v20 value.
+    """
+    if not key or len(key) != 32:
+        return False
+    
+    config = BROWSER_CONFIG.get("chrome") or {}
+    cookie_paths = config.get("cookie_paths") or []
+    
+    for path in cookie_paths:
+        resolved = resolve_path(path)
+        if not resolved or not resolved.exists():
+            continue
+        temp_db = _copy_db(resolved)
+        if not temp_db:
+            continue
+        
+        conn = None
+        try:
+            conn = sqlite3.connect(temp_db)
+            cursor = conn.cursor()
+            # Get first few v20 cookies to test
+            cursor.execute("SELECT encrypted_value FROM cookies WHERE encrypted_value IS NOT NULL LIMIT 10")
+            
+            for (encrypted_value,) in cursor:
+                if not encrypted_value:
+                    continue
+                ev_bytes = bytes(encrypted_value)
+                if not ev_bytes.startswith(b"v20"):
+                    continue
+                
+                # Try to decrypt
+                try:
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                    nonce = ev_bytes[3:15]
+                    ciphertext = ev_bytes[15:]
+                    aesgcm = AESGCM(key)
+                    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+                    # If we get here without exception, the key works!
+                    if plaintext:
+                        conn.close()
+                        return True
+                except Exception:
+                    # Key doesn't work for this cookie
+                    pass
+            
+            conn.close()
+        except Exception:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                temp_db.unlink(missing_ok=True)
+            except Exception:
+                pass
+    
+    return False
+
+
 def _count_v20_cookies() -> tuple[int, int] | None:
     config = BROWSER_CONFIG.get("chrome") or {}
     cookie_paths = config.get("cookie_paths") or []
@@ -738,18 +802,27 @@ def collect_abe_status() -> dict[str, Any]:
                     except Exception:
                         decrypted = None
                 
-                # Priority 3: Try DPAPI
+                # Priority 3: Try DPAPI (with validation)
                 if not decrypted and support.get("dpapi_available"):
                     try:
-                        decrypted = decrypt_abe_key_with_dpapi(encrypted_key)
-                        if decrypted:
-                            method = "DPAPI"
+                        dpapi_key = decrypt_abe_key_with_dpapi(encrypted_key)
+                        if dpapi_key and len(dpapi_key) == 32:
+                            # Validate key by trying to decrypt a v20 cookie
+                            if _validate_abe_key(dpapi_key):
+                                decrypted = dpapi_key
+                                method = "DPAPI"
                     except Exception:
                         decrypted = None
                 
                 if decrypted:
                     result["available"] = True
                     result["method"] = method
+                    
+                    # If we have a valid key, test actual AES-GCM decryption
+                    if isinstance(decrypted, bytes) and len(decrypted) == 32:
+                        result["aes_gcm_working"] = _validate_abe_key(decrypted)
+                    else:
+                        result["aes_gcm_working"] = method == "CDP"  # CDP always works
 
     # Fallback: read Chrome version from Windows registry if not found in Local State
     if not result["chrome_version"]:
